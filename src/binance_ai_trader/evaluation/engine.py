@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 
-from binance_ai_trader.domain.models import Kline, StoredSignal, SignalEvaluation
+from binance_ai_trader.domain.models import Kline, SignalEvaluation, StoredSignal
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,7 +17,7 @@ class EvaluationPolicy:
 
 
 class SignalEvaluationEngine:
-    """Evaluate long signals using only closed 15m bars after generation."""
+    """Evaluate deterministic LONG and SHORT signals on closed future 15m bars."""
 
     def __init__(self, policy: EvaluationPolicy | None = None) -> None:
         self.policy = policy or EvaluationPolicy()
@@ -36,18 +36,11 @@ class SignalEvaluationEngine:
                 if not activated:
                     continue
 
-            maximum_favorable = max(
-                maximum_favorable,
-                _percentage(max(bar.high - signal.entry, Decimal("0")), signal.entry),
-            )
-            maximum_adverse = max(
-                maximum_adverse,
-                _percentage(max(signal.entry - bar.low, Decimal("0")), signal.entry),
-            )
+            favorable, adverse, stop_hit, tp1_hit, tp2_hit = self._bar_state(signal, bar)
+            maximum_favorable = max(maximum_favorable, favorable)
+            maximum_adverse = max(maximum_adverse, adverse)
 
-            stop_hit = bar.low <= signal.stop_loss
-            tp1_hit = bar.high >= signal.tp1
-            tp2_hit = bar.high >= signal.tp2
+            # Conservative intrabar assumption: a stop wins every target/stop tie.
             if stop_hit:
                 return self._result(signal, "LOSS", maximum_favorable, maximum_adverse, bar_number)
             if tp2_hit:
@@ -59,20 +52,30 @@ class SignalEvaluationEngine:
             return None
         if tp1_bar is not None:
             return self._result(signal, "TP1_HIT", maximum_favorable, maximum_adverse, tp1_bar)
-        return self._result(
-            signal,
-            "EXPIRED",
-            maximum_favorable,
-            maximum_adverse,
-            self.policy.maximum_bars,
-        )
+        return self._result(signal, "EXPIRED", maximum_favorable, maximum_adverse, self.policy.maximum_bars)
+
+    @staticmethod
+    def _bar_state(
+        signal: StoredSignal, bar: Kline
+    ) -> tuple[Decimal, Decimal, bool, bool, bool]:
+        if signal.direction == "LONG":
+            favorable = _percentage(max(bar.high - signal.entry, Decimal("0")), signal.entry)
+            adverse = _percentage(max(signal.entry - bar.low, Decimal("0")), signal.entry)
+            return favorable, adverse, bar.low <= signal.stop_loss, bar.high >= signal.tp1, bar.high >= signal.tp2
+        favorable = _percentage(max(signal.entry - bar.low, Decimal("0")), signal.entry)
+        adverse = _percentage(max(bar.high - signal.entry, Decimal("0")), signal.entry)
+        return favorable, adverse, bar.high >= signal.stop_loss, bar.low <= signal.tp1, bar.low <= signal.tp2
 
     @staticmethod
     def _validate(signal: StoredSignal, bars: Sequence[Kline]) -> None:
-        if signal.direction != "LONG":
-            raise ValueError("only LONG signals can be evaluated")
-        if not (signal.stop_loss < signal.entry < signal.tp1 < signal.tp2):
-            raise ValueError("invalid LONG signal price ordering")
+        if signal.direction == "LONG":
+            valid_order = signal.stop_loss < signal.entry < signal.tp1 < signal.tp2
+        elif signal.direction == "SHORT":
+            valid_order = signal.tp2 < signal.tp1 < signal.entry < signal.stop_loss
+        else:
+            raise ValueError("direction must be LONG or SHORT")
+        if not valid_order:
+            raise ValueError(f"invalid {signal.direction} signal price ordering")
         if any(bar.symbol != signal.symbol or bar.interval != "15m" for bar in bars):
             raise ValueError("evaluation bars must be 15m bars for the signal symbol")
         if any(current.open_time_ms <= previous.open_time_ms for previous, current in zip(bars, bars[1:])):
@@ -91,6 +94,7 @@ class SignalEvaluationEngine:
         return SignalEvaluation(
             signal_run_id=signal.run_id,
             symbol=signal.symbol,
+            direction=signal.direction,
             entry=signal.entry,
             stop_loss=signal.stop_loss,
             tp1=signal.tp1,
