@@ -68,7 +68,7 @@ class BacktestIntegrationTest(unittest.TestCase):
 
     def test_persists_backtest_result_and_summary(self) -> None:
         item = BacktestResult(
-            evaluation_time_ms=1_000, symbol="BTCUSDT", combined_regime="BULL",
+            evaluation_time_ms=1_000, symbol="BTCUSDT", direction="SHORT", combined_regime="BEAR",
             sector="LAYER1", sector_rank=1, score=91.0, entry=Decimal("100"),
             stop_loss=Decimal("98"), tp1=Decimal("102"), tp2=Decimal("104"),
             rr_tp1=Decimal("1"), rr_tp2=Decimal("2"), result="WIN_TP2",
@@ -86,14 +86,14 @@ class BacktestIntegrationTest(unittest.TestCase):
         with closing(sqlite3.connect(self.database)) as connection:
             stored = connection.execute(
                 """
-                SELECT symbol, combined_regime, sector, sector_rank, result, realized_r
+                SELECT symbol, direction, combined_regime, sector, sector_rank, result, realized_r
                 FROM backtest_results
                 """
             ).fetchone()
             run = connection.execute(
                 "SELECT status, evaluation_points, total_signals FROM backtest_runs"
             ).fetchone()
-        self.assertEqual(("BTCUSDT", "BULL", "LAYER1", 1, "WIN_TP2", "2"), stored)
+        self.assertEqual(("BTCUSDT", "SHORT", "BEAR", "LAYER1", 1, "WIN_TP2", "2"), stored)
         self.assertEqual(("SUCCEEDED", 1, 1), run)
 
     def test_backtest_cli_persists_empty_run_and_outputs_contract(self) -> None:
@@ -117,6 +117,8 @@ class BacktestIntegrationTest(unittest.TestCase):
             {"BULL", "BEAR", "RANGE", "OBSERVE"},
             set(payload["by_combined_regime"]),
         )
+        self.assertEqual({"LONG", "SHORT"}, set(payload["by_direction"]))
+        self.assertEqual({"BULL", "BEAR", "RANGE", "OBSERVE"}, set(payload["by_regime"]))
         self.assertEqual(10, len(payload["by_sector"]))
         self.assertEqual(
             {"90-100", "80-90", "70-80", "below 70"},
@@ -133,7 +135,7 @@ class BacktestIntegrationTest(unittest.TestCase):
         self.assertEqual(("SUCCEEDED", 0, 0), run[:3])
         self.assertIsNotNone(run[3])
         self.assertTrue(
-            {"evaluation_time_ms", "combined_regime", "sector", "score", "result", "realized_r"}
+            {"evaluation_time_ms", "direction", "combined_regime", "sector", "score", "result", "realized_r"}
             <= result_columns
         )
 
