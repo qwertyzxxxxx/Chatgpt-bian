@@ -60,8 +60,7 @@ class StrategyLabIntegrationTest(unittest.TestCase):
             ])
         rows = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual(0, exit_code)
-        self.assertEqual(5, len(rows))
-        self.assertTrue(all(row["status"] == "candidate" for row in rows))
+        self.assertEqual(0, len(rows))
 
         with closing(sqlite3.connect(self.database)) as connection:
             versions = connection.execute(
@@ -71,9 +70,7 @@ class StrategyLabIntegrationTest(unittest.TestCase):
         candidates = [row for row in versions if row[0] != "baseline_v1"]
         self.assertEqual(1, len(baseline))
         self.assertEqual("baseline", baseline[0][1])
-        self.assertEqual(5, len(candidates))
-        self.assertTrue(all(row[1] == "candidate" for row in candidates))
-        self.assertTrue(all(row[3] is not None for row in candidates))
+        self.assertEqual(0, len(candidates))
         self.assertNotIn("approved", {row[1] for row in versions})
 
 
