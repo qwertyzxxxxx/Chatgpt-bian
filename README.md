@@ -1,0 +1,252 @@
+# Binance AI Trader V1
+
+The current implementation provides a read-only Binance USDⓈ-M Futures public-data layer, deterministic scoring engine, and deterministic long-only signal engine. It contains no authentication, account, order, Telegram, AI-model, or web functionality.
+
+## Capabilities
+
+- Discover trading USDT perpetual contracts from `/fapi/v1/exchangeInfo`.
+- Read all-symbol 24-hour statistics from `/fapi/v1/ticker/24hr`.
+- Retain contracts with quote volume strictly greater than 5,000,000 USDT.
+- Exclude configured stablecoins, leveraged-token suffixes, and denied symbols.
+- Download and validate closed `15m`, `1h`, and `4h` candles from `/fapi/v1/klines`.
+- Compute `TrendScore`, `VolumeScore`, `MomentumScore`, `StructureScore`, and `RiskScore`.
+- Classify BTC and ETH market regimes from closed 15m, 1h, and 4h candles.
+- Rank mapped sectors from the latest score and 24-hour universe snapshot.
+- Read the latest Top 20 score ranking and select at most three valid LONG pullback signals.
+- Persist collection runs, universe snapshots, candles, scores, and signals to SQLite.
+- Print one JSON Line per generated signal.
+
+## Requirements
+
+- Python 3.11+
+- Network access to `https://fapi.binance.com`
+
+No third-party runtime dependency is required.
+
+## Run
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader scan \
+  --database data/market_data.db \
+  --config config/universe.json \
+  --kline-limit 200 \
+  --max-workers 5
+```
+
+The CLI collects a fresh public-market snapshot, scores eligible symbols, generates up to three LONG signals from the Top 20, saves all results, and emits each signal as one compact JSON line:
+
+```json
+{"symbol":"BTCUSDT","direction":"LONG","score":82.5,"entry":"100.10","latest_close":"101.00","stop_loss":"97.90","stop_loss_pct":"2.20","TP1":"102.30","TP2":"105.00","rr_tp1":"1.00","rr_tp2":"2.23","logic_summary":"LONG pullback: ..."}
+```
+
+Exit code `0` means all requested datasets succeeded. Exit code `2` means one or more symbol/interval requests failed; affected symbols are excluded from scoring while complete symbols can still be scored and evaluated.
+
+## Scoring model
+
+The initial score is deterministic and bounded to 0–100:
+
+| Component | Maximum | Main inputs |
+|---|---:|---|
+| TrendScore | 30 | 1h/4h EMA position, alignment, and 4h slope |
+| VolumeScore | 20 | 15m/1h relative quote volume and 15m trade participation |
+| MomentumScore | 20 | 1h/4h six-period ROC and 1h RSI |
+| StructureScore | 15 | 1h range position, higher high/low, and 15m breakout |
+| RiskScore | 15 | 1h ATR%, largest recent 15m candle, and opening gaps |
+
+At least 40 closed 15m candles and 55 closed candles for each of 1h and 4h are required. Equal totals are ordered by symbol, making ranking deterministic.
+
+## LONG signal rules
+
+The signal engine preserves score rank and evaluates only the latest run's Top 20 symbols. It returns the first three candidates that pass every rule; it does not force three signals.
+
+- **Entry:** a confirmed recent 15m or 1h swing-low support plus a small deterministic buffer, rounded to tick size. Entry must be between 3% below and 1% above the latest closed 15m close.
+- **Stop:** the tighter valid level derived from a recent 1h swing low with ATR buffer or a 2× 1h ATR stop. Risk is widened to at least 2% to avoid noise; candidates above 7% risk are rejected.
+- **TP1:** the nearest prior 1h/4h resistance at or above 1R, otherwise the exact 1R objective.
+- **TP2:** a prior 1h/4h high or range boundary at or above 2R. A candidate without structural room for at least 2R is rejected.
+- **Direction:** always `LONG`. No short strategy exists in this stage.
+
+The rules use only closed candles and decimal tick-size rounding. They do not invoke an AI or machine-learning model.
+
+## Configuration
+
+`config/universe.json` contains the liquidity threshold and exclusions. The volume comparison is strict (`volume24h > 5,000,000`). Financial market-data and signal-price fields are persisted as decimal strings to avoid binary floating-point loss at the data boundary.
+
+## SQLite tables
+
+- `collection_runs`: run status and failure summary.
+- `universe_snapshots`: retained contracts and their 24-hour statistics.
+- `klines`: idempotent closed candles keyed by symbol, interval, and open time.
+- `scores`: full-run rank, total score, JSON breakdown, algorithm version, and timestamp.
+- `signals`: Top 3 rank, LONG direction, score, entry/latest close, stop, targets, RRs, explanation, and generation timestamp.
+- `signal_evaluations`: deterministic outcome, excursions, bars to result, and evaluation timestamp.
+- `market_regimes`: BTC, ETH, and combined regime history with evaluation timestamps.
+- `sector_snapshots`: per-run sector metrics and deterministic strength rank.
+- `strategy_versions`: immutable strategy configs, review status, creation time, and latest research metrics.
+
+SQLite uses foreign keys, WAL mode, a busy timeout, and transactional writes.
+
+## Tests
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
+```
+
+The automated test suite uses local fixtures/fakes and does not call Binance.
+
+## Paper signal evaluation
+
+The evaluator measures stored LONG signals against future closed 15m candles already present in SQLite. It never downloads private data and never places an order.
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader evaluate \
+  --database data/market_data.db
+```
+
+Evaluation is deterministic:
+
+- only 15m candles whose close time is after the signal's `generated_at` are considered;
+- a signal becomes active only after a candle trades through its Entry;
+- at most 96 future candles (24 hours) are evaluated;
+- a candle touching Stop and any target is a conservative `LOSS`;
+- a TP2 touch is `WIN_TP2`;
+- a TP1 touch without a later TP2 touch inside the complete window is `TP1_HIT`;
+- no target or Stop after the complete 96-bar window is `EXPIRED`;
+- an incomplete window with no terminal Stop/TP2 event remains pending and is not prematurely persisted as expired.
+
+`max_favorable_pct` and `max_adverse_pct` are positive excursion magnitudes measured from Entry after activation. Summary rates use completed evaluations as the denominator; `tp1_hit_rate` includes both `TP1_HIT` and `WIN_TP2`, because every TP2 winner also crossed TP1.
+
+The command emits one JSON summary containing counts, TP1/TP2/loss rates, and average favorable/adverse excursions. Completed results are idempotently saved in `signal_evaluations`.
+
+## Market regime
+
+The `regime` command reads only stored, closed `BTCUSDT` and `ETHUSDT` 15m, 1h, and 4h candles:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader regime \
+  --database data/market_data.db
+```
+
+It emits only the three market-state fields:
+
+```json
+{"btc_regime":"BULL","eth_regime":"BULL","combined_regime":"BULL"}
+```
+
+Each asset uses EMA20, EMA50, and ATR deterministically. Matching 1h/4h EMA alignment produces `BULL` or `BEAR` when 15m does not contradict it. Non-trending alignment produces `RANGE`. Missing/invalid history, excessive ATR, timeframe conflict, or BTC/ETH directional conflict produces `OBSERVE`. The default high-volatility gates are 1h ATR above 5% or 4h ATR above 8%. At least 51 closed candles per timeframe are required. Every result is appended to `market_regimes`.
+
+## Regime-gated LONG signals
+
+Signal generation reads the newest `market_regimes.combined_regime` before evaluating the latest Top 20 scores. If no regime history exists, the gate defaults to `OBSERVE`.
+
+| Combined regime | LONG signal behavior |
+|---|---|
+| `BULL` | Evaluate candidates normally and emit up to three valid signals. |
+| `RANGE` | Evaluate only candidates with score greater than or equal to 80. |
+| `BEAR` | Emit no LONG signals. |
+| `OBSERVE` | Emit no LONG signals. |
+
+The `scan` command runs in this order: collect closed public market data, analyze and persist BTC/ETH regime, score the market, calculate sector strength, then generate regime-gated and sector-aware LONG signals. Each persisted and emitted signal includes the `combined_regime` used by the gate. The independent `regime` command remains available.
+
+## Sector strength
+
+`config/sectors.json` maintains the version-controlled `symbol_to_sector` mapping. Supported sectors are `AI_AGENT`, `RWA`, `MEME`, `DEPIN`, `INFRA`, `LAYER1`, `LAYER2`, `DEFI`, `GAMEFI`, and `OTHER`; every unmapped symbol is assigned to `OTHER`.
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader sectors \
+  --database data/market_data.db \
+  --config config/sectors.json
+```
+
+The command joins the newest score run to the matching `universe_snapshots` run, calculates sector statistics, saves them to `sector_snapshots`, and emits one JSON Line per non-empty sector. Each row contains `sector`, `sector_rank`, `member_count`, `avg_score`, `median_score`, `top3_avg_score`, `positive_24h_ratio`, and `quote_volume_24h`. The positive ratio is represented from `0.0000` to `1.0000`.
+
+Ranking is deterministic from strongest to weakest using, in order: `top3_avg_score`, `median_score`, `avg_score`, `positive_24h_ratio`, `quote_volume_24h`, and sector name as the final tie-breaker. The standalone `sectors` command only calculates and records sector statistics; the `scan` pipeline consumes those snapshots in the separate Sector Gate described below without changing scoring or Signal Engine calculations.
+
+## Sector-aware Top 3 selection
+
+The `scan` pipeline now runs in this order: collect market data, analyze BTC/ETH regime, score symbols, calculate sector strength, then generate regime-gated and sector-aware LONG signals.
+
+After loading the latest Top 20 scores, signal selection reads `sector_snapshots` from the same score run and attaches each candidate's mapped `sector` and `sector_rank`. When snapshots exist, candidates from stronger sectors are evaluated first while preserving score rank within a sector. The Sector Gate then applies:
+
+| Sector context | LONG candidate requirement |
+|---|---|
+| `sector_rank <= 3` | No additional score threshold. |
+| `sector_rank 4–6` | Score must be at least 85. |
+| `sector_rank > 6` | Score must be at least 90. |
+| `OTHER` | Score must be at least 90, regardless of rank. |
+| No sector snapshot for the score run | Do not block or reorder candidates. |
+
+The existing combined-regime gate still applies first. Every persisted and emitted signal now includes `sector` and nullable `sector_rank`. This selection layer does not change scoring weights or the Signal Engine's Entry, Stop Loss, TP, or RR calculations.
+
+## Historical backtest validation
+
+The `backtest` command replays the current deterministic LONG strategy against closed klines already stored in SQLite. It does not call Binance or modify the scoring, regime, sector, Entry, Stop Loss, TP, or RR rules.
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader backtest \
+  --database data/market_data.db \
+  --config config/sectors.json \
+  --step-bars 1
+```
+
+Optional `--start-ms` and `--end-ms` arguments restrict evaluation timestamps. `--step-bars` controls how many eligible 15m timestamps are skipped between evaluations and defaults to every bar. An evaluation timestamp is eligible only when BTC and ETH both have a closed 15m bar at that time and at least 96 later BTC 15m bars are already stored.
+
+At every timestamp, the replay performs the complete strategy chain using only candles whose `close_time_ms` is less than or equal to that timestamp: BTC/ETH regime, symbol scores, rolling 24-hour sector statistics, Regime Gate, Sector Gate, and Top 3 LONG signal generation. Signal outcomes use only the next 96 closed 15m bars. Universe metadata is selected from the latest collection snapshot observed no later than the evaluation timestamp. This point-in-time boundary prevents regime, score, sector, and signal calculations from reading future candles.
+
+The command writes one JSON summary and persists the run to `backtest_runs` plus each completed signal outcome to `backtest_results`. Summary metrics are:
+
+* `total_signals`: completed signal evaluations included in the report.
+* `tp1_hit_rate`: percentage reaching TP1 or TP2.
+* `tp2_win_rate`, `loss_rate`, and `expired_rate`: percentages by terminal result.
+* `profit_factor`: gross positive R divided by gross loss R; JSON `null` when there are no losses.
+* `expectancy_r`: average realized R per signal.
+* `max_drawdown_r`: largest peak-to-trough decline in chronological cumulative R.
+* `avg_rr_tp2`: average planned TP2 reward/risk ratio.
+
+For deterministic accounting, `LOSS` realizes `-1R`, `TP1_HIT` realizes the signal's planned `rr_tp1`, `WIN_TP2` realizes its planned `rr_tp2`, and `EXPIRED` realizes `0R`. The same metrics are grouped under `by_combined_regime`, `by_sector`, and `by_score_bucket` (`90-100`, `80-90`, `70-80`, and `below 70`). These assumptions validate the existing rule set; they do not optimize or retune it.
+
+## Strategy Lab / Auto Research
+
+Strategy Lab is a research-only parameter registry and historical comparison layer. It can generate candidate parameter sets and replay them against the same stored SQLite history, but it cannot place orders, modify `scan`, replace `baseline_v1`, approve a candidate, or automatically activate a candidate in production.
+
+The canonical baseline is stored at `config/strategies/baseline_v1.json`. It records the current behavior exactly:
+
+- scoring weights: trend 30, volume 20, momentum 20, structure 15, risk 15;
+- RANGE minimum score 80;
+- sector medium/weak thresholds 85/90;
+- entry distance -3% to +1%;
+- maximum stop risk 7%;
+- minimum TP2 RR 2.0;
+- evaluation window 96 closed 15m bars.
+
+Strategy versions are persisted in `strategy_versions` with `baseline`, `candidate`, `approved`, or `rejected` status. Registering the baseline is idempotent and its config/status are immutable through Strategy Lab. Candidates remain `candidate`; there is no automatic approval path and `scan` does not accept a candidate strategy option.
+
+List registered versions:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader strategies list \
+  --database data/market_data.db
+```
+
+Compare registered strategies on exactly the same eligible historical timestamps:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader strategies compare \
+  baseline_v1 candidate_ID \
+  --database data/market_data.db \
+  --sectors-config config/sectors.json \
+  --step-bars 1
+```
+
+Each JSON Line contains `strategy_id`, `total_signals`, `tp1_hit_rate`, `tp2_win_rate`, `loss_rate`, `profit_factor`, `expectancy_r`, and `max_drawdown_r`. Comparison is research-only and does not activate any strategy.
+
+Generate and backtest at most five deterministic candidates from the baseline:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader auto_research \
+  --database data/market_data.db \
+  --sectors-config config/sectors.json \
+  --max-candidates 5 \
+  --step-bars 1
+```
+
+`auto_research` changes only the configured parameters; it does not generate algorithm code. Results are ranked by higher `expectancy_r`, higher `profit_factor`, then lower `max_drawdown_r`. Every generated version is saved with `candidate` status. A candidate cannot be manually selected for a production-style run unless its status has first been changed to `approved` through a separate human review process; this release intentionally provides no automatic approval command.
