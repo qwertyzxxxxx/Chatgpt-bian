@@ -22,6 +22,7 @@ from binance_ai_trader.strategy_lab.config import StrategyConfig
 from binance_ai_trader.signals import (
     RegimeSignalGate,
     SectorSignalGate,
+    ShortSignalEngine,
     SignalCandidate,
     SignalEngine,
     SignalPolicy,
@@ -41,7 +42,7 @@ class BacktestPolicy:
 
 
 class BacktestEngine:
-    """Point-in-time replay of the current deterministic LONG strategy chain."""
+    """Point-in-time replay of the current deterministic dual-direction strategy chain."""
 
     def __init__(
         self,
@@ -60,6 +61,7 @@ class BacktestEngine:
             self._regime_gate = RegimeSignalGate()
             self._sector_gate = SectorSignalGate()
             self._signals = SignalEngine()
+            self._short_signals = ShortSignalEngine(self._signals.policy)
         else:
             self._scoring = ScoringEngine(strategy_config.scoring_weights)
             self._regime_gate = RegimeSignalGate(strategy_config.range_min_score)
@@ -74,6 +76,7 @@ class BacktestEngine:
                     min_rr_tp2=Decimal(str(strategy_config.min_rr_tp2)),
                 )
             )
+            self._short_signals = ShortSignalEngine(self._signals.policy)
         self._evaluation = SignalEvaluationEngine(
             EvaluationPolicy(self._policy.maximum_evaluation_bars)
         )
@@ -137,24 +140,47 @@ class BacktestEngine:
             (score, tick_size, self._sector_map.sector_for(score.symbol))
             for score, tick_size in scored[:20]
         ]
-        candidates.sort(
-            key=lambda item: (
-                sector_ranks.get(item[2], 10_000),
-                -item[0].score,
-                item[0].symbol,
-            )
+        opportunities = []
+        for score, tick_size, sector in candidates:
+            sector_rank = sector_ranks.get(sector)
+            weakness_score = round(100.0 - score.score, 2)
+            for direction in self._regime_gate.allowed_directions(
+                regime.combined_regime, score.score, weakness_score
+            ):
+                signal_score = score.score if direction == "LONG" else weakness_score
+                if direction == "LONG" and not self._sector_gate.allows_long(
+                    sector, sector_rank, signal_score, bool(sector_ranks)
+                ):
+                    continue
+                opportunities.append(
+                    (score, tick_size, direction, signal_score, sector, sector_rank)
+                )
+        opportunities.sort(
+            key=lambda item: self._opportunity_key(item, bool(sector_ranks), regime.combined_regime)
         )
 
         signals = []
-        for score, tick_size, sector in candidates:
-            sector_rank = sector_ranks.get(sector)
-            if not self._regime_gate.allows_long(regime.combined_regime, score.score):
-                continue
-            if not self._sector_gate.allows_long(sector, sector_rank, score.score, True):
-                continue
+        for score, tick_size, direction, signal_score, sector, sector_rank in opportunities:
+            directional_score = score if direction == "LONG" else type(score)(
+                symbol=score.symbol,
+                score=signal_score,
+                score_breakdown={
+                    **score.score_breakdown,
+                    "weakness": {
+                        "score": signal_score,
+                        "source_strength_score": score.score,
+                    },
+                },
+                algorithm_version=score.algorithm_version,
+            )
+            engine = self._signals if direction == "LONG" else self._short_signals
             try:
-                signal = self._signals.generate(
-                    SignalCandidate(score=score, tick_size=tick_size, klines=point_data[score.symbol])
+                signal = engine.generate(
+                    SignalCandidate(
+                        score=directional_score,
+                        tick_size=tick_size,
+                        klines=point_data[score.symbol],
+                    )
                 )
             except ValueError:
                 signal = None
@@ -174,7 +200,7 @@ class BacktestEngine:
                 StoredSignal(
                     run_id=run_id_for_point(evaluation_time_ms),
                     symbol=signal.symbol,
-                    direction="LONG",
+                    direction=signal.direction,
                     entry=signal.entry,
                     stop_loss=signal.stop_loss,
                     tp1=signal.tp1,
@@ -190,6 +216,7 @@ class BacktestEngine:
                 BacktestResult(
                     evaluation_time_ms=evaluation_time_ms,
                     symbol=signal.symbol,
+                    direction=signal.direction,
                     combined_regime=regime.combined_regime,
                     sector=sector,
                     sector_rank=sector_rank,
@@ -206,6 +233,18 @@ class BacktestEngine:
                 )
             )
         return tuple(completed)
+
+    @staticmethod
+    def _opportunity_key(item, snapshots: bool, combined_regime: str):
+        score, _tick_size, direction, signal_score, _sector, sector_rank = item
+        if not snapshots or combined_regime == "RANGE":
+            return (-signal_score, 0 if direction == "LONG" else 1, score.symbol)
+        sector_priority = (
+            sector_rank if direction == "LONG" and sector_rank is not None
+            else -sector_rank if direction == "SHORT" and sector_rank is not None
+            else 10_000
+        )
+        return (sector_priority, -signal_score, 0 if direction == "LONG" else 1, score.symbol)
 
     def _point_klines(self, symbol: str, as_of_ms: int, limit: int):
         return {
@@ -240,6 +279,7 @@ def summarize_results(
         completed_at=completed_at,
         evaluation_points=evaluation_points,
         metrics=_metrics(results),
+        by_direction=_group(results, lambda item: item.direction, ("LONG", "SHORT")),
         by_combined_regime=_group(
             results, lambda item: item.combined_regime, ("BULL", "BEAR", "RANGE", "OBSERVE")
         ),
