@@ -11,6 +11,7 @@ from pathlib import Path
 from binance_ai_trader.domain.models import (
     BacktestResult,
     BacktestSummary,
+    EvaluationMetrics,
     EvaluationSummary,
     Kline,
     MarketRegime,
@@ -25,6 +26,7 @@ from binance_ai_trader.domain.models import (
 )
 from binance_ai_trader.strategy_lab.config import StrategyConfig
 from binance_ai_trader.strategy_lab.models import StrategyVersion
+from binance_ai_trader.paper.models import PaperAccount, PaperOutcome
 
 
 class MarketDataRepository:
@@ -242,7 +244,7 @@ class MarketDataRepository:
     ) -> None:
         rows = [
             (
-                run_id, item.evaluation_time_ms, item.symbol, item.combined_regime,
+                run_id, item.evaluation_time_ms, item.symbol, item.direction, item.combined_regime,
                 item.sector, item.sector_rank, item.score, str(item.entry),
                 str(item.stop_loss), str(item.tp1), str(item.tp2), str(item.rr_tp1),
                 str(item.rr_tp2), item.result, item.bars_to_result, str(item.realized_r),
@@ -253,10 +255,10 @@ class MarketDataRepository:
             self._connection.executemany(
                 """
                 INSERT INTO backtest_results (
-                    backtest_run_id, evaluation_time_ms, symbol, combined_regime, sector,
+                    backtest_run_id, evaluation_time_ms, symbol, direction, combined_regime, sector,
                     sector_rank, score, entry, stop_loss, tp1, tp2, rr_tp1, rr_tp2,
                     result, bars_to_result, realized_r
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -347,6 +349,146 @@ class MarketDataRepository:
             """
         ).fetchall()
         return tuple(_row_to_strategy_version(row) for row in rows)
+
+    def load_or_create_paper_account(
+        self, initial_equity: Decimal | int, updated_at: str
+    ) -> PaperAccount:
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT OR IGNORE INTO paper_accounts (
+                    id, equity, mode, consecutive_losses, paused_until, current_target, updated_at
+                ) VALUES (1, ?, 'AGGRESSIVE', 0, NULL, '1500', ?)
+                """,
+                (str(initial_equity), updated_at),
+            )
+        row = self._connection.execute(
+            """SELECT equity, mode, consecutive_losses, paused_until, current_target, updated_at
+               FROM paper_accounts WHERE id=1"""
+        ).fetchone()
+        if (
+            row[1] == "PAUSED"
+            and row[3] is not None
+            and _iso_to_epoch_ms(row[3]) <= _iso_to_epoch_ms(updated_at)
+        ):
+            with self._connection:
+                self._connection.execute(
+                    "UPDATE paper_accounts SET mode='NORMAL', paused_until=NULL, updated_at=? WHERE id=1",
+                    (updated_at,),
+                )
+            row = (row[0], "NORMAL", row[2], None, row[4], updated_at)
+        return PaperAccount(Decimal(row[0]), row[1], int(row[2]), row[3], row[4], row[5])
+
+    def load_pending_paper_outcomes(self) -> tuple[PaperOutcome, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT e.signal_run_id, e.symbol, e.direction, e.result, e.entry, e.stop_loss,
+                   e.tp1, e.tp2, s.generated_at
+            FROM signal_evaluations e
+            JOIN signals s ON s.run_id=e.signal_run_id AND s.symbol=e.symbol
+            LEFT JOIN paper_trades p
+              ON p.signal_run_id=e.signal_run_id AND p.symbol=e.symbol
+            WHERE p.signal_run_id IS NULL
+            ORDER BY s.generated_at, e.signal_run_id, e.symbol
+            """
+        ).fetchall()
+        return tuple(
+            PaperOutcome(
+                signal_run_id=row[0], symbol=row[1], direction=row[2], result=row[3],
+                entry=Decimal(row[4]), stop_loss=Decimal(row[5]), tp1=Decimal(row[6]),
+                tp2=Decimal(row[7]), generated_at=row[8],
+            )
+            for row in rows
+        )
+
+    def save_paper_trade(
+        self, outcome: PaperOutcome, risk_pct: Decimal, risk_amount: Decimal,
+        realized_r: Decimal, equity_after: Decimal, action: str, account: PaperAccount,
+    ) -> None:
+        with self._connection:
+            previous = self._connection.execute(
+                "SELECT equity FROM paper_accounts WHERE id=1"
+            ).fetchone()
+            pnl = equity_after - Decimal(previous[0])
+            self._connection.execute(
+                """
+                INSERT INTO paper_trades (
+                    signal_run_id, symbol, direction, result, risk_pct, risk_amount,
+                    realized_r, pnl, equity_after, action, processed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    outcome.signal_run_id, outcome.symbol, outcome.direction, outcome.result,
+                    str(risk_pct), str(risk_amount), str(realized_r), str(pnl),
+                    str(equity_after), action, account.updated_at,
+                ),
+            )
+            self._connection.execute(
+                """
+                UPDATE paper_accounts SET equity=?, mode=?, consecutive_losses=?,
+                    paused_until=?, current_target=?, updated_at=? WHERE id=1
+                """,
+                (str(account.equity), account.mode, account.consecutive_losses,
+                 account.paused_until, account.current_target, account.updated_at),
+            )
+
+    def load_signal_report(self, start: str, end: str) -> list[dict[str, object]]:
+        rows = self._connection.execute(
+            """SELECT symbol, direction, score, combined_regime, sector, sector_rank, generated_at
+               FROM signals WHERE generated_at BETWEEN ? AND ? ORDER BY generated_at, rank""",
+            (start, end),
+        ).fetchall()
+        return [
+            {"symbol": row[0], "direction": row[1], "score": row[2],
+             "combined_regime": row[3], "sector": row[4], "sector_rank": row[5],
+             "generated_at": row[6]} for row in rows
+        ]
+
+    def load_regime_report(self, start: str, end: str) -> dict[str, object] | None:
+        row = self._connection.execute(
+            """SELECT btc_regime, eth_regime, combined_regime, evaluated_at
+               FROM market_regimes WHERE evaluated_at BETWEEN ? AND ?
+               ORDER BY evaluated_at DESC, id DESC LIMIT 1""", (start, end),
+        ).fetchone()
+        return None if row is None else {
+            "btc_regime": row[0], "eth_regime": row[1],
+            "combined_regime": row[2], "evaluated_at": row[3],
+        }
+
+    def load_sector_report(self, start: str, end: str) -> list[dict[str, object]]:
+        run = self._connection.execute(
+            """SELECT run_id FROM sector_snapshots WHERE calculated_at BETWEEN ? AND ?
+               ORDER BY calculated_at DESC LIMIT 1""", (start, end),
+        ).fetchone()
+        if run is None:
+            return []
+        rows = self._connection.execute(
+            """SELECT sector, sector_rank, avg_score, member_count
+               FROM sector_snapshots WHERE run_id=? ORDER BY sector_rank""", (run[0],),
+        ).fetchall()
+        return [{"sector": r[0], "sector_rank": r[1], "avg_score": r[2], "member_count": r[3]} for r in rows]
+
+    def load_top_candidate_report(self, limit: int) -> list[dict[str, object]]:
+        latest = self._connection.execute(
+            "SELECT MAX(created_at) FROM strategy_versions WHERE status='candidate'"
+        ).fetchone()[0]
+        if latest is None:
+            return []
+        rows = self._connection.execute(
+            """SELECT strategy_id, name, metrics_json, created_at FROM strategy_versions
+               WHERE status='candidate' AND metrics_json IS NOT NULL AND created_at=?""",
+            (latest,),
+        ).fetchall()
+        payload = []
+        for row in rows:
+            metrics = json.loads(row[2])
+            payload.append({"strategy_id": row[0], "name": row[1], "metrics": metrics, "created_at": row[3]})
+        payload.sort(key=lambda item: (
+            -item["metrics"]["expectancy_r"],
+            -(item["metrics"]["profit_factor"] if item["metrics"]["profit_factor"] is not None else 1e99),
+            item["metrics"]["max_drawdown_r"], item["strategy_id"],
+        ))
+        return payload[:limit]
 
     def save_scores(self, run_id: str, scores: Iterable[SymbolScore], created_at: str) -> None:
         rows = [
@@ -535,7 +677,7 @@ class MarketDataRepository:
             """
             SELECT run_id, symbol, direction, entry, stop_loss, tp1, tp2, generated_at
             FROM signals
-            WHERE direction = 'LONG'
+            WHERE direction IN ('LONG', 'SHORT')
             ORDER BY generated_at, run_id, rank
             """
         ).fetchall()
@@ -590,6 +732,7 @@ class MarketDataRepository:
             (
                 item.signal_run_id,
                 item.symbol,
+                item.direction,
                 str(item.entry),
                 str(item.stop_loss),
                 str(item.tp1),
@@ -606,11 +749,11 @@ class MarketDataRepository:
             self._connection.executemany(
                 """
                 INSERT INTO signal_evaluations (
-                    signal_run_id, symbol, entry, stop_loss, tp1, tp2, result,
+                    signal_run_id, symbol, direction, entry, stop_loss, tp1, tp2, result,
                     max_favorable_pct, max_adverse_pct, bars_to_result, evaluated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(signal_run_id, symbol) DO UPDATE SET
-                    entry=excluded.entry, stop_loss=excluded.stop_loss,
+                    direction=excluded.direction, entry=excluded.entry, stop_loss=excluded.stop_loss,
                     tp1=excluded.tp1, tp2=excluded.tp2, result=excluded.result,
                     max_favorable_pct=excluded.max_favorable_pct,
                     max_adverse_pct=excluded.max_adverse_pct,
@@ -620,8 +763,18 @@ class MarketDataRepository:
             )
 
     def load_evaluation_summary(self) -> EvaluationSummary:
+        overall = self._load_evaluation_metrics(None)
+        by_direction = {
+            direction: self._load_evaluation_metrics(direction)
+            for direction in ("LONG", "SHORT")
+        }
+        return EvaluationSummary(**asdict(overall), by_direction=by_direction)
+
+    def _load_evaluation_metrics(self, direction: str | None) -> EvaluationMetrics:
+        where = "" if direction is None else "WHERE direction = ?"
+        parameters = () if direction is None else (direction,)
         row = self._connection.execute(
-            """
+            f"""
             SELECT
                 COUNT(*),
                 COALESCE(SUM(result = 'WIN_TP2'), 0),
@@ -629,24 +782,34 @@ class MarketDataRepository:
                 COALESCE(SUM(result = 'LOSS'), 0),
                 COALESCE(SUM(result = 'EXPIRED'), 0),
                 COALESCE(AVG(CAST(max_favorable_pct AS REAL)), 0),
-                COALESCE(AVG(CAST(max_adverse_pct AS REAL)), 0)
+                COALESCE(AVG(CAST(max_adverse_pct AS REAL)), 0),
+                COALESCE(AVG(CASE
+                    WHEN result = 'LOSS' THEN -1.0
+                    WHEN result = 'WIN_TP2' THEN
+                        CASE WHEN direction = 'LONG'
+                            THEN (CAST(tp2 AS REAL) - CAST(entry AS REAL))
+                                 / (CAST(entry AS REAL) - CAST(stop_loss AS REAL))
+                            ELSE (CAST(entry AS REAL) - CAST(tp2 AS REAL))
+                                 / (CAST(stop_loss AS REAL) - CAST(entry AS REAL)) END
+                    WHEN result = 'TP1_HIT' THEN
+                        CASE WHEN direction = 'LONG'
+                            THEN (CAST(tp1 AS REAL) - CAST(entry AS REAL))
+                                 / (CAST(entry AS REAL) - CAST(stop_loss AS REAL))
+                            ELSE (CAST(entry AS REAL) - CAST(tp1 AS REAL))
+                                 / (CAST(stop_loss AS REAL) - CAST(entry AS REAL)) END
+                    ELSE 0.0 END), 0)
             FROM signal_evaluations
-            """
+            {where}
+            """,
+            parameters,
         ).fetchone()
-        total = int(row[0])
-        win_tp2 = int(row[1])
-        tp1_hit = int(row[2])
-        loss = int(row[3])
-        expired = int(row[4])
-        return EvaluationSummary(
-            total_signals=total,
-            win_tp2_count=win_tp2,
-            tp1_hit_count=tp1_hit,
-            loss_count=loss,
-            expired_count=expired,
+        total, win_tp2, tp1_hit, loss, expired = map(int, row[:5])
+        return EvaluationMetrics(
+            total_signals=total, win_tp2_count=win_tp2, tp1_hit_count=tp1_hit,
+            loss_count=loss, expired_count=expired,
             tp1_hit_rate=_rate(tp1_hit + win_tp2, total),
-            tp2_win_rate=_rate(win_tp2, total),
-            loss_rate=_rate(loss, total),
+            tp2_win_rate=_rate(win_tp2, total), loss_rate=_rate(loss, total),
+            expired_rate=_rate(expired, total), expectancy_r=round(float(row[7]), 4),
             average_max_favorable_pct=round(float(row[5]), 2),
             average_max_adverse_pct=round(float(row[6]), 2),
         )
@@ -747,7 +910,7 @@ class MarketDataRepository:
                 run_id TEXT NOT NULL REFERENCES collection_runs(id) ON DELETE CASCADE,
                 rank INTEGER NOT NULL CHECK (rank BETWEEN 1 AND 3),
                 symbol TEXT NOT NULL,
-                direction TEXT NOT NULL CHECK (direction = 'LONG'),
+                direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
                 combined_regime TEXT NOT NULL DEFAULT 'OBSERVE' CHECK (
                     combined_regime IN ('BULL', 'BEAR', 'RANGE', 'OBSERVE')
                 ),
@@ -775,6 +938,7 @@ class MarketDataRepository:
             CREATE TABLE IF NOT EXISTS signal_evaluations (
                 signal_run_id TEXT NOT NULL,
                 symbol TEXT NOT NULL,
+                direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
                 entry TEXT NOT NULL,
                 stop_loss TEXT NOT NULL,
                 tp1 TEXT NOT NULL,
@@ -799,6 +963,33 @@ class MarketDataRepository:
                 metrics_json TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS paper_accounts (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                equity TEXT NOT NULL,
+                mode TEXT NOT NULL CHECK (mode IN ('AGGRESSIVE', 'NORMAL', 'PAUSED')),
+                consecutive_losses INTEGER NOT NULL CHECK (consecutive_losses >= 0),
+                paused_until TEXT,
+                current_target TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS paper_trades (
+                signal_run_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
+                result TEXT NOT NULL CHECK (result IN ('LOSS', 'TP1_HIT', 'WIN_TP2', 'EXPIRED')),
+                risk_pct TEXT NOT NULL,
+                risk_amount TEXT NOT NULL,
+                realized_r TEXT NOT NULL,
+                pnl TEXT NOT NULL,
+                equity_after TEXT NOT NULL,
+                action TEXT NOT NULL,
+                processed_at TEXT NOT NULL,
+                PRIMARY KEY (signal_run_id, symbol),
+                FOREIGN KEY (signal_run_id, symbol)
+                    REFERENCES signals(run_id, symbol) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS backtest_runs (
                 id TEXT PRIMARY KEY,
                 started_at TEXT NOT NULL,
@@ -817,6 +1008,7 @@ class MarketDataRepository:
                 backtest_run_id TEXT NOT NULL REFERENCES backtest_runs(id) ON DELETE CASCADE,
                 evaluation_time_ms INTEGER NOT NULL,
                 symbol TEXT NOT NULL,
+                direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
                 combined_regime TEXT NOT NULL CHECK (
                     combined_regime IN ('BULL', 'BEAR', 'RANGE', 'OBSERVE')
                 ),
@@ -872,6 +1064,9 @@ class MarketDataRepository:
         )
         self._ensure_signals_combined_regime()
         self._ensure_signals_sector_context()
+        self._ensure_signals_direction_support()
+        self._ensure_evaluation_direction()
+        self._ensure_backtest_direction()
 
     def _ensure_signals_combined_regime(self) -> None:
         columns = {
@@ -911,6 +1106,102 @@ class MarketDataRepository:
                     """
                 )
 
+    def _ensure_evaluation_direction(self) -> None:
+        columns = {
+            row[1] for row in self._connection.execute("PRAGMA table_info(signal_evaluations)")
+        }
+        if "direction" not in columns:
+            with self._connection:
+                self._connection.execute(
+                    "ALTER TABLE signal_evaluations ADD COLUMN direction TEXT NOT NULL "
+                    "DEFAULT 'LONG' CHECK (direction IN ('LONG', 'SHORT'))"
+                )
+
+    def _ensure_backtest_direction(self) -> None:
+        columns = {
+            row[1] for row in self._connection.execute("PRAGMA table_info(backtest_results)")
+        }
+        if "direction" not in columns:
+            with self._connection:
+                self._connection.execute(
+                    "ALTER TABLE backtest_results ADD COLUMN direction TEXT NOT NULL "
+                    "DEFAULT 'LONG' CHECK (direction IN ('LONG', 'SHORT'))"
+                )
+
+    def _ensure_signals_direction_support(self) -> None:
+        schema = self._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='signals'"
+        ).fetchone()
+        if schema is None or "direction = 'LONG'" not in schema[0]:
+            return
+        evaluation_rows = self._connection.execute(
+            "SELECT * FROM signal_evaluations"
+        ).fetchall()
+        self._connection.commit()
+        self._connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            with self._connection:
+                self._connection.execute("DROP TABLE signal_evaluations")
+                self._connection.execute("ALTER TABLE signals RENAME TO signals_long_only")
+                self._connection.execute(
+                    """
+                    CREATE TABLE signals (
+                        run_id TEXT NOT NULL REFERENCES collection_runs(id) ON DELETE CASCADE,
+                        rank INTEGER NOT NULL CHECK (rank BETWEEN 1 AND 3),
+                        symbol TEXT NOT NULL,
+                        direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
+                        combined_regime TEXT NOT NULL DEFAULT 'OBSERVE' CHECK (
+                            combined_regime IN ('BULL', 'BEAR', 'RANGE', 'OBSERVE')
+                        ),
+                        sector TEXT NOT NULL DEFAULT 'OTHER' CHECK (sector IN (
+                            'AI_AGENT', 'RWA', 'MEME', 'DEPIN', 'INFRA',
+                            'LAYER1', 'LAYER2', 'DEFI', 'GAMEFI', 'OTHER'
+                        )),
+                        sector_rank INTEGER CHECK (sector_rank > 0),
+                        score REAL NOT NULL CHECK (score >= 0 AND score <= 100),
+                        entry TEXT NOT NULL, latest_close TEXT NOT NULL,
+                        stop_loss TEXT NOT NULL, stop_loss_pct TEXT NOT NULL,
+                        tp1 TEXT NOT NULL, tp2 TEXT NOT NULL, rr_tp1 TEXT NOT NULL,
+                        rr_tp2 TEXT NOT NULL, logic_summary TEXT NOT NULL, generated_at TEXT NOT NULL,
+                        PRIMARY KEY (run_id, symbol), UNIQUE (run_id, rank)
+                    )
+                    """
+                )
+                self._connection.execute(
+                    """
+                    INSERT INTO signals SELECT
+                        run_id, rank, symbol, direction, combined_regime, sector, sector_rank,
+                        score, entry, latest_close, stop_loss, stop_loss_pct, tp1, tp2,
+                        rr_tp1, rr_tp2, logic_summary, generated_at
+                    FROM signals_long_only
+                    """
+                )
+                self._connection.execute("DROP TABLE signals_long_only")
+                self._connection.execute(
+                    """
+                    CREATE TABLE signal_evaluations (
+                        signal_run_id TEXT NOT NULL, symbol TEXT NOT NULL,
+                        direction TEXT NOT NULL DEFAULT 'LONG' CHECK (direction IN ('LONG', 'SHORT')), entry TEXT NOT NULL,
+                        stop_loss TEXT NOT NULL, tp1 TEXT NOT NULL, tp2 TEXT NOT NULL,
+                        result TEXT NOT NULL CHECK (result IN ('LOSS', 'TP1_HIT', 'WIN_TP2', 'EXPIRED')),
+                        max_favorable_pct TEXT NOT NULL, max_adverse_pct TEXT NOT NULL,
+                        bars_to_result INTEGER NOT NULL CHECK (bars_to_result BETWEEN 1 AND 96),
+                        evaluated_at TEXT NOT NULL, PRIMARY KEY (signal_run_id, symbol),
+                        FOREIGN KEY (signal_run_id, symbol)
+                            REFERENCES signals(run_id, symbol) ON DELETE CASCADE
+                    )
+                    """
+                )
+                self._connection.executemany(
+                    """INSERT INTO signal_evaluations (
+                        signal_run_id, symbol, entry, stop_loss, tp1, tp2, result,
+                        max_favorable_pct, max_adverse_pct, bars_to_result, evaluated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    evaluation_rows,
+                )
+        finally:
+            self._connection.execute("PRAGMA foreign_keys = ON")
+
 
 def _iso_to_epoch_ms(value: str) -> int:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -939,6 +1230,8 @@ def _backtest_summary_dict(summary: BacktestSummary) -> dict[str, object]:
         "completed_at": summary.completed_at,
         "evaluation_points": summary.evaluation_points,
         **asdict(summary.metrics),
+        "by_direction": {key: asdict(value) for key, value in summary.by_direction.items()},
+        "by_regime": {key: asdict(value) for key, value in summary.by_combined_regime.items()},
         "by_combined_regime": {key: asdict(value) for key, value in summary.by_combined_regime.items()},
         "by_sector": {key: asdict(value) for key, value in summary.by_sector.items()},
         "by_score_bucket": {key: asdict(value) for key, value in summary.by_score_bucket.items()},
