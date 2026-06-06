@@ -81,69 +81,86 @@ class StrategyLab:
 
     def auto_research(
         self,
-        maximum_candidates: int = 5,
+        maximum_candidates: int = 10,
         start_ms: int | None = None,
         end_ms: int | None = None,
         step_bars: int = 1,
     ) -> tuple[StrategyComparison, ...]:
-        if not 1 <= maximum_candidates <= 5:
-            raise ValueError("maximum_candidates must be between 1 and 5")
+        if not 1 <= maximum_candidates <= 10:
+            raise ValueError("maximum_candidates must be between 1 and 10")
         baseline = self.ensure_baseline()
-        candidates = self._candidate_configs(baseline.config)[:maximum_candidates]
-        created_at = _utc_now()
-        for candidate in candidates:
-            self._repository.register_strategy_version(candidate, "candidate", created_at)
-        comparisons = self.compare(
-            tuple(item.strategy_id for item in candidates), start_ms, end_ms, step_bars
+        candidates = self._candidate_configs(baseline.config)
+        maximum_window = max(item.evaluation_window_bars for item in candidates)
+        common_points = self._repository.load_backtest_evaluation_times(
+            start_ms, end_ms, maximum_window
         )
-        return tuple(sorted(comparisons, key=_research_rank))
+        researched: list[tuple[StrategyConfig, StrategyComparison]] = []
+        for candidate in candidates:
+            summary = BacktestEngine(
+                self._repository,
+                self._sector_map,
+                BacktestPolicy(
+                    step_bars=step_bars,
+                    maximum_evaluation_bars=candidate.evaluation_window_bars,
+                ),
+                strategy_config=candidate,
+            ).run(start_ms, end_ms, common_points)
+            researched.append(
+                (candidate, StrategyComparison(candidate.strategy_id, summary.metrics))
+            )
+        passed = [item for item in researched if _passes_observation_gate(item[1])]
+        ranked = sorted(passed, key=lambda item: _research_rank(item[1]))
+        top = ranked[:maximum_candidates]
+        created_at = _utc_now()
+        for candidate, comparison in top:
+            self._repository.register_strategy_version(
+                candidate, "candidate", created_at, comparison.metrics
+            )
+        return tuple(comparison for _, comparison in top)
 
     @staticmethod
     def _candidate_configs(baseline: StrategyConfig) -> tuple[StrategyConfig, ...]:
         batch = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
         variants = (
-            {
-                "name": "Trend emphasis",
-                "description": "Research candidate with more trend and less volume weight.",
-                "scoring_weights": {
-                    "trend": 35.0, "volume": 15.0, "momentum": 20.0,
-                    "structure": 15.0, "risk": 15.0,
-                },
-            },
-            {
-                "name": "Higher gate quality",
-                "description": "Research candidate with stricter range and sector score gates.",
-                "range_min_score": min(100.0, baseline.range_min_score + 2.0),
-                "sector_medium_min_score": min(100.0, baseline.sector_medium_min_score + 2.0),
-                "sector_weak_min_score": min(100.0, baseline.sector_weak_min_score + 2.0),
-            },
-            {
-                "name": "Tighter entry window",
-                "description": "Research candidate requiring entries closer to the latest close.",
-                "entry_distance_min_pct": max(-10.0, baseline.entry_distance_min_pct + 0.5),
-                "entry_distance_max_pct": min(5.0, baseline.entry_distance_max_pct - 0.25),
-            },
-            {
-                "name": "Higher TP2 requirement",
-                "description": "Research candidate requiring additional structural reward room.",
-                "min_rr_tp2": baseline.min_rr_tp2 + 0.5,
-            },
-            {
-                "name": "Shorter evaluation window",
-                "description": "Research candidate evaluated over 72 closed 15m bars.",
-                "evaluation_window_bars": min(72, baseline.evaluation_window_bars),
-            },
+            ("Trend 35", {"scoring_weights": {"trend": 35.0, "volume": 15.0, "momentum": 20.0, "structure": 15.0, "risk": 15.0}}),
+            ("Momentum 25", {"scoring_weights": {"trend": 27.5, "volume": 17.5, "momentum": 25.0, "structure": 15.0, "risk": 15.0}}),
+            ("Structure 20", {"scoring_weights": {"trend": 27.5, "volume": 17.5, "momentum": 20.0, "structure": 20.0, "risk": 15.0}}),
+            ("Risk 20", {"scoring_weights": {"trend": 27.5, "volume": 17.5, "momentum": 20.0, "structure": 15.0, "risk": 20.0}}),
+            ("Volume 25", {"scoring_weights": {"trend": 27.5, "volume": 25.0, "momentum": 17.5, "structure": 15.0, "risk": 15.0}}),
+            ("Range 87", {"range_min_score": 87.0}),
+            ("Range 90", {"range_min_score": 90.0}),
+            ("Sector 87 92", {"sector_medium_min_score": 87.0, "sector_weak_min_score": 92.0}),
+            ("Sector 90 95", {"sector_medium_min_score": 90.0, "sector_weak_min_score": 95.0}),
+            ("Entry tight A", {"entry_distance_min_pct": -2.5, "entry_distance_max_pct": 0.75}),
+            ("Entry tight B", {"entry_distance_min_pct": -2.0, "entry_distance_max_pct": 0.5}),
+            ("Entry broad", {"entry_distance_min_pct": -4.0, "entry_distance_max_pct": 1.25}),
+            ("Stop 6", {"max_stop_loss_pct": 6.0}),
+            ("Stop 5", {"max_stop_loss_pct": 5.0}),
+            ("RR 2.25", {"min_rr_tp2": 2.25}),
+            ("RR 2.5", {"min_rr_tp2": 2.5}),
+            ("Window 72", {"evaluation_window_bars": 72}),
+            ("Window 48", {"evaluation_window_bars": 48}),
+            ("Quality combo", {"range_min_score": 88.0, "sector_medium_min_score": 88.0, "sector_weak_min_score": 93.0, "min_rr_tp2": 2.25}),
+            ("Tight combo", {"entry_distance_min_pct": -2.0, "entry_distance_max_pct": 0.5, "max_stop_loss_pct": 6.0, "evaluation_window_bars": 72}),
         )
         return tuple(
-            replace(
-                baseline,
-                strategy_id=f"candidate_{batch}_{index}",
-                name=str(variant["name"]),
-                description=str(variant["description"]),
-                **{key: value for key, value in variant.items() if key not in {"name", "description"}},
+            baseline.candidate(
+                f"candidate_{batch}_{index:02d}",
+                name,
+                "Automatically generated parameter-only research candidate.",
+                **changes,
             )
-            for index, variant in enumerate(variants, start=1)
+            for index, (name, changes) in enumerate(variants, start=1)
         )
+
+
+def _passes_observation_gate(item: StrategyComparison) -> bool:
+    metrics = item.metrics
+    return (
+        metrics.total_signals > 0
+        and metrics.expectancy_r > 0
+        and (metrics.profit_factor is None or metrics.profit_factor > 1.0)
+    )
 
 
 def _research_rank(item: StrategyComparison) -> tuple[float, float, float, str]:
