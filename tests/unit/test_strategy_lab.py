@@ -107,7 +107,7 @@ class StrategyLabTest(unittest.TestCase):
         original = baseline.as_dict()
         candidates = StrategyLab._candidate_configs(baseline)
         self.assertEqual(original, baseline.as_dict())
-        self.assertEqual(5, len(candidates))
+        self.assertEqual(20, len(candidates))
         self.assertTrue(all(item.strategy_id != "baseline_v1" for item in candidates))
 
 
