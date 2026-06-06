@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import date
 from dataclasses import asdict
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from binance_ai_trader.backtest import BacktestEngine, BacktestPolicy
 from binance_ai_trader.config import SectorConfig, UniverseConfig
 from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
+from binance_ai_trader.paper.service import PaperSimulator
+from binance_ai_trader.reporting import DailyReportService
 from binance_ai_trader.sectors import SectorMap
 from binance_ai_trader.strategy_lab.service import StrategyLab
 
@@ -25,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Binance USD-M Futures read-only analysis")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    scan = subparsers.add_parser("scan", help="collect, score, and generate LONG signals")
+    scan = subparsers.add_parser("scan", help="collect, score, and generate regime-directed signals")
     scan.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     scan.add_argument("--config", type=Path, default=Path("config/universe.json"))
     scan.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
@@ -45,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     sectors.add_argument("--config", type=Path, default=Path("config/sectors.json"))
     sectors.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
-    backtest = subparsers.add_parser("backtest", help="replay the LONG strategy on stored klines")
+    backtest = subparsers.add_parser("backtest", help="replay LONG/SHORT strategies on stored klines")
     backtest.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     backtest.add_argument("--config", type=Path, default=Path("config/sectors.json"))
     backtest.add_argument("--start-ms", type=int)
@@ -74,19 +77,31 @@ def build_parser() -> argparse.ArgumentParser:
     strategy_compare.add_argument("--step-bars", type=int, default=1)
     strategy_compare.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
-    auto_research = subparsers.add_parser("auto_research", help="generate and backtest candidate parameters")
+    auto_research = subparsers.add_parser("auto-research", aliases=["auto_research"], help="research 20 parameter sets and save the Top 10 candidates")
     auto_research.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     auto_research.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
     auto_research.add_argument(
         "--baseline-config", type=Path, default=Path("config/strategies/baseline_v1.json")
     )
-    auto_research.add_argument("--max-candidates", type=int, default=5)
+    auto_research.add_argument("--max-candidates", type=int, default=10, choices=range(1, 11))
     auto_research.add_argument("--start-ms", type=int)
     auto_research.add_argument("--end-ms", type=int)
     auto_research.add_argument("--step-bars", type=int, default=1)
     auto_research.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
-    evaluate = subparsers.add_parser("evaluate", help="evaluate stored LONG signals")
+
+    paper = subparsers.add_parser(
+        "paper-simulate", help="apply completed evaluations to the aggressive paper ledger"
+    )
+    paper.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    paper.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    daily = subparsers.add_parser("daily-report", help="print the daily research and paper summary")
+    daily.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    daily.add_argument("--date", type=date.fromisoformat)
+    daily.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    evaluate = subparsers.add_parser("evaluate", help="evaluate stored LONG/SHORT signals")
     evaluate.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     evaluate.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
     return parser
@@ -94,7 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto_research", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -102,8 +117,12 @@ def main(argv: list[str] | None = None) -> int:
         return _evaluate(args.database)
     if args.command == "strategies":
         return _strategies(args)
-    if args.command == "auto_research":
+    if args.command in {"auto-research", "auto_research"}:
         return _auto_research(args)
+    if args.command == "paper-simulate":
+        return _paper_simulate(args.database)
+    if args.command == "daily-report":
+        return _daily_report(args.database, args.date)
     if args.command == "backtest":
         return _backtest(args)
     if args.command == "regime":
@@ -162,7 +181,7 @@ def _scan(args: argparse.Namespace) -> int:
             )
         )
     logging.info(
-        "Regime %s; scored %d symbols and generated %d LONG signals for run %s; skipped scoring for %d",
+        "Regime %s; scored %d symbols and generated %d signals for run %s; skipped scoring for %d",
         market_regime.combined_regime,
         len(scoring_result.ranked_scores),
         len(signal_result.signals),
@@ -240,6 +259,12 @@ def _backtest(args: argparse.Namespace) -> int:
                 "completed_at": summary.completed_at,
                 "evaluation_points": summary.evaluation_points,
                 **asdict(summary.metrics),
+                "by_direction": {
+                    key: asdict(value) for key, value in summary.by_direction.items()
+                },
+                "by_regime": {
+                    key: asdict(value) for key, value in summary.by_combined_regime.items()
+                },
                 "by_combined_regime": {
                     key: asdict(value) for key, value in summary.by_combined_regime.items()
                 },
@@ -298,6 +323,37 @@ def _auto_research(args: argparse.Namespace) -> int:
     return 0
 
 
+def _paper_simulate(database: Path) -> int:
+    repository = MarketDataRepository(database)
+    try:
+        summary = PaperSimulator(repository).simulate()
+    finally:
+        repository.close()
+    print(json.dumps({
+        "starting_equity": str(summary.starting_equity),
+        "ending_equity": str(summary.ending_equity),
+        "processed_trades": summary.processed_trades,
+        "skipped_while_paused": summary.skipped_while_paused,
+        "mode": summary.mode,
+        "consecutive_losses": summary.consecutive_losses,
+        "paused_until": summary.paused_until,
+        "current_target": summary.current_target,
+        "aggressive_allowed": summary.aggressive_allowed,
+        "disclaimer": "Paper simulation only; no profit is guaranteed and no orders are placed.",
+    }, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _daily_report(database: Path, report_date: date | None) -> int:
+    repository = MarketDataRepository(database)
+    try:
+        payload = DailyReportService(repository).build(report_date)
+    finally:
+        repository.close()
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
 def _comparison_json(comparison: object) -> dict[str, object]:
     metrics = comparison.metrics
     return {
@@ -341,10 +397,16 @@ def _evaluate(database: Path) -> int:
                 "tp1_hit_rate": summary.tp1_hit_rate,
                 "tp2_win_rate": summary.tp2_win_rate,
                 "loss_rate": summary.loss_rate,
+                "expired_rate": summary.expired_rate,
+                "expectancy_r": summary.expectancy_r,
                 "average_max_favorable_pct": summary.average_max_favorable_pct,
                 "average_max_adverse_pct": summary.average_max_adverse_pct,
+                "by_direction": {
+                    key: asdict(value) for key, value in summary.by_direction.items()
+                },
             },
             separators=(",", ":"),
+            sort_keys=True,
         )
     )
     return 0
