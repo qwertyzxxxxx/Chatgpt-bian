@@ -13,10 +13,12 @@ def result(
     sector: str = "LAYER1",
     score: float = 92,
     time_ms: int = 1,
+    direction: str = "LONG",
 ) -> BacktestResult:
     return BacktestResult(
         evaluation_time_ms=time_ms,
         symbol=symbol,
+        direction=direction,
         combined_regime=regime,
         sector=sector,
         sector_rank=1,
@@ -38,7 +40,7 @@ class BacktestMetricsTest(unittest.TestCase):
         results = (
             result("LOSSUSDT", "LOSS", "-1", score=65, time_ms=1),
             result("TP1USDT", "TP1_HIT", "1.2", regime="RANGE", sector="DEFI", score=75, time_ms=2),
-            result("TP2USDT", "WIN_TP2", "2.5", score=85, time_ms=3),
+            result("TP2USDT", "WIN_TP2", "2.5", score=85, time_ms=3, direction="SHORT", regime="BEAR"),
             result("EXPIREDUSDT", "EXPIRED", "0", sector="MEME", score=95, time_ms=4),
         )
         summary = summarize_results("run", "start", "end", 10, results)
@@ -52,6 +54,9 @@ class BacktestMetricsTest(unittest.TestCase):
         self.assertEqual(0.675, summary.metrics.expectancy_r)
         self.assertEqual(1.0, summary.metrics.max_drawdown_r)
         self.assertEqual(2.5, summary.metrics.avg_rr_tp2)
+        self.assertEqual({"LONG", "SHORT"}, set(summary.by_direction))
+        self.assertEqual(3, summary.by_direction["LONG"].total_signals)
+        self.assertEqual(1, summary.by_direction["SHORT"].total_signals)
         self.assertEqual({"BULL", "BEAR", "RANGE", "OBSERVE"}, set(summary.by_combined_regime))
         self.assertEqual({"90-100", "80-90", "70-80", "below 70"}, set(summary.by_score_bucket))
 
