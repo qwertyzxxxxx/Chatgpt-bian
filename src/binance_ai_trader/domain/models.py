@@ -125,6 +125,7 @@ class StoredSignal:
 class SignalEvaluation:
     signal_run_id: str
     symbol: str
+    direction: str
     entry: Decimal
     stop_loss: Decimal
     tp1: Decimal
@@ -136,7 +137,7 @@ class SignalEvaluation:
 
 
 @dataclass(frozen=True, slots=True)
-class EvaluationSummary:
+class EvaluationMetrics:
     total_signals: int
     win_tp2_count: int
     tp1_hit_count: int
@@ -145,8 +146,15 @@ class EvaluationSummary:
     tp1_hit_rate: float
     tp2_win_rate: float
     loss_rate: float
+    expired_rate: float
+    expectancy_r: float
     average_max_favorable_pct: float
     average_max_adverse_pct: float
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationSummary(EvaluationMetrics):
+    by_direction: dict[str, EvaluationMetrics]
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +189,7 @@ class SectorSnapshot:
 class BacktestResult:
     evaluation_time_ms: int
     symbol: str
+    direction: str
     combined_regime: str
     sector: str
     sector_rank: int | None
@@ -216,6 +225,7 @@ class BacktestSummary:
     completed_at: str
     evaluation_points: int
     metrics: BacktestMetrics
+    by_direction: dict[str, BacktestMetrics]
     by_combined_regime: dict[str, BacktestMetrics]
     by_sector: dict[str, BacktestMetrics]
     by_score_bucket: dict[str, BacktestMetrics]
