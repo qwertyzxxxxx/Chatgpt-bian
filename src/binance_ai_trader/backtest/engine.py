@@ -7,6 +7,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from binance_ai_trader.capital import CapitalFlowHistory
+from binance_ai_trader.data_quality import quality_context_status
 from binance_ai_trader.domain.models import (
     BacktestMetrics,
     BacktestResult,
@@ -128,6 +129,15 @@ class BacktestEngine:
             for symbol in ("BTCUSDT", "ETHUSDT")
         }
         regime = self._regime.evaluate(regime_data["BTCUSDT"], regime_data["ETHUSDT"])
+        regime_counts = [
+            len(regime_data[symbol][interval])
+            for symbol in ("BTCUSDT", "ETHUSDT") for interval in self._regime.intervals
+        ]
+        regime_quality = (
+            "COMPLETE" if all(
+                count >= self._regime.policy.minimum_candles for count in regime_counts
+            ) else "MISSING" if not any(regime_counts) else "PARTIAL"
+        )
 
         scored = []
         point_data = {}
@@ -162,9 +172,10 @@ class BacktestEngine:
                     sector, sector_rank, signal_score, bool(sector_ranks)
                 ):
                     continue
-                capital_snapshot = self._capital.score_at(
+                capital_assessment = self._capital.assess_at(
                     run_id_for_point(evaluation_time_ms), score.symbol, evaluation_time_ms
                 )
+                capital_snapshot = capital_assessment.snapshot
                 capital_score = (
                     50.0 if capital_snapshot is None else float(capital_snapshot.capital_score)
                 )
@@ -177,8 +188,24 @@ class BacktestEngine:
                             run_id_for_point(evaluation_time_ms), score.symbol, direction, history_4h
                         ).space_score
                     )
+                    space_quality = "COMPLETE"
                 except ValueError:
                     space_score = 50.0
+                    space_quality = "MISSING"
+                quality = {
+                    "scan": "COMPLETE",
+                    "score": score.data_quality_status,
+                    "regime": regime_quality,
+                    "sector": "COMPLETE" if sector_rank is not None else "MISSING",
+                    "capital": capital_assessment.data_quality_status,
+                    "space": space_quality,
+                }
+                if sector_rank is None:
+                    quality["sector_value"] = "FALLBACK"
+                if capital_snapshot is None:
+                    quality["capital_value"] = "FALLBACK"
+                if space_quality != "COMPLETE":
+                    quality["space_value"] = "FALLBACK"
                 trend_score = _component_score(score.score_breakdown, "trend", score.score)
                 final_score = final_signal_score(
                     capital_score=capital_score, space_score=space_score, trend_score=trend_score,
@@ -186,14 +213,14 @@ class BacktestEngine:
                 )
                 opportunities.append(
                     (score, tick_size, direction, signal_score, sector, sector_rank,
-                     capital_score, space_score, final_score)
+                     capital_score, space_score, final_score, quality)
                 )
         opportunities.sort(key=lambda item: (-item[8], item[2], item[0].symbol))
 
         signals = []
         direction_counts = {"LONG": 0, "SHORT": 0}
         for (score, tick_size, direction, signal_score, sector, sector_rank,
-             capital_score, space_score, final_score) in opportunities:
+             capital_score, space_score, final_score, quality) in opportunities:
             if direction_counts[direction] >= 3:
                 continue
             directional_score = score if direction == "LONG" else type(score)(
@@ -207,6 +234,7 @@ class BacktestEngine:
                     },
                 },
                 algorithm_version=score.algorithm_version,
+                data_quality_status=score.data_quality_status,
             )
             engine = self._signals if direction == "LONG" else self._short_signals
             try:
@@ -221,12 +249,15 @@ class BacktestEngine:
                 signal = None
             if signal is None:
                 continue
-            signals.append((signal, sector, sector_rank, capital_score, space_score, final_score))
+            signals.append((
+                signal, sector, sector_rank, capital_score, space_score, final_score, quality
+            ))
             direction_counts[direction] += 1
 
         completed = []
         generated_at = _epoch_iso(evaluation_time_ms)
-        for signal, sector, sector_rank, capital_score, space_score, final_score in signals:
+        for (signal, sector, sector_rank, capital_score, space_score, final_score,
+             quality) in signals:
             future = self._repository.load_klines_after(
                 signal.symbol, "15m", evaluation_time_ms, self._policy.maximum_evaluation_bars
             )
@@ -269,6 +300,8 @@ class BacktestEngine:
                     space_score=space_score,
                     final_signal_score=final_score,
                     snapshot_id=snapshot_id,
+                    data_quality_status=quality_context_status(quality),
+                    data_quality=quality,
                 )
             )
         return tuple(completed)

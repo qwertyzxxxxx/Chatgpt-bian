@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from binance_ai_trader.domain.models import ScoringResult
@@ -24,6 +25,7 @@ class MarketScorer:
         excluded = set(excluded_symbols)
         scores = []
         skipped = set(excluded)
+        incomplete_symbols: set[str] = set()
         for symbol in sorted(set(symbols) - excluded):
             klines = {
                 interval: self._repository.load_klines_at(
@@ -35,10 +37,21 @@ class MarketScorer:
                 scores.append(self._engine.score(symbol, klines))
             except InsufficientDataError:
                 skipped.add(symbol)
+                incomplete_symbols.add(symbol)
 
-        ranked = tuple(sorted(scores, key=lambda item: (-item.score, item.symbol)))
+        run_quality = self._repository.load_run_quality(run_id)
+        score_quality = (
+            "PARTIAL" if incomplete_symbols or run_quality == "PARTIAL" else run_quality
+        )
+        ranked = tuple(
+            replace(item, data_quality_status=score_quality)
+            for item in sorted(scores, key=lambda item: (-item.score, item.symbol))
+        )
         self._repository.save_scores(run_id, ranked, _utc_now())
-        return ScoringResult(run_id=run_id, ranked_scores=ranked, skipped_symbols=tuple(sorted(skipped)))
+        return ScoringResult(
+            run_id=run_id, ranked_scores=ranked, skipped_symbols=tuple(sorted(skipped)),
+            data_quality_status=score_quality,
+        )
 
 
 def _utc_now() -> str:

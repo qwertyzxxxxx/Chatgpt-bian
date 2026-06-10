@@ -54,6 +54,8 @@ class ShortSignalPersistenceIntegrationTest(unittest.TestCase):
             self.assertIn("'SHORT'", schema)
             self.assertNotIn("direction = 'LONG'", schema)
             self.assertIn("snapshot_id", signal_columns)
+            self.assertIn("data_quality_status", signal_columns)
+            self.assertIn("data_quality_json", signal_columns)
             self.assertEqual(("analysis_snapshots",), snapshot_table)
 
 

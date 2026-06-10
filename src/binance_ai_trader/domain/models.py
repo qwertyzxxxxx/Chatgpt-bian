@@ -57,6 +57,7 @@ class CollectionResult:
     universe: tuple[UniverseMember, ...]
     kline_count: int
     failed_requests: tuple[str, ...]
+    data_quality_status: str = "COMPLETE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,7 @@ class SymbolScore:
     score: float
     score_breakdown: dict[str, object]
     algorithm_version: str
+    data_quality_status: str = "COMPLETE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +74,7 @@ class ScoringResult:
     run_id: str
     ranked_scores: tuple[SymbolScore, ...]
     skipped_symbols: tuple[str, ...]
+    data_quality_status: str = "COMPLETE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +117,8 @@ class TradeSignal:
     capital_score: float = 50.0
     space_score: float = 50.0
     final_signal_score: float = 50.0
+    data_quality_status: str = "COMPLETE"
+    data_quality: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +185,7 @@ class MarketRegime:
     btc_regime: str
     eth_regime: str
     combined_regime: str
+    data_quality_status: str = "COMPLETE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +194,7 @@ class SectorMember:
     score: float
     change_24h: Decimal
     quote_volume_24h: Decimal
+    data_quality_status: str = "COMPLETE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +208,7 @@ class SectorSnapshot:
     top3_avg_score: Decimal
     positive_24h_ratio: Decimal
     quote_volume_24h: Decimal
+    data_quality_status: str = "COMPLETE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +233,8 @@ class BacktestResult:
     space_score: float = 50.0
     final_signal_score: float = 50.0
     snapshot_id: str | None = None
+    data_quality_status: str = "COMPLETE"
+    data_quality: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)

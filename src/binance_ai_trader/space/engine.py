@@ -21,6 +21,7 @@ class SpaceSnapshot:
     upside_pct: Decimal
     downside_pct: Decimal
     space_score: Decimal
+    data_quality_status: str = "COMPLETE"
 
 
 class SpaceEngine:

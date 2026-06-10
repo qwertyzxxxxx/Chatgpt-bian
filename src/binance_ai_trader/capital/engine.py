@@ -41,6 +41,7 @@ class CapitalSnapshot:
     volume_expansion_score: Decimal
     oi_expansion_score: Decimal
     capital_score: Decimal
+    data_quality_status: str = "COMPLETE"
 
 
 class CapitalFlowEngine:

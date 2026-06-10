@@ -54,6 +54,25 @@ class ScoringIntegrationTest(unittest.TestCase):
 
         self.assertEqual(("GOODUSDT",), tuple(item.symbol for item in result.ranked_scores))
         self.assertEqual(("FAILEDUSDT", "MISSINGUSDT"), result.skipped_symbols)
+        self.assertEqual("PARTIAL", result.data_quality_status)
+
+    def test_policy_exclusion_does_not_degrade_complete_score_quality(self) -> None:
+        repository = MarketDataRepository(self.database)
+        try:
+            repository.start_run("run-3", "2026-06-05T00:00:00.000+00:00")
+            for klines in market("GOODUSDT", 0.002).values():
+                repository.save_klines(klines)
+            repository.finish_run(
+                "run-3", "2026-06-05T00:01:00.000+00:00", "SUCCEEDED", 2, 600, None
+            )
+            result = MarketScorer(repository).score_run(
+                "run-3", ("GOODUSDT", "EXCLUDEDUSDT"), ("EXCLUDEDUSDT",)
+            )
+        finally:
+            repository.close()
+
+        self.assertEqual("COMPLETE", result.data_quality_status)
+        self.assertEqual(("EXCLUDEDUSDT",), result.skipped_symbols)
 
 
 if __name__ == "__main__":

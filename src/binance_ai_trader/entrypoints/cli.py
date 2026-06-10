@@ -225,6 +225,8 @@ def _scan(args: argparse.Namespace) -> int:
                     "capital_score": signal.capital_score,
                     "space_score": signal.space_score,
                     "final_signal_score": signal.final_signal_score,
+                    "data_quality_status": signal.data_quality_status,
+                    "data_quality": signal.data_quality or {},
                     "entry": str(signal.entry),
                     "latest_close": str(signal.latest_close),
                     "stop_loss": str(signal.stop_loss),
@@ -261,6 +263,7 @@ def _regime(database: Path) -> int:
                 "btc_regime": regime.btc_regime,
                 "eth_regime": regime.eth_regime,
                 "combined_regime": regime.combined_regime,
+                "data_quality_status": regime.data_quality_status,
             },
             separators=(",", ":"),
         )
@@ -290,6 +293,7 @@ def _sectors(database: Path, config_path: Path) -> int:
                     "top3_avg_score": str(snapshot.top3_avg_score),
                     "positive_24h_ratio": str(snapshot.positive_24h_ratio),
                     "quote_volume_24h": str(snapshot.quote_volume_24h),
+                    "data_quality_status": snapshot.data_quality_status,
                 },
                 separators=(",", ":"),
             )

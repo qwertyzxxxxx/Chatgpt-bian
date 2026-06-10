@@ -53,7 +53,10 @@ class MarketDataCollector:
                 kline_count=kline_count,
                 error_summary="; ".join(failures) or None,
             )
-            return CollectionResult(run_id, universe, kline_count, tuple(failures))
+            return CollectionResult(
+                run_id, universe, kline_count, tuple(failures),
+                "PARTIAL" if failures else "COMPLETE",
+            )
         except Exception as exc:
             self._repository.finish_run(run_id, _utc_now(), "FAILED", 0, 0, str(exc))
             raise

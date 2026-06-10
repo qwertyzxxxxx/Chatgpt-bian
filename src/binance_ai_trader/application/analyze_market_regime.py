@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -41,6 +42,17 @@ class MarketRegimeAnalyzer:
             for symbol in self.symbols
         }
         regime = self._engine.evaluate(market_data["BTCUSDT"], market_data["ETHUSDT"])
+        counts = [
+            len(market_data[symbol][interval])
+            for symbol in self.symbols for interval in self._engine.intervals
+        ]
+        complete = all(count >= self._engine.policy.minimum_candles for count in counts)
+        quality = (
+            (self._repository.load_run_quality(snapshot.collection_run_id)
+             if snapshot.collection_run_id else "COMPLETE")
+            if complete else "MISSING" if not any(counts) else "PARTIAL"
+        )
+        regime = replace(regime, data_quality_status=quality)
         evaluated_at = _utc_now()
         self._repository.save_market_regime(regime, evaluated_at, snapshot.snapshot_id)
         if snapshot.snapshot_type == "MANUAL":

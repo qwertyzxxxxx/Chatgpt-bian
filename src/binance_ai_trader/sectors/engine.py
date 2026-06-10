@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from statistics import median
 
+from binance_ai_trader.data_quality import worst_quality
 from binance_ai_trader.domain.models import SectorMember, SectorSnapshot
 
 
@@ -74,6 +75,7 @@ class SectorStrengthEngine:
                 top3_avg_score=item.top3_avg_score,
                 positive_24h_ratio=item.positive_24h_ratio,
                 quote_volume_24h=item.quote_volume_24h,
+                data_quality_status=item.data_quality_status,
             )
             for rank, item in enumerate(snapshots, start=1)
         )
@@ -94,6 +96,9 @@ class SectorStrengthEngine:
             top3_avg_score=_two_places(sum(top_scores, Decimal("0")) / Decimal(len(top_scores))),
             positive_24h_ratio=_four_places(Decimal(positive) / Decimal(count)),
             quote_volume_24h=sum((member.quote_volume_24h for member in members), Decimal("0")),
+            data_quality_status=worst_quality(
+                *(member.data_quality_status for member in members)
+            ),
         )
 
 

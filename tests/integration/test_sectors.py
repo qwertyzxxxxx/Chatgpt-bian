@@ -120,6 +120,7 @@ class SectorStrengthIntegrationTest(unittest.TestCase):
             {
                 "sector", "sector_rank", "member_count", "avg_score", "median_score",
                 "top3_avg_score", "positive_24h_ratio", "quote_volume_24h",
+                "data_quality_status",
             },
             set(lines[0]),
         )

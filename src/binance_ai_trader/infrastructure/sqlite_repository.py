@@ -403,6 +403,8 @@ class MarketDataRepository:
                 item.capital_score, item.space_score, item.final_signal_score, str(item.entry),
                 str(item.stop_loss), str(item.tp1), str(item.tp2), str(item.rr_tp1),
                 str(item.rr_tp2), item.result, item.bars_to_result, str(item.realized_r),
+                item.data_quality_status,
+                json.dumps(item.data_quality or {}, sort_keys=True, separators=(",", ":")),
             ))
         with self._connection:
             self._connection.executemany(
@@ -410,8 +412,9 @@ class MarketDataRepository:
                 INSERT INTO backtest_results (
                     backtest_run_id, snapshot_id, evaluation_time_ms, symbol, direction, combined_regime, sector,
                     sector_rank, score, capital_score, space_score, final_signal_score, entry,
-                    stop_loss, tp1, tp2, rr_tp1, rr_tp2, result, bars_to_result, realized_r
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    stop_loss, tp1, tp2, rr_tp1, rr_tp2, result, bars_to_result, realized_r,
+                    data_quality_status, data_quality_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -697,6 +700,39 @@ class MarketDataRepository:
                 rows,
             )
 
+    def load_capital_input_quality_at(self, symbol: str, as_of_ms: int) -> str:
+        hour_ms = 3_600_000
+        requirements = (
+            ("OPEN_INTEREST", as_of_ms, 2 * hour_ms),
+            ("OPEN_INTEREST", as_of_ms - hour_ms, 2 * hour_ms),
+            ("OPEN_INTEREST", as_of_ms - 4 * hour_ms, 2 * hour_ms),
+            ("OPEN_INTEREST", as_of_ms - 24 * hour_ms, 2 * hour_ms),
+            ("FUNDING_RATE", as_of_ms, 12 * hour_ms),
+            ("LONG_SHORT_RATIO", as_of_ms, 2 * hour_ms),
+        )
+        states = [
+            self._capital_value_quality(symbol, metric, cutoff, maximum_age)
+            for metric, cutoff, maximum_age in requirements
+        ]
+        if all(state == "COMPLETE" for state in states):
+            return "COMPLETE"
+        if "MISSING" in states:
+            return "MISSING" if all(state == "MISSING" for state in states) else "PARTIAL"
+        return "STALE"
+
+    def _capital_value_quality(
+        self, symbol: str, metric: str, as_of_ms: int, maximum_age_ms: int
+    ) -> str:
+        row = self._connection.execute(
+            """SELECT observed_at_ms FROM capital_flow_observations
+               WHERE symbol=? AND metric=? AND observed_at_ms<=?
+               ORDER BY observed_at_ms DESC LIMIT 1""",
+            (symbol, metric, as_of_ms),
+        ).fetchone()
+        if row is None:
+            return "MISSING"
+        return "STALE" if as_of_ms - int(row[0]) > maximum_age_ms else "COMPLETE"
+
     def load_capital_inputs_at(
         self, symbol: str, as_of_ms: int
     ) -> CapitalInputs | None:
@@ -777,15 +813,16 @@ class MarketDataRepository:
             str(item.current_funding_rate), str(item.funding_score),
             str(item.long_short_ratio), str(item.crowding_score),
             str(item.volume_expansion_score), str(item.oi_expansion_score),
-            str(item.capital_score), calculated_at,
+            str(item.capital_score), item.data_quality_status, calculated_at,
         ) for item in snapshots]
         with self._connection:
             self._connection.executemany(
                 """INSERT INTO capital_snapshots (
                     run_id,snapshot_id,symbol,oi_current,oi_change_1h_pct,oi_change_4h_pct,
                     oi_change_24h_pct,current_funding_rate,funding_score,long_short_ratio,
-                    crowding_score,volume_expansion_score,oi_expansion_score,capital_score,calculated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    crowding_score,volume_expansion_score,oi_expansion_score,capital_score,
+                    data_quality_status,calculated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id,symbol) DO UPDATE SET
                     oi_current=excluded.oi_current,oi_change_1h_pct=excluded.oi_change_1h_pct,
                     oi_change_4h_pct=excluded.oi_change_4h_pct,oi_change_24h_pct=excluded.oi_change_24h_pct,
@@ -793,7 +830,7 @@ class MarketDataRepository:
                     long_short_ratio=excluded.long_short_ratio,crowding_score=excluded.crowding_score,
                     volume_expansion_score=excluded.volume_expansion_score,
                     oi_expansion_score=excluded.oi_expansion_score,capital_score=excluded.capital_score,
-                    calculated_at=excluded.calculated_at""", rows)
+                    data_quality_status=excluded.data_quality_status,calculated_at=excluded.calculated_at""", rows)
 
     def save_space_snapshots(self, snapshots: Iterable[SpaceSnapshot], calculated_at: str) -> None:
         snapshots = tuple(snapshots)
@@ -805,13 +842,14 @@ class MarketDataRepository:
             str(item.high_distance_60d_pct),str(item.high_distance_120d_pct),
             str(item.low_distance_30d_pct),str(item.low_distance_60d_pct),
             str(item.low_distance_120d_pct),str(item.upside_pct),str(item.downside_pct),
-            str(item.space_score),calculated_at) for item in snapshots]
+            str(item.space_score),item.data_quality_status,calculated_at) for item in snapshots]
         with self._connection:
             self._connection.executemany(
                 """INSERT INTO space_snapshots (run_id,symbol,direction,high_distance_30d_pct,
                     high_distance_60d_pct,high_distance_120d_pct,low_distance_30d_pct,
-                    low_distance_60d_pct,low_distance_120d_pct,upside_pct,downside_pct,space_score,calculated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    low_distance_60d_pct,low_distance_120d_pct,upside_pct,downside_pct,space_score,
+                    data_quality_status,calculated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(run_id,symbol,direction) DO UPDATE SET
                     high_distance_30d_pct=excluded.high_distance_30d_pct,
                     high_distance_60d_pct=excluded.high_distance_60d_pct,
@@ -819,15 +857,33 @@ class MarketDataRepository:
                     low_distance_30d_pct=excluded.low_distance_30d_pct,
                     low_distance_60d_pct=excluded.low_distance_60d_pct,
                     low_distance_120d_pct=excluded.low_distance_120d_pct,upside_pct=excluded.upside_pct,
-                    downside_pct=excluded.downside_pct,space_score=excluded.space_score,calculated_at=excluded.calculated_at""", rows)
+                    downside_pct=excluded.downside_pct,space_score=excluded.space_score,
+                    data_quality_status=excluded.data_quality_status,calculated_at=excluded.calculated_at""", rows)
 
     def load_capital_scores(self, run_id: str) -> dict[str, float]:
-        return {row[0]: float(row[1]) for row in self._connection.execute(
-            "SELECT symbol,capital_score FROM capital_snapshots WHERE run_id=?", (run_id,)).fetchall()}
+        return {symbol: value for symbol, (value, _quality)
+                in self.load_capital_scores_with_quality(run_id).items()}
+
+    def load_capital_scores_with_quality(
+        self, run_id: str
+    ) -> dict[str, tuple[float, str]]:
+        return {row[0]: (float(row[1]), row[2]) for row in self._connection.execute(
+            "SELECT symbol,capital_score,data_quality_status FROM capital_snapshots WHERE run_id=?",
+            (run_id,),
+        ).fetchall()}
 
     def load_space_scores(self, run_id: str) -> dict[tuple[str, str], float]:
-        return {(row[0],row[1]): float(row[2]) for row in self._connection.execute(
-            "SELECT symbol,direction,space_score FROM space_snapshots WHERE run_id=?", (run_id,)).fetchall()}
+        return {key: value for key, (value, _quality)
+                in self.load_space_scores_with_quality(run_id).items()}
+
+    def load_space_scores_with_quality(
+        self, run_id: str
+    ) -> dict[tuple[str, str], tuple[float, str]]:
+        return {(row[0], row[1]): (float(row[2]), row[3])
+                for row in self._connection.execute(
+                    "SELECT symbol,direction,space_score,data_quality_status "
+                    "FROM space_snapshots WHERE run_id=?", (run_id,),
+                ).fetchall()}
 
     def load_capital_score_at(self, symbol: str, as_of_ms: int) -> float:
         row = self._connection.execute(
@@ -848,6 +904,7 @@ class MarketDataRepository:
                 item.score,
                 json.dumps(item.score_breakdown, sort_keys=True, separators=(",", ":")),
                 item.algorithm_version,
+                item.data_quality_status,
                 created_at,
             )
             for rank, item in enumerate(scores, start=1)
@@ -857,8 +914,9 @@ class MarketDataRepository:
             self._connection.executemany(
                 """
                 INSERT INTO scores (
-                    run_id, rank, symbol, score, score_breakdown_json, algorithm_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    run_id, rank, symbol, score, score_breakdown_json, algorithm_version,
+                    data_quality_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -873,7 +931,7 @@ class MarketDataRepository:
             raise ValueError("snapshot is not backed by a collection run")
         rows = self._connection.execute(
             """SELECT s.run_id, s.rank, s.symbol, s.score, s.score_breakdown_json,
-                      s.algorithm_version, u.tick_size
+                      s.algorithm_version, u.tick_size, s.data_quality_status
                FROM scores AS s
                JOIN universe_snapshots AS u ON u.run_id=s.run_id AND u.symbol=s.symbol
                WHERE s.run_id=? ORDER BY s.rank, s.symbol LIMIT ?""",
@@ -884,7 +942,7 @@ class MarketDataRepository:
                 run_id=row[0], rank=row[1],
                 score=SymbolScore(
                     symbol=row[2], score=row[3], score_breakdown=json.loads(row[4]),
-                    algorithm_version=row[5],
+                    algorithm_version=row[5], data_quality_status=row[7],
                 ),
                 tick_size=Decimal(row[6]),
             )
@@ -906,7 +964,8 @@ class MarketDataRepository:
         if run_id is None:
             return None, ()
         rows = self._connection.execute(
-            """SELECT s.run_id, s.symbol, s.score, u.change_24h, u.volume_24h
+            """SELECT s.run_id, s.symbol, s.score, u.change_24h, u.volume_24h,
+                      s.data_quality_status
                FROM scores AS s
                JOIN universe_snapshots AS u ON u.run_id=s.run_id AND u.symbol=s.symbol
                WHERE s.run_id=? ORDER BY s.rank, s.symbol""",
@@ -917,7 +976,7 @@ class MarketDataRepository:
         return run_id, tuple(
             SectorMember(
                 symbol=row[1], score=row[2], change_24h=Decimal(row[3]),
-                quote_volume_24h=Decimal(row[4]),
+                quote_volume_24h=Decimal(row[4]), data_quality_status=row[5],
             )
             for row in rows
         )
@@ -947,6 +1006,7 @@ class MarketDataRepository:
                 str(item.top3_avg_score),
                 str(item.positive_24h_ratio),
                 str(item.quote_volume_24h),
+                item.data_quality_status,
                 calculated_at,
             )
             for item in snapshots
@@ -957,8 +1017,9 @@ class MarketDataRepository:
                 """
                 INSERT INTO sector_snapshots (
                     run_id, sector, sector_rank, member_count, avg_score, median_score,
-                    top3_avg_score, positive_24h_ratio, quote_volume_24h, calculated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    top3_avg_score, positive_24h_ratio, quote_volume_24h,
+                    data_quality_status, calculated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -974,6 +1035,25 @@ class MarketDataRepository:
             (run_id,),
         ).fetchall()
         return {row[0]: row[1] for row in rows}
+
+    def load_sector_quality(self, run_id: str) -> dict[str, str]:
+        return {row[0]: row[1] for row in self._connection.execute(
+            "SELECT sector,data_quality_status FROM sector_snapshots WHERE run_id=?",
+            (run_id,),
+        ).fetchall()}
+
+    def load_regime_quality(self, snapshot_id: str) -> str:
+        row = self._connection.execute(
+            "SELECT data_quality_status FROM market_regimes WHERE snapshot_id=?",
+            (snapshot_id,),
+        ).fetchone()
+        return "MISSING" if row is None else row[0]
+
+    def load_run_quality(self, run_id: str) -> str:
+        row = self._connection.execute(
+            "SELECT data_quality_status FROM collection_runs WHERE id=?", (run_id,)
+        ).fetchone()
+        return "MISSING" if row is None else row[0]
 
     def load_combined_regime(self, snapshot_id: str) -> str:
         row = self._connection.execute(
@@ -1018,6 +1098,8 @@ class MarketDataRepository:
                 str(item.rr_tp1),
                 str(item.rr_tp2),
                 item.logic_summary,
+                item.data_quality_status,
+                json.dumps(item.data_quality or {}, sort_keys=True, separators=(",", ":")),
                 generated_at,
             )
             for rank, item in enumerate(signals, start=1)
@@ -1029,8 +1111,9 @@ class MarketDataRepository:
                 INSERT INTO signals (
                     run_id, snapshot_id, rank, symbol, direction, combined_regime, sector, sector_rank,
                     score, capital_score, space_score, final_signal_score, entry, latest_close,
-                    stop_loss, stop_loss_pct, tp1, tp2, rr_tp1, rr_tp2, logic_summary, generated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    stop_loss, stop_loss_pct, tp1, tp2, rr_tp1, rr_tp2, logic_summary,
+                    data_quality_status, data_quality_json, generated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -1186,10 +1269,11 @@ class MarketDataRepository:
         with self._connection:
             self._connection.execute(
                 """INSERT INTO market_regimes (
-                       snapshot_id, btc_regime, eth_regime, combined_regime, evaluated_at
-                   ) VALUES (?, ?, ?, ?, ?)""",
+                       snapshot_id, btc_regime, eth_regime, combined_regime,
+                       data_quality_status, evaluated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
                 (snapshot_id, regime.btc_regime, regime.eth_regime,
-                 regime.combined_regime, evaluated_at),
+                 regime.combined_regime, regime.data_quality_status, evaluated_at),
             )
 
     def finish_run(
@@ -1205,10 +1289,13 @@ class MarketDataRepository:
             self._connection.execute(
                 """
                 UPDATE collection_runs
-                SET finished_at=?, status=?, universe_size=?, kline_count=?, error_summary=?
+                SET finished_at=?, status=?, universe_size=?, kline_count=?, error_summary=?,
+                    data_quality_status=?
                 WHERE id=?
                 """,
-                (finished_at, status, universe_size, kline_count, error_summary, run_id),
+                (finished_at, status, universe_size, kline_count, error_summary,
+                 "COMPLETE" if status == "SUCCEEDED" else
+                 "PARTIAL" if status == "PARTIAL" else "MISSING", run_id),
             )
 
     def _migrate(self) -> None:
@@ -1506,6 +1593,7 @@ class MarketDataRepository:
         self._ensure_backtest_v2_columns()
         self._ensure_analysis_snapshot_lineage()
         self._ensure_capital_flow_history()
+        self._ensure_data_quality_status()
 
     def _ensure_analysis_snapshot_lineage(self) -> None:
         table_columns = {
@@ -1698,6 +1786,51 @@ class MarketDataRepository:
                 END;
                 """
             )
+
+    def _ensure_data_quality_status(self) -> None:
+        quality_tables = (
+            "collection_runs", "scores", "capital_snapshots", "space_snapshots",
+            "signals", "market_regimes", "sector_snapshots", "backtest_results",
+        )
+        with self._connection:
+            for table in quality_tables:
+                columns = {
+                    row[1] for row in self._connection.execute(f"PRAGMA table_info({table})")
+                }
+                if "data_quality_status" not in columns:
+                    default = "MISSING" if table == "collection_runs" else "COMPLETE"
+                    self._connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN data_quality_status "
+                        f"TEXT NOT NULL DEFAULT '{default}'"
+                    )
+                if table in {"signals", "backtest_results"} and "data_quality_json" not in columns:
+                    self._connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN data_quality_json "
+                        "TEXT NOT NULL DEFAULT '{}'"
+                    )
+            self._connection.execute(
+                """UPDATE collection_runs SET data_quality_status=CASE status
+                       WHEN 'SUCCEEDED' THEN 'COMPLETE'
+                       WHEN 'PARTIAL' THEN 'PARTIAL' ELSE 'MISSING' END"""
+            )
+            allowed = "'COMPLETE','PARTIAL','STALE','FALLBACK','MISSING'"
+            for table in quality_tables:
+                self._connection.executescript(
+                    f"""
+                    CREATE TRIGGER IF NOT EXISTS trg_{table}_quality_insert
+                    BEFORE INSERT ON {table}
+                    WHEN NEW.data_quality_status NOT IN ({allowed})
+                    BEGIN
+                        SELECT RAISE(ABORT, 'invalid data quality status');
+                    END;
+                    CREATE TRIGGER IF NOT EXISTS trg_{table}_quality_update
+                    BEFORE UPDATE OF data_quality_status ON {table}
+                    WHEN NEW.data_quality_status NOT IN ({allowed})
+                    BEGIN
+                        SELECT RAISE(ABORT, 'invalid data quality status');
+                    END;
+                    """
+                )
 
     def _ensure_signals_combined_regime(self) -> None:
         columns = {

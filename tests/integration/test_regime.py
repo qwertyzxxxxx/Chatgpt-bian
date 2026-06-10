@@ -55,7 +55,8 @@ class MarketRegimeIntegrationTest(unittest.TestCase):
         payload = json.loads(output.getvalue())
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            {"btc_regime": "BULL", "eth_regime": "BULL", "combined_regime": "BULL"},
+            {"btc_regime": "BULL", "eth_regime": "BULL", "combined_regime": "BULL",
+             "data_quality_status": "COMPLETE"},
             payload,
         )
 
@@ -65,7 +66,8 @@ class MarketRegimeIntegrationTest(unittest.TestCase):
             exit_code = main(["regime", "--database", str(self.database)])
         self.assertEqual(0, exit_code)
         self.assertEqual(
-            {"btc_regime": "OBSERVE", "eth_regime": "OBSERVE", "combined_regime": "OBSERVE"},
+            {"btc_regime": "OBSERVE", "eth_regime": "OBSERVE", "combined_regime": "OBSERVE",
+             "data_quality_status": "MISSING"},
             json.loads(output.getvalue()),
         )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from binance_ai_trader.data_quality import quality_context_status
 from binance_ai_trader.domain.models import SignalResult
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 from binance_ai_trader.sectors import SectorMap
@@ -54,8 +55,11 @@ class SignalGenerator:
         run_id = ranked_scores[0].run_id
         combined_regime = self._repository.load_combined_regime(snapshot.snapshot_id)
         sector_ranks = self._repository.load_sector_ranks(run_id)
-        capital_scores = self._repository.load_capital_scores(run_id)
-        space_scores = self._repository.load_space_scores(run_id)
+        capital_scores = self._repository.load_capital_scores_with_quality(run_id)
+        space_scores = self._repository.load_space_scores_with_quality(run_id)
+        sector_quality = self._repository.load_sector_quality(run_id)
+        run_quality = self._repository.load_run_quality(run_id)
+        regime_quality = self._repository.load_regime_quality(snapshot.snapshot_id)
         snapshots_available = bool(sector_ranks)
         opportunities = []
         for ranked in ranked_scores:
@@ -70,8 +74,28 @@ class SignalGenerator:
                     sector, sector_rank, signal_score, snapshots_available
                 ):
                     continue
-                capital_score = capital_scores.get(ranked.score.symbol, 50.0)
-                space_score = space_scores.get((ranked.score.symbol, direction), 50.0)
+                capital_item = capital_scores.get(ranked.score.symbol)
+                space_item = space_scores.get((ranked.score.symbol, direction))
+                capital_score = 50.0 if capital_item is None else capital_item[0]
+                space_score = 50.0 if space_item is None else space_item[0]
+                quality = {
+                    "scan": run_quality,
+                    "score": ranked.score.data_quality_status,
+                    "regime": regime_quality,
+                    "sector": sector_quality.get(sector, "MISSING"),
+                    "capital": (
+                        self._repository.load_capital_input_quality_at(
+                            ranked.score.symbol, snapshot.data_cutoff_ms
+                        ) if capital_item is None else capital_item[1]
+                    ),
+                    "space": "MISSING" if space_item is None else space_item[1],
+                }
+                if not snapshots_available or sector_rank is None:
+                    quality["sector_value"] = "FALLBACK"
+                if capital_item is None:
+                    quality["capital_value"] = "FALLBACK"
+                if space_item is None:
+                    quality["space_value"] = "FALLBACK"
                 trend_score = _component_score(ranked.score.score_breakdown, "trend", ranked.score.score)
                 final_score = final_signal_score(
                     capital_score=capital_score, space_score=space_score, trend_score=trend_score,
@@ -79,14 +103,15 @@ class SignalGenerator:
                 )
                 opportunities.append((
                     ranked, direction, signal_score, sector, sector_rank,
-                    capital_score, space_score, final_score,
+                    capital_score, space_score, final_score, quality,
                 ))
 
         opportunities.sort(key=lambda item: (-item[7], item[1], item[0].rank, item[0].score.symbol))
         signals = []
         processed_symbols: set[str] = set()
         direction_counts = {"LONG": 0, "SHORT": 0}
-        for ranked, direction, signal_score, sector, sector_rank, capital_score, space_score, final_score in opportunities:
+        for (ranked, direction, signal_score, sector, sector_rank, capital_score,
+             space_score, final_score, quality) in opportunities:
             if direction_counts[direction] >= 3:
                 continue
             processed_symbols.add(ranked.score.symbol)
@@ -128,6 +153,8 @@ class SignalGenerator:
                         capital_score=capital_score,
                         space_score=space_score,
                         final_signal_score=final_score,
+                        data_quality_status=quality_context_status(quality),
+                        data_quality=quality,
                     )
                 )
                 direction_counts[direction] += 1
