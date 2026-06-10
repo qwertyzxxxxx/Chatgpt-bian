@@ -66,6 +66,28 @@ class BinancePublicClientTest(unittest.TestCase):
         ))
         self.assertEqual("1.2", str(client.global_long_short_ratio("BTCUSDT")))
 
+    def test_historical_klines_passes_public_time_range(self) -> None:
+        class CapturingClient(StubClient):
+            def __init__(self):
+                super().__init__({"/fapi/v1/klines": fixture("klines.json")})
+                self.params = None
+
+            def _get_json(self, path, params=None):
+                self.params = params
+                return self.payloads[path]
+
+        client = CapturingClient()
+        client.historical_klines(
+            "BTCUSDT", "15m", limit=1000,
+            start_time_ms=1710000000000, end_time_ms=1710002699999,
+            now_ms=1710002700000,
+        )
+
+        self.assertEqual("1710000000000", client.params["startTime"])
+        self.assertEqual("1710002699999", client.params["endTime"])
+        self.assertEqual("1000", client.params["limit"])
+        self.assertNotIn("apiKey", client.params)
+
     def test_removes_open_candle(self) -> None:
         client = StubClient({"/fapi/v1/klines": fixture("klines.json")})
 

@@ -364,3 +364,30 @@ the validation period and validation outcomes cannot consume candles from the te
 maximum drawdown, trade count, and automatic overfitting warnings. Win rate means the
 existing TP1-or-better hit rate. The procedure does not approve candidates or change scan
 behavior.
+
+## Historical database bootstrap
+
+Create or resume a public-data-only historical SQLite database:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader collect-history \
+  --days 180 \
+  --database data/market_data.db \
+  --config config/universe.json \
+  --sectors-config config/sectors.json
+```
+
+`collect-history` discovers the current eligible USD-M perpetual universe, always includes
+BTCUSDT and ETHUSDT, and also includes valid symbols from `config/sectors.json`. It paginates
+only public Binance endpoints and stores closed 15m, 1h, and 4h klines, daily historical
+universe snapshots derived from trailing 24-hour kline volume, funding history, open-interest
+history, global long/short ratio history, and rolling 24-hour quote-volume observations.
+
+Writes are idempotent: klines are upserted by symbol/interval/open time, Capital Flow
+observations are immutable and inserted only once, and completed daily universe snapshots are
+skipped on rerun. Re-running the command repairs interrupted pages without duplicating market
+rows. Binance's public open-interest and global long/short history endpoints have limited
+historical retention, so a 180-day bootstrap can contain full kline/funding history but only
+the public retention window for those two metrics. Data-quality metadata keeps later fallback
+usage visible. No API key, account endpoint, balance endpoint, position endpoint, or order
+endpoint is used.

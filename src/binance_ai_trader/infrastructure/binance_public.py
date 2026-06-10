@@ -137,14 +137,29 @@ class BinancePublicClient:
         limit: int = 200,
         now_ms: int | None = None,
     ) -> tuple[Kline, ...]:
+        return self.historical_klines(
+            symbol, interval, limit=limit, now_ms=now_ms
+        )
+
+    def historical_klines(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 1500,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+        now_ms: int | None = None,
+    ) -> tuple[Kline, ...]:
         if interval not in {"15m", "1h", "4h"}:
             raise ValueError(f"Unsupported interval: {interval}")
         if not 1 <= limit <= 1500:
             raise ValueError("Kline limit must be between 1 and 1500")
-        payload = self._get_json(
-            "/fapi/v1/klines",
-            {"symbol": symbol, "interval": interval, "limit": str(limit)},
-        )
+        params = {"symbol": symbol, "interval": interval, "limit": str(limit)}
+        if start_time_ms is not None:
+            params["startTime"] = str(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = str(end_time_ms)
+        payload = self._get_json("/fapi/v1/klines", params)
         if not isinstance(payload, list):
             raise BinancePublicApiError("Expected kline array")
         current_ms = now_ms if now_ms is not None else time.time_ns() // 1_000_000

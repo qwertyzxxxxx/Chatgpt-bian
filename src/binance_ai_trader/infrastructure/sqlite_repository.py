@@ -226,6 +226,39 @@ class MarketDataRepository:
                 rows,
             )
 
+    def collection_run_exists(self, run_id: str) -> bool:
+        row = self._connection.execute(
+            "SELECT 1 FROM collection_runs WHERE id=?", (run_id,)
+        ).fetchone()
+        return row is not None
+
+    def collection_run_status(self, run_id: str) -> str | None:
+        row = self._connection.execute(
+            "SELECT status FROM collection_runs WHERE id=?", (run_id,)
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    def load_klines_range(
+        self, symbol: str, interval: str, start_ms: int, end_ms: int
+    ) -> tuple[Kline, ...]:
+        rows = self._connection.execute(
+            """SELECT symbol,interval,open_time_ms,close_time_ms,open,high,low,close,
+                      volume,quote_volume,trade_count
+               FROM klines WHERE symbol=? AND interval=?
+                 AND open_time_ms>=? AND close_time_ms<=?
+               ORDER BY open_time_ms""",
+            (symbol, interval, start_ms, end_ms),
+        ).fetchall()
+        return tuple(
+            Kline(
+                symbol=row[0], interval=row[1], open_time_ms=row[2], close_time_ms=row[3],
+                open=Decimal(row[4]), high=Decimal(row[5]), low=Decimal(row[6]),
+                close=Decimal(row[7]), volume=Decimal(row[8]), quote_volume=Decimal(row[9]),
+                trade_count=row[10],
+            )
+            for row in rows
+        )
+
     def save_klines(self, klines: Iterable[Kline]) -> int:
         rows = [
             (

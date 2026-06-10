@@ -13,6 +13,7 @@ from binance_ai_trader.application.analyze_capital_flow import CapitalFlowAnalyz
 from binance_ai_trader.application.analyze_space import SpaceAnalyzer
 from binance_ai_trader.application.analyze_sector_strength import SectorStrengthAnalyzer
 from binance_ai_trader.application.collect_market_data import MarketDataCollector
+from binance_ai_trader.application.collect_history import HistoricalDataCollector
 from binance_ai_trader.application.evaluate_signals import SignalEvaluator
 from binance_ai_trader.application.generate_signals import SignalGenerator
 from binance_ai_trader.application.score_market_data import MarketScorer
@@ -33,6 +34,22 @@ from binance_ai_trader.walk_forward import (
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Binance USD-M Futures read-only analysis")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    history = subparsers.add_parser(
+        "collect-history", help="bootstrap resumable public historical market data"
+    )
+    history.add_argument("--days", type=int, default=180)
+    history.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    history.add_argument("--config", type=Path, default=Path("config/universe.json"))
+    history.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
+    history.add_argument("--base-url", default="https://fapi.binance.com")
+    history.add_argument("--end-ms", type=int)
+    history.add_argument("--timeout", type=float, default=20.0)
+    history.add_argument("--max-retries", type=int, default=5)
+    history.add_argument("--request-pause", type=float, default=0.05)
+    history.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
 
     scan = subparsers.add_parser("scan", help="collect, score, and generate regime-directed signals")
     scan.add_argument("--database", type=Path, default=Path("data/market_data.db"))
@@ -176,12 +193,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if args.command == "evaluate":
         return _evaluate(args.database)
+    if args.command == "collect-history":
+        return _collect_history(args)
     if args.command == "walk-forward":
         return _walk_forward(args)
     if args.command == "run-loop":
@@ -207,6 +226,34 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sectors":
         return _sectors(args.database, args.config)
     return _scan(args)
+
+
+def _collect_history(args: argparse.Namespace) -> int:
+    client = BinancePublicClient(args.base_url, args.timeout, args.max_retries)
+    repository = MarketDataRepository(args.database)
+    try:
+        result = HistoricalDataCollector(
+            client,
+            repository,
+            UniverseConfig.load(args.config),
+            SectorConfig.load(args.sectors_config),
+            args.request_pause,
+        ).collect(args.days, args.end_ms)
+    finally:
+        repository.close()
+    print(json.dumps({
+        "run_id": result.run_id,
+        "symbols": result.symbols,
+        "symbol_count": len(result.symbols),
+        "start_ms": result.start_ms,
+        "end_ms": result.end_ms,
+        "fetched_klines": result.fetched_klines,
+        "capital_observations": result.capital_observations,
+        "universe_snapshots": result.universe_snapshots,
+        "failures": result.failures,
+        "database": str(args.database),
+    }, separators=(",", ":"), sort_keys=True))
+    return 2 if result.failures else 0
 
 
 def _scan(args: argparse.Namespace) -> int:
