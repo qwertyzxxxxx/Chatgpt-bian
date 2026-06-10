@@ -15,3 +15,4 @@ PYTHONPATH=src python -m binance_ai_trader run-loop --help
 PYTHONPATH=src python -m binance_ai_trader health --help
 PYTHONPATH=src python -m binance_ai_trader capital --help
 PYTHONPATH=src python -m binance_ai_trader space --help
+PYTHONPATH=src python -m binance_ai_trader walk-forward --help

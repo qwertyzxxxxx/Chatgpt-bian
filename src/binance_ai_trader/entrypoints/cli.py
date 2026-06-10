@@ -25,6 +25,9 @@ from binance_ai_trader.reporting import DailyReportService
 from binance_ai_trader.runner import HealthService, ProductionRunner, RunnerLockError, default_tasks
 from binance_ai_trader.sectors import SectorMap
 from binance_ai_trader.strategy_lab.service import StrategyLab
+from binance_ai_trader.walk_forward import (
+    WalkForwardPolicy, WalkForwardValidator, render_markdown,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -141,6 +144,30 @@ def build_parser() -> argparse.ArgumentParser:
     health.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     health.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+    walk_forward = subparsers.add_parser(
+        "walk-forward", help="run rolling train/validation/test evaluation"
+    )
+    walk_forward.add_argument("strategy_ids", nargs="*", default=("baseline_v1",))
+    walk_forward.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    walk_forward.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
+    walk_forward.add_argument(
+        "--baseline-config", type=Path, default=Path("config/strategies/baseline_v1.json")
+    )
+    walk_forward.add_argument("--start-ms", type=int)
+    walk_forward.add_argument("--end-ms", type=int)
+    walk_forward.add_argument("--train-points", type=int, default=720)
+    walk_forward.add_argument("--validation-points", type=int, default=240)
+    walk_forward.add_argument("--test-points", type=int, default=240)
+    walk_forward.add_argument("--step-points", type=int, default=240)
+    walk_forward.add_argument("--embargo-points", type=int, default=96)
+    walk_forward.add_argument("--point-stride", type=int, default=1)
+    walk_forward.add_argument(
+        "--report", type=Path, default=Path("reports/walk_forward_validation.md")
+    )
+    walk_forward.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
     evaluate = subparsers.add_parser("evaluate", help="evaluate stored LONG/SHORT signals")
     evaluate.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     evaluate.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
@@ -149,12 +176,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if args.command == "evaluate":
         return _evaluate(args.database)
+    if args.command == "walk-forward":
+        return _walk_forward(args)
     if args.command == "run-loop":
         return _run_loop(args)
     if args.command == "health":
@@ -299,6 +328,66 @@ def _sectors(database: Path, config_path: Path) -> int:
             )
         )
     return 0
+
+
+def _walk_forward(args: argparse.Namespace) -> int:
+    sector_config = SectorConfig.load(args.sectors_config)
+    repository = MarketDataRepository(args.database)
+    try:
+        lab = StrategyLab(
+            repository,
+            SectorMap(sector_config.symbol_to_sector),
+            args.baseline_config,
+        )
+        versions = {item.strategy_id: item for item in lab.list_versions()}
+        missing = [item for item in args.strategy_ids if item not in versions]
+        if missing:
+            raise ValueError(f"unknown strategies: {', '.join(missing)}")
+        report = WalkForwardValidator(
+            repository,
+            SectorMap(sector_config.symbol_to_sector),
+            WalkForwardPolicy(
+                train_points=args.train_points,
+                validation_points=args.validation_points,
+                test_points=args.test_points,
+                step_points=args.step_points,
+                embargo_points=args.embargo_points,
+            ),
+        ).run(
+            tuple(versions[item].config for item in args.strategy_ids),
+            args.start_ms,
+            args.end_ms,
+            args.point_stride,
+        )
+        render_markdown(report, args.report)
+    finally:
+        repository.close()
+
+    print(json.dumps({
+        "candidate_strategy_ids": report.candidate_strategy_ids,
+        "folds": [
+            {
+                "window": fold.window.index,
+                "selected_strategy_id": fold.selected_strategy_id,
+                "train": _walk_forward_metrics(fold.train_metrics),
+                "validation": _walk_forward_metrics(fold.validation_metrics),
+                "test": _walk_forward_metrics(fold.test_metrics),
+                "overfitting_risks": fold.overfitting_risks,
+            }
+            for fold in report.folds
+        ],
+        "report": str(args.report),
+    }, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _walk_forward_metrics(metrics) -> dict[str, object]:
+    return {
+        "win_rate": metrics.tp1_hit_rate,
+        "profit_factor": metrics.profit_factor,
+        "max_drawdown_r": metrics.max_drawdown_r,
+        "number_of_trades": metrics.total_signals,
+    }
 
 
 def _backtest(args: argparse.Namespace) -> int:

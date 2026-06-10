@@ -338,3 +338,29 @@ The generator can emit up to three LONG and three SHORT signals when the existin
 Backtest summaries include `by_capital_bucket` and `by_space_bucket` groups (`0-40`, `40-60`, `60-80`, `80-100`). Each bucket reports expectancy and RR metrics so research can test whether stronger capital flow improves expectancy and whether greater directional space improves realized opportunity. No strategy parameters are optimized or activated by these statistics.
 
 The daily paper report also includes `top_capital_long` and `top_capital_short`. Each row contains `symbol`, `direction`, `capital_score`, `space_score`, `entry`, `sl`, `tp1`, `tp2`, and `rr`.
+
+## Walk-forward validation
+
+Use rolling train/validation/test partitions to measure out-of-sample stability without
+changing any strategy rule:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader walk-forward \
+  baseline_v1 \
+  --database data/market_data.db \
+  --train-points 720 \
+  --validation-points 240 \
+  --test-points 240 \
+  --step-points 240 \
+  --embargo-points 96
+```
+
+For every rolling window, all supplied strategy configurations are compared on the training
+slice only. The selected configuration is then evaluated once on the untouched validation
+slice and once on the untouched test slice. A purge/embargo of at least the strategy
+evaluation horizon separates each partition so training outcomes cannot consume candles from
+the validation period and validation outcomes cannot consume candles from the test period. The command prints JSON and writes
+`reports/walk_forward_validation.md` with train, validation, and test win rate, profit factor,
+maximum drawdown, trade count, and automatic overfitting warnings. Win rate means the
+existing TP1-or-better hit rate. The procedure does not approve candidates or change scan
+behavior.
