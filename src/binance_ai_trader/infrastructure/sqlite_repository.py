@@ -41,6 +41,72 @@ class MarketDataRepository:
     def close(self) -> None:
         self._connection.close()
 
+    def start_runner_event(self, event_id: str, event_type: str, started_at: str) -> None:
+        with self._connection:
+            self._connection.execute(
+                """INSERT INTO runner_events (event_id, event_type, status, started_at)
+                   VALUES (?, ?, 'RUNNING', ?)""",
+                (event_id, event_type, started_at),
+            )
+
+    def finish_runner_event(
+        self, event_id: str, status: str, completed_at: str,
+        error_message: str | None, duration_ms: int,
+    ) -> None:
+        if status not in {"SUCCEEDED", "FAILED"}:
+            raise ValueError("invalid runner event status")
+        with self._connection:
+            cursor = self._connection.execute(
+                """UPDATE runner_events SET status=?, completed_at=?, error_message=?, duration_ms=?
+                   WHERE event_id=?""",
+                (status, completed_at, error_message, duration_ms, event_id),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError(f"unknown runner event: {event_id}")
+
+    def load_latest_runner_event_time(self, event_type: str) -> str | None:
+        row = self._connection.execute(
+            """SELECT started_at FROM runner_events WHERE event_type=?
+               ORDER BY started_at DESC, event_id DESC LIMIT 1""",
+            (event_type,),
+        ).fetchone()
+        return row[0] if row is not None else None
+
+    def load_latest_runner_error(self) -> dict[str, object] | None:
+        row = self._connection.execute(
+            """SELECT event_type, started_at, completed_at, error_message
+               FROM runner_events WHERE status='FAILED'
+               ORDER BY started_at DESC, event_id DESC LIMIT 1"""
+        ).fetchone()
+        return None if row is None else {
+            "event_type": row[0], "started_at": row[1],
+            "completed_at": row[2], "error_message": row[3],
+        }
+
+    def load_last_scan_time(self) -> str | None:
+        row = self._connection.execute(
+            "SELECT started_at FROM collection_runs ORDER BY started_at DESC, id DESC LIMIT 1"
+        ).fetchone()
+        return row[0] if row is not None else None
+
+    def load_latest_regime_health(self) -> dict[str, object] | None:
+        row = self._connection.execute(
+            """SELECT btc_regime, eth_regime, combined_regime, evaluated_at
+               FROM market_regimes ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+        return None if row is None else {
+            "btc_regime": row[0], "eth_regime": row[1],
+            "combined_regime": row[2], "evaluated_at": row[3],
+        }
+
+    def load_latest_signal_count(self) -> int:
+        row = self._connection.execute(
+            """SELECT COUNT(*) FROM signals WHERE run_id=(
+                   SELECT id FROM collection_runs ORDER BY started_at DESC, id DESC LIMIT 1
+               )"""
+        ).fetchone()
+        return int(row[0])
+
     def start_run(self, run_id: str, started_at: str) -> None:
         with self._connection:
             self._connection.execute(
@@ -852,6 +918,19 @@ class MarketDataRepository:
     def _migrate(self) -> None:
         self._connection.executescript(
             """
+            CREATE TABLE IF NOT EXISTS runner_events (
+                event_id TEXT PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED')),
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                error_message TEXT,
+                duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_runner_events_type_started
+                ON runner_events(event_type, started_at DESC);
+
             CREATE TABLE IF NOT EXISTS collection_runs (
                 id TEXT PRIMARY KEY,
                 started_at TEXT NOT NULL,

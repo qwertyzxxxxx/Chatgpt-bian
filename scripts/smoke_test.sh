@@ -11,3 +11,5 @@ PYTHONPATH=src python -m binance_ai_trader backtest --help
 PYTHONPATH=src python -m binance_ai_trader auto-research --help
 PYTHONPATH=src python -m binance_ai_trader paper-simulate --help
 PYTHONPATH=src python -m binance_ai_trader daily-report --help
+PYTHONPATH=src python -m binance_ai_trader run-loop --help
+PYTHONPATH=src python -m binance_ai_trader health --help

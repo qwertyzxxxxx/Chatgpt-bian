@@ -291,3 +291,21 @@ PYTHONPATH=src python -m binance_ai_trader daily-report \
 ```
 
 The JSON report contains that day's LONG/SHORT signals, latest same-day BTC/ETH regime, latest same-day sector ranking, current paper equity and risk mode, latest Top 5 ranked candidate strategies, milestone target, and whether aggressive risk is currently allowed.
+
+## Reserved VM production runner
+
+For a persistent Replit Reserved VM deployment, run:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader run-loop \
+  --database data/market_data.db
+```
+
+The fault-isolated UTC scheduler runs scan/evaluate/paper simulation every 15 minutes, daily reporting at 00:05 UTC, and parameter-only auto research every six hours. Every attempt is audited in `runner_events`, and an OS file lock prevents two loops from using the same runner lock. Check current state with:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader health \
+  --database data/market_data.db
+```
+
+See [`docs/replit_reserved_vm.md`](docs/replit_reserved_vm.md) for start/stop, logs, database backup, storage maintenance, and daily operator checks. This runner remains read-only with respect to Binance: no API key, account access, order placement, Telegram, or web dashboard is included.

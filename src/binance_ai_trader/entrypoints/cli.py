@@ -20,6 +20,7 @@ from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 from binance_ai_trader.paper.service import PaperSimulator
 from binance_ai_trader.reporting import DailyReportService
+from binance_ai_trader.runner import HealthService, ProductionRunner, RunnerLockError, default_tasks
 from binance_ai_trader.sectors import SectorMap
 from binance_ai_trader.strategy_lab.service import StrategyLab
 
@@ -101,6 +102,31 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--date", type=date.fromisoformat)
     daily.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+
+    run_loop = subparsers.add_parser(
+        "run-loop", help="run the fault-isolated Reserved VM scheduler"
+    )
+    run_loop.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    run_loop.add_argument("--config", type=Path, default=Path("config/universe.json"))
+    run_loop.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
+    run_loop.add_argument(
+        "--baseline-config", type=Path, default=Path("config/strategies/baseline_v1.json")
+    )
+    run_loop.add_argument("--base-url", default="https://fapi.binance.com")
+    run_loop.add_argument("--kline-limit", type=int, default=200)
+    run_loop.add_argument("--max-workers", type=int, default=5)
+    run_loop.add_argument("--timeout", type=float, default=10.0)
+    run_loop.add_argument("--max-retries", type=int, default=3)
+    run_loop.add_argument("--research-step-bars", type=int, default=1)
+    run_loop.add_argument("--poll-seconds", type=float, default=30.0)
+    run_loop.add_argument("--lock-file", type=Path)
+    run_loop.add_argument("--once", action="store_true")
+    run_loop.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    health = subparsers.add_parser("health", help="print runner and database health JSON")
+    health.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    health.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
     evaluate = subparsers.add_parser("evaluate", help="evaluate stored LONG/SHORT signals")
     evaluate.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     evaluate.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
@@ -109,12 +135,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if args.command == "evaluate":
         return _evaluate(args.database)
+    if args.command == "run-loop":
+        return _run_loop(args)
+    if args.command == "health":
+        return _health(args.database)
     if args.command == "strategies":
         return _strategies(args)
     if args.command in {"auto-research", "auto_research"}:
@@ -348,6 +378,58 @@ def _daily_report(database: Path, report_date: date | None) -> int:
     repository = MarketDataRepository(database)
     try:
         payload = DailyReportService(repository).build(report_date)
+    finally:
+        repository.close()
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _run_loop(args: argparse.Namespace) -> int:
+    database = args.database
+    lock_path = args.lock_file or Path(f"{database}.runner.lock")
+
+    def invoke(arguments: list[str]) -> int:
+        return main(arguments)
+
+    tasks = default_tasks(
+        scan=lambda: invoke([
+            "scan", "--database", str(database), "--config", str(args.config),
+            "--sectors-config", str(args.sectors_config), "--base-url", args.base_url,
+            "--kline-limit", str(args.kline_limit), "--max-workers", str(args.max_workers),
+            "--timeout", str(args.timeout), "--max-retries", str(args.max_retries),
+            "--log-level", args.log_level,
+        ]),
+        evaluate=lambda: invoke(["evaluate", "--database", str(database)]),
+        paper_simulate=lambda: invoke(["paper-simulate", "--database", str(database)]),
+        daily_report=lambda: invoke(["daily-report", "--database", str(database)]),
+        auto_research=lambda: invoke([
+            "auto-research", "--database", str(database),
+            "--sectors-config", str(args.sectors_config),
+            "--baseline-config", str(args.baseline_config),
+            "--step-bars", str(args.research_step_bars),
+        ]),
+    )
+    repository = MarketDataRepository(database)
+    try:
+        runner = ProductionRunner(
+            repository, tasks, lock_path, poll_seconds=args.poll_seconds
+        )
+        try:
+            runner.run_forever(once=args.once)
+        except RunnerLockError as error:
+            print(json.dumps({"status": "LOCKED", "error": str(error)}, separators=(",", ":")))
+            return 3
+        except KeyboardInterrupt:
+            return 0
+    finally:
+        repository.close()
+    return 0
+
+
+def _health(database: Path) -> int:
+    repository = MarketDataRepository(database)
+    try:
+        payload = HealthService(repository, database).snapshot()
     finally:
         repository.close()
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
