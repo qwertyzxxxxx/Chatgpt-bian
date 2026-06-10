@@ -193,17 +193,21 @@ def _scan(args: argparse.Namespace) -> int:
             kline_limit=args.kline_limit,
             max_workers=args.max_workers,
         ).collect()
-        market_regime = MarketRegimeAnalyzer(repository).analyze()
+        snapshot = repository.load_snapshot_for_run(result.run_id)
+        market_regime = MarketRegimeAnalyzer(repository).analyze(snapshot.snapshot_id)
         failed_symbols = {failure.split("/", 1)[0] for failure in result.failed_requests}
         scoring_result = MarketScorer(repository).score_run(
             run_id=result.run_id,
             symbols=(member.symbol for member in result.universe),
             excluded_symbols=failed_symbols,
+            snapshot_id=snapshot.snapshot_id,
         )
-        SectorStrengthAnalyzer(repository, sector_map).analyze_latest()
-        CapitalFlowAnalyzer(repository, client).analyze_latest()
-        SpaceAnalyzer(repository, client).analyze_latest()
-        signal_result = SignalGenerator(repository, sector_map=sector_map).generate_latest()
+        SectorStrengthAnalyzer(repository, sector_map).analyze_latest(snapshot.snapshot_id)
+        CapitalFlowAnalyzer(repository, client).analyze_latest(snapshot_id=snapshot.snapshot_id)
+        SpaceAnalyzer(repository, client).analyze_latest(snapshot_id=snapshot.snapshot_id)
+        signal_result = SignalGenerator(repository, sector_map=sector_map).generate_latest(
+            snapshot.snapshot_id
+        )
     finally:
         repository.close()
 
@@ -211,6 +215,7 @@ def _scan(args: argparse.Namespace) -> int:
         print(
             json.dumps(
                 {
+                    "snapshot_id": signal_result.snapshot_id,
                     "symbol": signal.symbol,
                     "direction": signal.direction,
                     "score": signal.score,

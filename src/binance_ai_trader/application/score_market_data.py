@@ -13,13 +13,22 @@ class MarketScorer:
         self._repository = repository
         self._engine = engine or ScoringEngine()
 
-    def score_run(self, run_id: str, symbols: Iterable[str], excluded_symbols: Iterable[str] = ()) -> ScoringResult:
+    def score_run(
+        self, run_id: str, symbols: Iterable[str], excluded_symbols: Iterable[str] = (),
+        snapshot_id: str | None = None,
+    ) -> ScoringResult:
+        snapshot = (self._repository.load_snapshot(snapshot_id) if snapshot_id
+                    else self._repository.load_snapshot_for_run(run_id))
+        if snapshot.collection_run_id != run_id:
+            raise ValueError("scoring snapshot does not match collection run")
         excluded = set(excluded_symbols)
         scores = []
         skipped = set(excluded)
         for symbol in sorted(set(symbols) - excluded):
             klines = {
-                interval: self._repository.load_klines(symbol, interval, limit=minimum)
+                interval: self._repository.load_klines_at(
+                    symbol, interval, snapshot.data_cutoff_ms, limit=minimum
+                )
                 for interval, minimum in self._engine.minimum_candles.items()
             }
             try:

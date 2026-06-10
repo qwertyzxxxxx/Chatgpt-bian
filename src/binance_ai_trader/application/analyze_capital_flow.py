@@ -14,8 +14,11 @@ class CapitalFlowAnalyzer:
         self._client = client
         self._engine = CapitalFlowEngine()
 
-    def analyze_latest(self, limit: int = 20) -> tuple[CapitalSnapshot, ...]:
-        ranked = self._repository.load_latest_scores(limit)
+    def analyze_latest(
+        self, limit: int = 20, snapshot_id: str | None = None
+    ) -> tuple[CapitalSnapshot, ...]:
+        ranked = (self._repository.load_scores_for_snapshot(snapshot_id, limit)
+                  if snapshot_id else self._repository.load_latest_scores(limit))
         if not ranked:
             return ()
         run_id = ranked[0].run_id

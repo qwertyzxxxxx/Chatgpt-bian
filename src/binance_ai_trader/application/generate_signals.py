@@ -33,13 +33,26 @@ class SignalGenerator:
         self._sector_map = sector_map or SectorMap({})
         self._sector_gate = sector_gate or SectorSignalGate()
 
-    def generate_latest(self) -> SignalResult:
-        ranked_scores = self._repository.load_latest_scores(limit=20)
-        if not ranked_scores:
+    def generate_latest(self, snapshot_id: str | None = None) -> SignalResult:
+        try:
+            snapshot = (self._repository.load_snapshot(snapshot_id) if snapshot_id
+                        else self._repository.load_latest_snapshot())
+        except ValueError:
             return SignalResult(run_id=None, signals=(), processed_symbols=0)
+        ranked_scores = self._repository.load_scores_for_snapshot(snapshot.snapshot_id, limit=20)
+        if not ranked_scores:
+            generated_at = _utc_now()
+            self._repository.save_signals(
+                snapshot.collection_run_id or "", (), generated_at, snapshot.snapshot_id
+            )
+            self._repository.finalize_snapshot(snapshot.snapshot_id, generated_at)
+            return SignalResult(
+                run_id=snapshot.collection_run_id, signals=(), processed_symbols=0,
+                snapshot_id=snapshot.snapshot_id,
+            )
 
         run_id = ranked_scores[0].run_id
-        combined_regime = self._repository.load_latest_combined_regime()
+        combined_regime = self._repository.load_combined_regime(snapshot.snapshot_id)
         sector_ranks = self._repository.load_sector_ranks(run_id)
         capital_scores = self._repository.load_capital_scores(run_id)
         space_scores = self._repository.load_space_scores(run_id)
@@ -79,7 +92,9 @@ class SignalGenerator:
             processed_symbols.add(ranked.score.symbol)
             engine = self._engine if direction == "LONG" else self._short_engine
             klines = {
-                interval: self._repository.load_klines(ranked.score.symbol, interval, limit=limit)
+                interval: self._repository.load_klines_at(
+                    ranked.score.symbol, interval, snapshot.data_cutoff_ms, limit=limit
+                )
                 for interval, limit in engine.kline_limits.items()
             }
             score = replace(
@@ -124,8 +139,13 @@ class SignalGenerator:
             run_id=run_id,
             signals=tuple(signals),
             processed_symbols=len(processed_symbols),
+            snapshot_id=snapshot.snapshot_id,
         )
-        self._repository.save_signals(run_id, result.signals, _utc_now())
+        generated_at = _utc_now()
+        self._repository.save_signals(
+            run_id, result.signals, generated_at, snapshot.snapshot_id
+        )
+        self._repository.finalize_snapshot(snapshot.snapshot_id, generated_at)
         return result
 
 

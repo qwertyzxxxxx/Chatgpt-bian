@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from binance_ai_trader.domain.models import MarketRegime
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
@@ -18,12 +19,21 @@ class MarketRegimeAnalyzer:
         self._repository = repository
         self._engine = engine or MarketRegimeEngine()
 
-    def analyze(self) -> MarketRegime:
+    def analyze(self, snapshot_id: str | None = None) -> MarketRegime:
+        if snapshot_id is not None:
+            snapshot = self._repository.load_snapshot(snapshot_id)
+        else:
+            created_at = _utc_now()
+            manual_id = self._repository.create_manual_snapshot(
+                f"regime-{uuid4()}",
+                int(datetime.now(UTC).timestamp() * 1000),
+                created_at,
+            )
+            snapshot = self._repository.load_snapshot(manual_id)
         market_data = {
             symbol: {
-                interval: self._repository.load_klines(
-                    symbol,
-                    interval,
+                interval: self._repository.load_klines_at(
+                    symbol, interval, snapshot.data_cutoff_ms,
                     limit=self._engine.policy.minimum_candles,
                 )
                 for interval in self._engine.intervals
@@ -31,7 +41,10 @@ class MarketRegimeAnalyzer:
             for symbol in self.symbols
         }
         regime = self._engine.evaluate(market_data["BTCUSDT"], market_data["ETHUSDT"])
-        self._repository.save_market_regime(regime, _utc_now())
+        evaluated_at = _utc_now()
+        self._repository.save_market_regime(regime, evaluated_at, snapshot.snapshot_id)
+        if snapshot.snapshot_type == "MANUAL":
+            self._repository.finalize_snapshot(snapshot.snapshot_id, evaluated_at)
         return regime
 
 

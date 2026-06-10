@@ -10,7 +10,10 @@ from binance_ai_trader.entrypoints.cli import _scan
 class ScanPipelineTest(unittest.TestCase):
     def test_scan_analyzes_sectors_before_signal_generation(self) -> None:
         calls: list[str] = []
-        repository = SimpleNamespace(close=lambda: calls.append("close"))
+        repository = SimpleNamespace(
+            close=lambda: calls.append("close"),
+            load_snapshot_for_run=lambda run_id: SimpleNamespace(snapshot_id=f"snapshot-{run_id}"),
+        )
 
         class Collector:
             def __init__(self, **_: object) -> None:
@@ -24,7 +27,7 @@ class ScanPipelineTest(unittest.TestCase):
             def __init__(self, _: object) -> None:
                 pass
 
-            def analyze(self):
+            def analyze(self, *_: object):
                 calls.append("regime")
                 return SimpleNamespace(combined_regime="BULL")
 
@@ -40,7 +43,7 @@ class ScanPipelineTest(unittest.TestCase):
             def __init__(self, _: object, __: object) -> None:
                 pass
 
-            def analyze_latest(self):
+            def analyze_latest(self, *_: object, **__: object):
                 calls.append("sectors")
                 return ()
 
@@ -49,7 +52,7 @@ class ScanPipelineTest(unittest.TestCase):
             def __init__(self, _: object, __: object) -> None:
                 pass
 
-            def analyze_latest(self):
+            def analyze_latest(self, *_: object, **__: object):
                 calls.append("capital")
                 return ()
 
@@ -57,7 +60,7 @@ class ScanPipelineTest(unittest.TestCase):
             def __init__(self, _: object, __: object) -> None:
                 pass
 
-            def analyze_latest(self):
+            def analyze_latest(self, *_: object, **__: object):
                 calls.append("space")
                 return ()
 
@@ -65,7 +68,7 @@ class ScanPipelineTest(unittest.TestCase):
             def __init__(self, _: object, **__: object) -> None:
                 pass
 
-            def generate_latest(self):
+            def generate_latest(self, *_: object):
                 calls.append("signals")
                 return SimpleNamespace(signals=())
 

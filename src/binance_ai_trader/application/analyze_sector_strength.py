@@ -18,8 +18,11 @@ class SectorStrengthAnalyzer:
         self._sector_map = sector_map
         self._engine = engine or SectorStrengthEngine()
 
-    def analyze_latest(self) -> tuple[SectorSnapshot, ...]:
-        run_id, members = self._repository.load_latest_sector_members()
+    def analyze_latest(self, snapshot_id: str | None = None) -> tuple[SectorSnapshot, ...]:
+        if snapshot_id is None:
+            run_id, members = self._repository.load_latest_sector_members()
+        else:
+            run_id, members = self._repository.load_sector_members_for_snapshot(snapshot_id)
         if run_id is None:
             return ()
         snapshots = self._engine.calculate(run_id, members, self._sector_map)

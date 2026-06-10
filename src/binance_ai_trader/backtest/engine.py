@@ -102,7 +102,7 @@ class BacktestEngine:
         points = available_points[:: self._policy.step_bars]
         try:
             for evaluation_time_ms in points:
-                results.extend(self._evaluate_point(evaluation_time_ms))
+                results.extend(self._evaluate_point(run_id, evaluation_time_ms))
             completed_at = _utc_now()
             summary = summarize_results(run_id, started_at, completed_at, len(points), results)
             self._repository.save_backtest_results(run_id, results)
@@ -112,7 +112,12 @@ class BacktestEngine:
             self._repository.finish_backtest_run(run_id, _utc_now(), "FAILED", None, str(error))
             raise
 
-    def _evaluate_point(self, evaluation_time_ms: int) -> tuple[BacktestResult, ...]:
+    def _evaluate_point(
+        self, backtest_run_id: str, evaluation_time_ms: int
+    ) -> tuple[BacktestResult, ...]:
+        snapshot_id = self._repository.create_backtest_snapshot(
+            backtest_run_id, evaluation_time_ms, _utc_now()
+        )
         universe = self._repository.load_backtest_universe(evaluation_time_ms)
         if not universe:
             return ()
@@ -231,6 +236,7 @@ class BacktestEngine:
                     tp2=signal.tp2,
                     generated_at=generated_at,
                     generated_at_ms=evaluation_time_ms,
+                    snapshot_id=snapshot_id,
                 ),
                 future,
             )
@@ -257,6 +263,7 @@ class BacktestEngine:
                     capital_score=capital_score,
                     space_score=space_score,
                     final_signal_score=final_score,
+                    snapshot_id=snapshot_id,
                 )
             )
         return tuple(completed)

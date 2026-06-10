@@ -83,6 +83,18 @@ class RankedScore:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalysisSnapshot:
+    snapshot_id: str
+    snapshot_type: str
+    collection_run_id: str | None
+    source_ref: str
+    data_cutoff_ms: int
+    strategy_id: str
+    created_at: str
+    finalized_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class TradeSignal:
     symbol: str
     direction: str
@@ -109,6 +121,7 @@ class SignalResult:
     run_id: str | None
     signals: tuple[TradeSignal, ...]
     processed_symbols: int
+    snapshot_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +135,7 @@ class StoredSignal:
     tp2: Decimal
     generated_at: str
     generated_at_ms: int
+    snapshot_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +151,7 @@ class SignalEvaluation:
     max_favorable_pct: Decimal
     max_adverse_pct: Decimal
     bars_to_result: int
+    snapshot_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +224,7 @@ class BacktestResult:
     capital_score: float = 50.0
     space_score: float = 50.0
     final_signal_score: float = 50.0
+    snapshot_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

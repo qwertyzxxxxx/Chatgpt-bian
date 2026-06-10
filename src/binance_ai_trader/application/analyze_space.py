@@ -15,17 +15,26 @@ class SpaceAnalyzer:
         self._client = client
         self._engine = SpaceEngine()
 
-    def analyze_latest(self, limit: int = 20) -> tuple[SpaceSnapshot, ...]:
-        ranked = self._repository.load_latest_scores(limit)
+    def analyze_latest(
+        self, limit: int = 20, snapshot_id: str | None = None
+    ) -> tuple[SpaceSnapshot, ...]:
+        snapshot = (self._repository.load_snapshot(snapshot_id) if snapshot_id
+                    else self._repository.load_latest_snapshot())
+        ranked = self._repository.load_scores_for_snapshot(snapshot.snapshot_id, limit)
         if not ranked:
             return ()
         run_id = ranked[0].run_id
         snapshots = []
         for item in ranked:
-            bars = self._repository.load_klines(item.score.symbol, "4h", 720)
+            bars = self._repository.load_klines_at(
+                item.score.symbol, "4h", snapshot.data_cutoff_ms, 720
+            )
             if len(bars) < self._engine.REQUIRED_4H_BARS and self._client is not None:
-                bars = self._client.klines(item.score.symbol, "4h", 720)
-                self._repository.save_klines(bars)
+                fetched = self._client.klines(item.score.symbol, "4h", 720)
+                self._repository.save_klines(fetched)
+                bars = tuple(
+                    item for item in fetched if item.close_time_ms <= snapshot.data_cutoff_ms
+                )
             for direction in ("LONG", "SHORT"):
                 try:
                     snapshots.append(self._engine.score(run_id, item.score.symbol, direction, bars))

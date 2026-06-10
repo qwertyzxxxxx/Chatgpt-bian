@@ -103,6 +103,7 @@ class SignalEvaluationEngine:
             max_favorable_pct=_two_places(maximum_favorable),
             max_adverse_pct=_two_places(maximum_adverse),
             bars_to_result=bars_to_result,
+            snapshot_id=signal.snapshot_id,
         )
 
 

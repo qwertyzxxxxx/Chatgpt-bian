@@ -9,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from binance_ai_trader.domain.models import (
+    AnalysisSnapshot,
     BacktestResult,
     BacktestSummary,
     EvaluationMetrics,
@@ -110,11 +111,92 @@ class MarketDataRepository:
         return int(row[0])
 
     def start_run(self, run_id: str, started_at: str) -> None:
+        snapshot_id = _scan_snapshot_id(run_id)
         with self._connection:
             self._connection.execute(
                 "INSERT INTO collection_runs (id, started_at, status) VALUES (?, ?, 'RUNNING')",
                 (run_id, started_at),
             )
+            self._connection.execute(
+                """INSERT INTO analysis_snapshots (
+                       snapshot_id, snapshot_type, collection_run_id, source_ref,
+                       data_cutoff_ms, strategy_id, created_at
+                   ) VALUES (?, 'SCAN', ?, ?, ?, 'baseline_v1', ?)""",
+                (snapshot_id, run_id, run_id, _iso_to_epoch_ms(started_at), started_at),
+            )
+
+    def load_snapshot(self, snapshot_id: str) -> AnalysisSnapshot:
+        row = self._connection.execute(
+            """SELECT snapshot_id, snapshot_type, collection_run_id, source_ref,
+                      data_cutoff_ms, strategy_id, created_at, finalized_at
+               FROM analysis_snapshots WHERE snapshot_id=?""",
+            (snapshot_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown analysis snapshot: {snapshot_id}")
+        return AnalysisSnapshot(*row)
+
+    def load_snapshot_for_run(self, run_id: str) -> AnalysisSnapshot:
+        row = self._connection.execute(
+            "SELECT snapshot_id FROM analysis_snapshots WHERE collection_run_id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"collection run has no analysis snapshot: {run_id}")
+        return self.load_snapshot(row[0])
+
+    def load_latest_snapshot(self) -> AnalysisSnapshot:
+        row = self._connection.execute(
+            """SELECT snapshot_id FROM analysis_snapshots WHERE snapshot_type='SCAN'
+               ORDER BY created_at DESC, snapshot_id DESC LIMIT 1"""
+        ).fetchone()
+        if row is None:
+            raise ValueError("no analysis snapshot exists")
+        return self.load_snapshot(row[0])
+
+    def finalize_snapshot(self, snapshot_id: str, finalized_at: str) -> None:
+        with self._connection:
+            cursor = self._connection.execute(
+                """UPDATE analysis_snapshots SET finalized_at=?
+                   WHERE snapshot_id=? AND finalized_at IS NULL""",
+                (finalized_at, snapshot_id),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError(f"snapshot is unknown or already finalized: {snapshot_id}")
+
+    def create_manual_snapshot(
+        self, source_ref: str, data_cutoff_ms: int, created_at: str
+    ) -> str:
+        snapshot_id = f"snapshot-manual-{source_ref}"
+        with self._connection:
+            self._connection.execute(
+                """INSERT INTO analysis_snapshots (
+                       snapshot_id, snapshot_type, collection_run_id, source_ref,
+                       data_cutoff_ms, strategy_id, created_at
+                   ) VALUES (?, 'MANUAL', NULL, ?, ?, 'baseline_v1', ?)""",
+                (snapshot_id, source_ref, data_cutoff_ms, created_at),
+            )
+        return snapshot_id
+
+    def create_backtest_snapshot(
+        self, backtest_run_id: str, evaluation_time_ms: int, created_at: str
+    ) -> str:
+        source_ref = f"{backtest_run_id}:{evaluation_time_ms}"
+        snapshot_id = f"snapshot-backtest-{backtest_run_id}-{evaluation_time_ms}"
+        with self._connection:
+            self._connection.execute(
+                """INSERT OR IGNORE INTO analysis_snapshots (
+                       snapshot_id, snapshot_type, collection_run_id, source_ref,
+                       data_cutoff_ms, strategy_id, created_at, finalized_at
+                   ) VALUES (?, 'BACKTEST', NULL, ?, ?, 'baseline_v1', ?, ?)""",
+                (snapshot_id, source_ref, evaluation_time_ms, created_at, created_at),
+            )
+        return snapshot_id
+
+    def _assert_snapshot_writable(self, snapshot_id: str) -> AnalysisSnapshot:
+        snapshot = self.load_snapshot(snapshot_id)
+        if snapshot.finalized_at is not None:
+            raise ValueError(f"analysis snapshot is finalized: {snapshot_id}")
+        return snapshot
 
     def save_universe(self, run_id: str, members: Iterable[UniverseMember], observed_at: str) -> None:
         rows = [
@@ -310,24 +392,26 @@ class MarketDataRepository:
     def save_backtest_results(
         self, run_id: str, results: Iterable[BacktestResult]
     ) -> None:
-        rows = [
-            (
-                run_id, item.evaluation_time_ms, item.symbol, item.direction, item.combined_regime,
-                item.sector, item.sector_rank, item.score, item.capital_score, item.space_score,
-                item.final_signal_score, str(item.entry),
+        rows = []
+        for item in results:
+            snapshot_id = item.snapshot_id or self.create_backtest_snapshot(
+                run_id, item.evaluation_time_ms, _epoch_ms_to_iso(item.evaluation_time_ms)
+            )
+            rows.append((
+                run_id, snapshot_id, item.evaluation_time_ms, item.symbol, item.direction,
+                item.combined_regime, item.sector, item.sector_rank, item.score,
+                item.capital_score, item.space_score, item.final_signal_score, str(item.entry),
                 str(item.stop_loss), str(item.tp1), str(item.tp2), str(item.rr_tp1),
                 str(item.rr_tp2), item.result, item.bars_to_result, str(item.realized_r),
-            )
-            for item in results
-        ]
+            ))
         with self._connection:
             self._connection.executemany(
                 """
                 INSERT INTO backtest_results (
-                    backtest_run_id, evaluation_time_ms, symbol, direction, combined_regime, sector,
+                    backtest_run_id, snapshot_id, evaluation_time_ms, symbol, direction, combined_regime, sector,
                     sector_rank, score, capital_score, space_score, final_signal_score, entry,
                     stop_loss, tp1, tp2, rr_tp1, rr_tp2, result, bars_to_result, realized_r
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -597,6 +681,11 @@ class MarketDataRepository:
     def save_capital_snapshots(
         self, snapshots: Iterable[CapitalSnapshot], calculated_at: str
     ) -> None:
+        snapshots = tuple(snapshots)
+        if snapshots:
+            self._assert_snapshot_writable(
+                self.load_snapshot_for_run(snapshots[0].run_id).snapshot_id
+            )
         rows = [(
             item.run_id, item.symbol, str(item.oi_current), str(item.oi_change_1h_pct),
             str(item.oi_change_4h_pct), str(item.oi_change_24h_pct),
@@ -622,6 +711,11 @@ class MarketDataRepository:
                     calculated_at=excluded.calculated_at""", rows)
 
     def save_space_snapshots(self, snapshots: Iterable[SpaceSnapshot], calculated_at: str) -> None:
+        snapshots = tuple(snapshots)
+        if snapshots:
+            self._assert_snapshot_writable(
+                self.load_snapshot_for_run(snapshots[0].run_id).snapshot_id
+            )
         rows = [(item.run_id,item.symbol,item.direction,str(item.high_distance_30d_pct),
             str(item.high_distance_60d_pct),str(item.high_distance_120d_pct),
             str(item.low_distance_30d_pct),str(item.low_distance_60d_pct),
@@ -660,6 +754,7 @@ class MarketDataRepository:
         return 50.0 if row is None else float(row[0])
 
     def save_scores(self, run_id: str, scores: Iterable[SymbolScore], created_at: str) -> None:
+        self._assert_snapshot_writable(self.load_snapshot_for_run(run_id).snapshot_id)
         rows = [
             (
                 run_id,
@@ -683,70 +778,71 @@ class MarketDataRepository:
                 rows,
             )
 
-    def load_latest_scores(self, limit: int = 20) -> tuple[RankedScore, ...]:
+    def load_scores_for_snapshot(
+        self, snapshot_id: str, limit: int = 20
+    ) -> tuple[RankedScore, ...]:
         if limit < 1:
             raise ValueError("limit must be positive")
+        snapshot = self.load_snapshot(snapshot_id)
+        if snapshot.collection_run_id is None:
+            raise ValueError("snapshot is not backed by a collection run")
         rows = self._connection.execute(
-            """
-            SELECT s.run_id, s.rank, s.symbol, s.score, s.score_breakdown_json,
-                   s.algorithm_version, u.tick_size
-            FROM scores AS s
-            JOIN collection_runs AS r ON r.id = s.run_id
-            JOIN universe_snapshots AS u ON u.run_id = s.run_id AND u.symbol = s.symbol
-            WHERE s.run_id = (
-                SELECT s2.run_id
-                FROM scores AS s2
-                JOIN collection_runs AS r2 ON r2.id = s2.run_id
-                GROUP BY s2.run_id, r2.started_at
-                ORDER BY r2.started_at DESC, s2.run_id DESC
-                LIMIT 1
-            )
-            ORDER BY s.rank, s.symbol
-            LIMIT ?
-            """,
-            (limit,),
+            """SELECT s.run_id, s.rank, s.symbol, s.score, s.score_breakdown_json,
+                      s.algorithm_version, u.tick_size
+               FROM scores AS s
+               JOIN universe_snapshots AS u ON u.run_id=s.run_id AND u.symbol=s.symbol
+               WHERE s.run_id=? ORDER BY s.rank, s.symbol LIMIT ?""",
+            (snapshot.collection_run_id, limit),
         ).fetchall()
         return tuple(
             RankedScore(
-                run_id=row[0],
-                rank=row[1],
+                run_id=row[0], rank=row[1],
                 score=SymbolScore(
-                    symbol=row[2], score=row[3], score_breakdown=json.loads(row[4]), algorithm_version=row[5]
+                    symbol=row[2], score=row[3], score_breakdown=json.loads(row[4]),
+                    algorithm_version=row[5],
                 ),
                 tick_size=Decimal(row[6]),
             )
             for row in rows
         )
 
-    def load_latest_sector_members(self) -> tuple[str | None, tuple[SectorMember, ...]]:
+    def load_latest_scores(self, limit: int = 20) -> tuple[RankedScore, ...]:
+        try:
+            snapshot = self.load_latest_snapshot()
+        except ValueError:
+            return ()
+        return self.load_scores_for_snapshot(snapshot.snapshot_id, limit)
+
+    def load_sector_members_for_snapshot(
+        self, snapshot_id: str
+    ) -> tuple[str | None, tuple[SectorMember, ...]]:
+        snapshot = self.load_snapshot(snapshot_id)
+        run_id = snapshot.collection_run_id
+        if run_id is None:
+            return None, ()
         rows = self._connection.execute(
-            """
-            SELECT s.run_id, s.symbol, s.score, u.change_24h, u.volume_24h
-            FROM scores AS s
-            JOIN collection_runs AS r ON r.id = s.run_id
-            JOIN universe_snapshots AS u ON u.run_id = s.run_id AND u.symbol = s.symbol
-            WHERE s.run_id = (
-                SELECT s2.run_id
-                FROM scores AS s2
-                JOIN collection_runs AS r2 ON r2.id = s2.run_id
-                GROUP BY s2.run_id, r2.started_at
-                ORDER BY r2.started_at DESC, s2.run_id DESC
-                LIMIT 1
-            )
-            ORDER BY s.rank, s.symbol
-            """
+            """SELECT s.run_id, s.symbol, s.score, u.change_24h, u.volume_24h
+               FROM scores AS s
+               JOIN universe_snapshots AS u ON u.run_id=s.run_id AND u.symbol=s.symbol
+               WHERE s.run_id=? ORDER BY s.rank, s.symbol""",
+            (run_id,),
         ).fetchall()
         if not rows:
             return None, ()
-        return rows[0][0], tuple(
+        return run_id, tuple(
             SectorMember(
-                symbol=row[1],
-                score=row[2],
-                change_24h=Decimal(row[3]),
+                symbol=row[1], score=row[2], change_24h=Decimal(row[3]),
                 quote_volume_24h=Decimal(row[4]),
             )
             for row in rows
         )
+
+    def load_latest_sector_members(self) -> tuple[str | None, tuple[SectorMember, ...]]:
+        try:
+            snapshot = self.load_latest_snapshot()
+        except ValueError:
+            return None, ()
+        return self.load_sector_members_for_snapshot(snapshot.snapshot_id)
 
     def save_sector_snapshots(
         self,
@@ -754,6 +850,7 @@ class MarketDataRepository:
         snapshots: Iterable[SectorSnapshot],
         calculated_at: str,
     ) -> None:
+        self._assert_snapshot_writable(self.load_snapshot_for_run(run_id).snapshot_id)
         rows = [
             (
                 run_id,
@@ -793,21 +890,30 @@ class MarketDataRepository:
         ).fetchall()
         return {row[0]: row[1] for row in rows}
 
-    def load_latest_combined_regime(self) -> str:
+    def load_combined_regime(self, snapshot_id: str) -> str:
         row = self._connection.execute(
-            """
-            SELECT combined_regime
-            FROM market_regimes
-            ORDER BY id DESC
-            LIMIT 1
-            """
+            "SELECT combined_regime FROM market_regimes WHERE snapshot_id=?", (snapshot_id,)
         ).fetchone()
         return row[0] if row is not None else "OBSERVE"
 
-    def save_signals(self, run_id: str, signals: Iterable[TradeSignal], generated_at: str) -> None:
+    def load_latest_combined_regime(self) -> str:
+        try:
+            return self.load_combined_regime(self.load_latest_snapshot().snapshot_id)
+        except ValueError:
+            return "OBSERVE"
+
+    def save_signals(
+        self, run_id: str, signals: Iterable[TradeSignal], generated_at: str,
+        snapshot_id: str | None = None,
+    ) -> None:
+        snapshot_id = snapshot_id or self.load_snapshot_for_run(run_id).snapshot_id
+        snapshot = self._assert_snapshot_writable(snapshot_id)
+        if snapshot.collection_run_id != run_id:
+            raise ValueError("signal snapshot does not match collection run")
         rows = [
             (
                 run_id,
+                snapshot_id,
                 rank,
                 item.symbol,
                 item.direction,
@@ -836,10 +942,10 @@ class MarketDataRepository:
             self._connection.executemany(
                 """
                 INSERT INTO signals (
-                    run_id, rank, symbol, direction, combined_regime, sector, sector_rank,
+                    run_id, snapshot_id, rank, symbol, direction, combined_regime, sector, sector_rank,
                     score, capital_score, space_score, final_signal_score, entry, latest_close,
                     stop_loss, stop_loss_pct, tp1, tp2, rr_tp1, rr_tp2, logic_summary, generated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -847,7 +953,7 @@ class MarketDataRepository:
     def load_signals_for_evaluation(self) -> tuple[StoredSignal, ...]:
         rows = self._connection.execute(
             """
-            SELECT run_id, symbol, direction, entry, stop_loss, tp1, tp2, generated_at
+            SELECT run_id, symbol, direction, entry, stop_loss, tp1, tp2, generated_at, snapshot_id
             FROM signals
             WHERE direction IN ('LONG', 'SHORT')
             ORDER BY generated_at, run_id, rank
@@ -864,6 +970,7 @@ class MarketDataRepository:
                 tp2=Decimal(row[6]),
                 generated_at=row[7],
                 generated_at_ms=_iso_to_epoch_ms(row[7]),
+                snapshot_id=row[8],
             )
             for row in rows
         )
@@ -900,32 +1007,32 @@ class MarketDataRepository:
         evaluations: Iterable[SignalEvaluation],
         evaluated_at: str,
     ) -> None:
-        rows = [
-            (
-                item.signal_run_id,
-                item.symbol,
-                item.direction,
-                str(item.entry),
-                str(item.stop_loss),
-                str(item.tp1),
-                str(item.tp2),
-                item.result,
-                str(item.max_favorable_pct),
-                str(item.max_adverse_pct),
-                item.bars_to_result,
-                evaluated_at,
-            )
-            for item in evaluations
-        ]
+        rows = []
+        for item in evaluations:
+            snapshot_id = item.snapshot_id
+            if snapshot_id is None:
+                row = self._connection.execute(
+                    "SELECT snapshot_id FROM signals WHERE run_id=? AND symbol=?",
+                    (item.signal_run_id, item.symbol),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("evaluation has no matching signal")
+                snapshot_id = row[0]
+            rows.append((
+                item.signal_run_id, snapshot_id, item.symbol, item.direction, str(item.entry),
+                str(item.stop_loss), str(item.tp1), str(item.tp2), item.result,
+                str(item.max_favorable_pct), str(item.max_adverse_pct),
+                item.bars_to_result, evaluated_at,
+            ))
         with self._connection:
             self._connection.executemany(
                 """
                 INSERT INTO signal_evaluations (
-                    signal_run_id, symbol, direction, entry, stop_loss, tp1, tp2, result,
+                    signal_run_id, snapshot_id, symbol, direction, entry, stop_loss, tp1, tp2, result,
                     max_favorable_pct, max_adverse_pct, bars_to_result, evaluated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(signal_run_id, symbol) DO UPDATE SET
-                    direction=excluded.direction, entry=excluded.entry, stop_loss=excluded.stop_loss,
+                    snapshot_id=excluded.snapshot_id, direction=excluded.direction, entry=excluded.entry, stop_loss=excluded.stop_loss,
                     tp1=excluded.tp1, tp2=excluded.tp2, result=excluded.result,
                     max_favorable_pct=excluded.max_favorable_pct,
                     max_adverse_pct=excluded.max_adverse_pct,
@@ -986,20 +1093,18 @@ class MarketDataRepository:
             average_max_adverse_pct=round(float(row[6]), 2),
         )
 
-    def save_market_regime(self, regime: MarketRegime, evaluated_at: str) -> None:
+    def save_market_regime(
+        self, regime: MarketRegime, evaluated_at: str, snapshot_id: str | None = None
+    ) -> None:
+        snapshot_id = snapshot_id or self.load_latest_snapshot().snapshot_id
+        self._assert_snapshot_writable(snapshot_id)
         with self._connection:
             self._connection.execute(
-                """
-                INSERT INTO market_regimes (
-                    btc_regime, eth_regime, combined_regime, evaluated_at
-                ) VALUES (?, ?, ?, ?)
-                """,
-                (
-                    regime.btc_regime,
-                    regime.eth_regime,
-                    regime.combined_regime,
-                    evaluated_at,
-                ),
+                """INSERT INTO market_regimes (
+                       snapshot_id, btc_regime, eth_regime, combined_regime, evaluated_at
+                   ) VALUES (?, ?, ?, ?, ?)""",
+                (snapshot_id, regime.btc_regime, regime.eth_regime,
+                 regime.combined_regime, evaluated_at),
             )
 
     def finish_run(
@@ -1045,6 +1150,18 @@ class MarketDataRepository:
                 universe_size INTEGER NOT NULL DEFAULT 0,
                 kline_count INTEGER NOT NULL DEFAULT 0,
                 error_summary TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS analysis_snapshots (
+                snapshot_id TEXT PRIMARY KEY,
+                snapshot_type TEXT NOT NULL CHECK (snapshot_type IN ('SCAN', 'BACKTEST', 'MANUAL')),
+                collection_run_id TEXT UNIQUE REFERENCES collection_runs(id),
+                source_ref TEXT NOT NULL,
+                data_cutoff_ms INTEGER NOT NULL,
+                strategy_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                finalized_at TEXT,
+                UNIQUE (snapshot_type, source_ref)
             );
 
             CREATE TABLE IF NOT EXISTS universe_snapshots (
@@ -1114,6 +1231,7 @@ class MarketDataRepository:
 
             CREATE TABLE IF NOT EXISTS signals (
                 run_id TEXT NOT NULL REFERENCES collection_runs(id) ON DELETE CASCADE,
+                snapshot_id TEXT NOT NULL REFERENCES analysis_snapshots(snapshot_id),
                 rank INTEGER NOT NULL CHECK (rank BETWEEN 1 AND 6),
                 symbol TEXT NOT NULL,
                 direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
@@ -1146,6 +1264,7 @@ class MarketDataRepository:
 
             CREATE TABLE IF NOT EXISTS signal_evaluations (
                 signal_run_id TEXT NOT NULL,
+                snapshot_id TEXT NOT NULL REFERENCES analysis_snapshots(snapshot_id),
                 symbol TEXT NOT NULL,
                 direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
                 entry TEXT NOT NULL,
@@ -1215,6 +1334,7 @@ class MarketDataRepository:
 
             CREATE TABLE IF NOT EXISTS backtest_results (
                 backtest_run_id TEXT NOT NULL REFERENCES backtest_runs(id) ON DELETE CASCADE,
+                snapshot_id TEXT NOT NULL REFERENCES analysis_snapshots(snapshot_id),
                 evaluation_time_ms INTEGER NOT NULL,
                 symbol TEXT NOT NULL,
                 direction TEXT NOT NULL CHECK (direction IN ('LONG', 'SHORT')),
@@ -1247,6 +1367,7 @@ class MarketDataRepository:
 
             CREATE TABLE IF NOT EXISTS market_regimes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_id TEXT UNIQUE REFERENCES analysis_snapshots(snapshot_id),
                 btc_regime TEXT NOT NULL CHECK (btc_regime IN ('BULL', 'BEAR', 'RANGE', 'OBSERVE')),
                 eth_regime TEXT NOT NULL CHECK (eth_regime IN ('BULL', 'BEAR', 'RANGE', 'OBSERVE')),
                 combined_regime TEXT NOT NULL CHECK (
@@ -1282,6 +1403,156 @@ class MarketDataRepository:
         self._ensure_signal_v2_columns()
         self._ensure_signal_rank_capacity()
         self._ensure_backtest_v2_columns()
+        self._ensure_analysis_snapshot_lineage()
+
+    def _ensure_analysis_snapshot_lineage(self) -> None:
+        table_columns = {
+            table: {row[1] for row in self._connection.execute(f"PRAGMA table_info({table})")}
+            for table in ("signals", "signal_evaluations", "backtest_results", "market_regimes")
+        }
+        with self._connection:
+            if "snapshot_id" not in table_columns["signals"]:
+                self._connection.execute(
+                    "ALTER TABLE signals ADD COLUMN snapshot_id TEXT REFERENCES analysis_snapshots(snapshot_id)"
+                )
+            if "snapshot_id" not in table_columns["signal_evaluations"]:
+                self._connection.execute(
+                    "ALTER TABLE signal_evaluations ADD COLUMN snapshot_id TEXT REFERENCES analysis_snapshots(snapshot_id)"
+                )
+            if "snapshot_id" not in table_columns["backtest_results"]:
+                self._connection.execute(
+                    "ALTER TABLE backtest_results ADD COLUMN snapshot_id TEXT REFERENCES analysis_snapshots(snapshot_id)"
+                )
+            if "snapshot_id" not in table_columns["market_regimes"]:
+                self._connection.execute(
+                    "ALTER TABLE market_regimes ADD COLUMN snapshot_id TEXT REFERENCES analysis_snapshots(snapshot_id)"
+                )
+
+            self._connection.execute(
+                """INSERT OR IGNORE INTO analysis_snapshots (
+                       snapshot_id, snapshot_type, collection_run_id, source_ref, data_cutoff_ms,
+                       strategy_id, created_at, finalized_at
+                   )
+                   SELECT 'snapshot-' || id, 'SCAN', id, id,
+                          CAST(strftime('%s', started_at) AS INTEGER) * 1000,
+                          'baseline_v1', started_at, finished_at
+                   FROM collection_runs"""
+            )
+            self._connection.execute(
+                """UPDATE signals SET snapshot_id='snapshot-' || run_id
+                   WHERE snapshot_id IS NULL"""
+            )
+            self._connection.execute(
+                """UPDATE signal_evaluations
+                   SET snapshot_id=(
+                       SELECT s.snapshot_id FROM signals AS s
+                       WHERE s.run_id=signal_evaluations.signal_run_id
+                         AND s.symbol=signal_evaluations.symbol
+                   )
+                   WHERE snapshot_id IS NULL"""
+            )
+            self._connection.execute(
+                """UPDATE market_regimes
+                   SET snapshot_id=(
+                       SELECT a.snapshot_id FROM analysis_snapshots AS a
+                       WHERE a.snapshot_type='SCAN' AND a.created_at<=market_regimes.evaluated_at
+                       ORDER BY a.created_at DESC LIMIT 1
+                   )
+                   WHERE snapshot_id IS NULL"""
+            )
+            self._connection.execute(
+                """UPDATE market_regimes SET snapshot_id=NULL
+                   WHERE snapshot_id IS NOT NULL AND id NOT IN (
+                       SELECT MAX(id) FROM market_regimes
+                       WHERE snapshot_id IS NOT NULL GROUP BY snapshot_id
+                   )"""
+            )
+            historical_points = self._connection.execute(
+                """SELECT DISTINCT backtest_run_id, evaluation_time_ms
+                   FROM backtest_results WHERE snapshot_id IS NULL"""
+            ).fetchall()
+            for backtest_run_id, evaluation_time_ms in historical_points:
+                source_ref = f"{backtest_run_id}:{evaluation_time_ms}"
+                snapshot_id = f"snapshot-backtest-{backtest_run_id}-{evaluation_time_ms}"
+                created_at = _epoch_ms_to_iso(evaluation_time_ms)
+                self._connection.execute(
+                    """INSERT OR IGNORE INTO analysis_snapshots (
+                           snapshot_id, snapshot_type, collection_run_id, source_ref,
+                           data_cutoff_ms, strategy_id, created_at, finalized_at
+                       ) VALUES (?, 'BACKTEST', NULL, ?, ?, 'baseline_v1', ?, ?)""",
+                    (snapshot_id, source_ref, evaluation_time_ms, created_at, created_at),
+                )
+                self._connection.execute(
+                    """UPDATE backtest_results SET snapshot_id=?
+                       WHERE backtest_run_id=? AND evaluation_time_ms=?""",
+                    (snapshot_id, backtest_run_id, evaluation_time_ms),
+                )
+
+            self._connection.executescript(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_market_regimes_snapshot
+                    ON market_regimes(snapshot_id) WHERE snapshot_id IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_signals_snapshot ON signals(snapshot_id);
+                CREATE INDEX IF NOT EXISTS idx_evaluations_snapshot ON signal_evaluations(snapshot_id);
+                CREATE INDEX IF NOT EXISTS idx_backtest_results_snapshot ON backtest_results(snapshot_id);
+
+                CREATE TRIGGER IF NOT EXISTS trg_analysis_snapshot_no_delete
+                BEFORE DELETE ON analysis_snapshots
+                BEGIN
+                    SELECT RAISE(ABORT, 'analysis snapshots are immutable');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS trg_analysis_snapshot_finalized_update
+                BEFORE UPDATE ON analysis_snapshots
+                WHEN OLD.finalized_at IS NOT NULL
+                BEGIN
+                    SELECT RAISE(ABORT, 'finalized analysis snapshots are immutable');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS trg_signal_snapshot_matches_run
+                BEFORE INSERT ON signals
+                WHEN NEW.snapshot_id IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM analysis_snapshots AS a
+                    WHERE a.snapshot_id=NEW.snapshot_id AND a.collection_run_id=NEW.run_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'signal snapshot does not match collection run');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS trg_evaluation_snapshot_matches_signal
+                BEFORE INSERT ON signal_evaluations
+                WHEN NEW.snapshot_id IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM signals AS s
+                    WHERE s.run_id=NEW.signal_run_id AND s.symbol=NEW.symbol
+                      AND s.snapshot_id=NEW.snapshot_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'evaluation snapshot does not match signal');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS trg_evaluation_snapshot_update_matches_signal
+                BEFORE UPDATE OF snapshot_id, signal_run_id, symbol ON signal_evaluations
+                WHEN NEW.snapshot_id IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM signals AS s
+                    WHERE s.run_id=NEW.signal_run_id AND s.symbol=NEW.symbol
+                      AND s.snapshot_id=NEW.snapshot_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'evaluation snapshot does not match signal');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS trg_backtest_snapshot_matches_point
+                BEFORE INSERT ON backtest_results
+                WHEN NEW.snapshot_id IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM analysis_snapshots AS a
+                    WHERE a.snapshot_id=NEW.snapshot_id AND a.snapshot_type='BACKTEST'
+                      AND a.source_ref=NEW.backtest_run_id || ':' || NEW.evaluation_time_ms
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'backtest snapshot does not match evaluation point');
+                END;
+                """
+            )
 
     def _ensure_signals_combined_regime(self) -> None:
         columns = {
@@ -1487,6 +1758,10 @@ class MarketDataRepository:
                 )
         finally:
             self._connection.execute("PRAGMA foreign_keys = ON")
+
+
+def _scan_snapshot_id(run_id: str) -> str:
+    return f"snapshot-{run_id}"
 
 
 def _iso_to_epoch_ms(value: str) -> int:

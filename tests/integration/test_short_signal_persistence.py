@@ -44,9 +44,17 @@ class ShortSignalPersistenceIntegrationTest(unittest.TestCase):
                 schema = connection.execute(
                     "SELECT sql FROM sqlite_master WHERE name='signals'"
                 ).fetchone()[0]
+                signal_columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(signals)")
+                }
+                snapshot_table = connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='analysis_snapshots'"
+                ).fetchone()
 
             self.assertIn("'SHORT'", schema)
             self.assertNotIn("direction = 'LONG'", schema)
+            self.assertIn("snapshot_id", signal_columns)
+            self.assertEqual(("analysis_snapshots",), snapshot_table)
 
 
 if __name__ == "__main__":
