@@ -19,6 +19,8 @@ from binance_ai_trader.regime import MarketRegimeEngine
 from binance_ai_trader.scoring import InsufficientDataError, ScoringEngine
 from binance_ai_trader.sectors import SECTORS, SectorMap, SectorStrengthEngine
 from binance_ai_trader.strategy_lab.config import StrategyConfig
+from binance_ai_trader.signals.ranking import final_signal_score
+from binance_ai_trader.space import SpaceEngine
 from binance_ai_trader.signals import (
     RegimeSignalGate,
     SectorSignalGate,
@@ -56,6 +58,7 @@ class BacktestEngine:
         self._policy = policy or BacktestPolicy()
         self._regime = MarketRegimeEngine()
         self._sectors = SectorStrengthEngine()
+        self._space = SpaceEngine()
         if strategy_config is None:
             self._scoring = ScoringEngine()
             self._regime_gate = RegimeSignalGate()
@@ -152,15 +155,37 @@ class BacktestEngine:
                     sector, sector_rank, signal_score, bool(sector_ranks)
                 ):
                     continue
-                opportunities.append(
-                    (score, tick_size, direction, signal_score, sector, sector_rank)
+                capital_score = self._repository.load_capital_score_at(
+                    score.symbol, evaluation_time_ms
                 )
-        opportunities.sort(
-            key=lambda item: self._opportunity_key(item, bool(sector_ranks), regime.combined_regime)
-        )
+                history_4h = self._repository.load_klines_at(
+                    score.symbol, "4h", evaluation_time_ms, self._space.REQUIRED_4H_BARS
+                )
+                try:
+                    space_score = float(
+                        self._space.score(
+                            run_id_for_point(evaluation_time_ms), score.symbol, direction, history_4h
+                        ).space_score
+                    )
+                except ValueError:
+                    space_score = 50.0
+                trend_score = _component_score(score.score_breakdown, "trend", score.score)
+                final_score = final_signal_score(
+                    capital_score=capital_score, space_score=space_score, trend_score=trend_score,
+                    sector_rank=sector_rank, combined_regime=regime.combined_regime, direction=direction,
+                )
+                opportunities.append(
+                    (score, tick_size, direction, signal_score, sector, sector_rank,
+                     capital_score, space_score, final_score)
+                )
+        opportunities.sort(key=lambda item: (-item[8], item[2], item[0].symbol))
 
         signals = []
-        for score, tick_size, direction, signal_score, sector, sector_rank in opportunities:
+        direction_counts = {"LONG": 0, "SHORT": 0}
+        for (score, tick_size, direction, signal_score, sector, sector_rank,
+             capital_score, space_score, final_score) in opportunities:
+            if direction_counts[direction] >= 3:
+                continue
             directional_score = score if direction == "LONG" else type(score)(
                 symbol=score.symbol,
                 score=signal_score,
@@ -186,13 +211,12 @@ class BacktestEngine:
                 signal = None
             if signal is None:
                 continue
-            signals.append((signal, sector, sector_rank))
-            if len(signals) == 3:
-                break
+            signals.append((signal, sector, sector_rank, capital_score, space_score, final_score))
+            direction_counts[direction] += 1
 
         completed = []
         generated_at = _epoch_iso(evaluation_time_ms)
-        for signal, sector, sector_rank in signals:
+        for signal, sector, sector_rank, capital_score, space_score, final_score in signals:
             future = self._repository.load_klines_after(
                 signal.symbol, "15m", evaluation_time_ms, self._policy.maximum_evaluation_bars
             )
@@ -230,6 +254,9 @@ class BacktestEngine:
                     result=evaluation.result,
                     bars_to_result=evaluation.bars_to_result,
                     realized_r=_realized_r(evaluation.result, signal.rr_tp1, signal.rr_tp2),
+                    capital_score=capital_score,
+                    space_score=space_score,
+                    final_signal_score=final_score,
                 )
             )
         return tuple(completed)
@@ -288,6 +315,14 @@ def summarize_results(
             results, lambda item: _score_bucket(item.score),
             ("90-100", "80-90", "70-80", "below 70"),
         ),
+        by_capital_bucket=_group(
+            results, lambda item: _flow_bucket(item.capital_score),
+            ("0-40", "40-60", "60-80", "80-100"),
+        ),
+        by_space_bucket=_group(
+            results, lambda item: _flow_bucket(item.space_score),
+            ("0-40", "40-60", "60-80", "80-100"),
+        ),
     )
 
 
@@ -344,6 +379,16 @@ def _realized_r(result: str, rr_tp1: Decimal, rr_tp2: Decimal) -> Decimal:
     return Decimal("0")
 
 
+def _component_score(breakdown: dict[str, object], name: str, fallback: float) -> float:
+    value = breakdown.get(name)
+    if isinstance(value, dict) and "score" in value:
+        return float(value["score"])
+    if isinstance(value, (int, float)):
+        return float(value)
+    return fallback
+
+
+
 def _score_bucket(score: float) -> str:
     if score >= 90:
         return "90-100"
@@ -352,6 +397,16 @@ def _score_bucket(score: float) -> str:
     if score >= 70:
         return "70-80"
     return "below 70"
+
+
+def _flow_bucket(score: float) -> str:
+    if score < 40:
+        return "0-40"
+    if score < 60:
+        return "40-60"
+    if score < 80:
+        return "60-80"
+    return "80-100"
 
 
 def _rate(count: int, total: int) -> float:

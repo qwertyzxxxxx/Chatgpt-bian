@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from binance_ai_trader.domain.models import SignalResult
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 from binance_ai_trader.sectors import SectorMap
+from binance_ai_trader.signals.ranking import final_signal_score
 from binance_ai_trader.signals import (
     RegimeSignalGate,
     SectorSignalGate,
@@ -40,6 +41,8 @@ class SignalGenerator:
         run_id = ranked_scores[0].run_id
         combined_regime = self._repository.load_latest_combined_regime()
         sector_ranks = self._repository.load_sector_ranks(run_id)
+        capital_scores = self._repository.load_capital_scores(run_id)
+        space_scores = self._repository.load_space_scores(run_id)
         snapshots_available = bool(sector_ranks)
         opportunities = []
         for ranked in ranked_scores:
@@ -54,16 +57,25 @@ class SignalGenerator:
                     sector, sector_rank, signal_score, snapshots_available
                 ):
                     continue
-                opportunities.append((ranked, direction, signal_score, sector, sector_rank))
+                capital_score = capital_scores.get(ranked.score.symbol, 50.0)
+                space_score = space_scores.get((ranked.score.symbol, direction), 50.0)
+                trend_score = _component_score(ranked.score.score_breakdown, "trend", ranked.score.score)
+                final_score = final_signal_score(
+                    capital_score=capital_score, space_score=space_score, trend_score=trend_score,
+                    sector_rank=sector_rank, combined_regime=combined_regime, direction=direction,
+                )
+                opportunities.append((
+                    ranked, direction, signal_score, sector, sector_rank,
+                    capital_score, space_score, final_score,
+                ))
 
-        opportunities.sort(
-            key=lambda item: self._opportunity_key(
-                item, snapshots_available, combined_regime
-            )
-        )
+        opportunities.sort(key=lambda item: (-item[7], item[1], item[0].rank, item[0].score.symbol))
         signals = []
         processed_symbols: set[str] = set()
-        for ranked, direction, signal_score, sector, sector_rank in opportunities:
+        direction_counts = {"LONG": 0, "SHORT": 0}
+        for ranked, direction, signal_score, sector, sector_rank, capital_score, space_score, final_score in opportunities:
+            if direction_counts[direction] >= 3:
+                continue
             processed_symbols.add(ranked.score.symbol)
             engine = self._engine if direction == "LONG" else self._short_engine
             klines = {
@@ -98,9 +110,14 @@ class SignalGenerator:
                         combined_regime=combined_regime,
                         sector=sector,
                         sector_rank=sector_rank,
+                        capital_score=capital_score,
+                        space_score=space_score,
+                        final_signal_score=final_score,
                     )
                 )
-            if len(signals) == 3:
+                direction_counts[direction] += 1
+            if all(count >= 3 for direction, count in direction_counts.items()
+                   if any(item[1] == direction for item in opportunities)):
                 break
 
         result = SignalResult(
@@ -111,22 +128,16 @@ class SignalGenerator:
         self._repository.save_signals(run_id, result.signals, _utc_now())
         return result
 
-    @staticmethod
-    def _opportunity_key(
-        item: tuple[object, str, float, str, int | None],
-        snapshots: bool,
-        combined_regime: str,
-    ):
-        ranked, direction, signal_score, _sector, sector_rank = item
-        rank = ranked.rank
-        symbol = ranked.score.symbol
-        if not snapshots or combined_regime == "RANGE":
-            return (-signal_score, 0 if direction == "LONG" else 1, rank, symbol)
-        if direction == "LONG":
-            sector_priority = sector_rank if sector_rank is not None else 10_000
-        else:
-            sector_priority = -sector_rank if sector_rank is not None else 10_000
-        return (sector_priority, -signal_score, 0 if direction == "LONG" else 1, rank, symbol)
+
+
+def _component_score(breakdown: dict[str, object], name: str, fallback: float) -> float:
+    value = breakdown.get(name)
+    if isinstance(value, dict) and "score" in value:
+        return float(value["score"])
+    if isinstance(value, (int, float)):
+        return float(value)
+    return fallback
+
 
 
 def _utc_now() -> str:

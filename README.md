@@ -63,7 +63,7 @@ The signal engine preserves score rank and evaluates only the latest run's Top 2
 - **Stop:** the tighter valid level derived from a recent 1h swing low with ATR buffer or a 2× 1h ATR stop. Risk is widened to at least 2% to avoid noise; candidates above 7% risk are rejected.
 - **TP1:** the nearest prior 1h/4h resistance at or above 1R, otherwise the exact 1R objective.
 - **TP2:** a prior 1h/4h high or range boundary at or above 2R. A candidate without structural room for at least 2R is rejected.
-- **Direction:** always `LONG`. No short strategy exists in this stage.
+- **Direction:** this section defines the LONG path; SHORT uses the separate regime-directed rules below.
 
 The rules use only closed candles and decimal tick-size rounding. They do not invoke an AI or machine-learning model.
 
@@ -77,7 +77,9 @@ The rules use only closed candles and decimal tick-size rounding. They do not in
 - `universe_snapshots`: retained contracts and their 24-hour statistics.
 - `klines`: idempotent closed candles keyed by symbol, interval, and open time.
 - `scores`: full-run rank, total score, JSON breakdown, algorithm version, and timestamp.
-- `signals`: Top 3 rank, LONG/SHORT direction, score, entry/latest close, stop, targets, RRs, explanation, and generation timestamp.
+- `capital_snapshots`: public OI changes, funding/crowding components, and Capital Score.
+- `space_snapshots`: direction-specific 30/60/120-day distances and Space Score.
+- `signals`: direction rank, LONG/SHORT direction, component/final scores, entry/latest close, stop, targets, RRs, explanation, and generation timestamp.
 - `signal_evaluations`: deterministic outcome, excursions, bars to result, and evaluation timestamp.
 - `market_regimes`: BTC, ETH, and combined regime history with evaluation timestamps.
 - `sector_snapshots`: per-run sector metrics and deterministic strength rank.
@@ -309,3 +311,30 @@ PYTHONPATH=src python -m binance_ai_trader health \
 ```
 
 See [`docs/replit_reserved_vm.md`](docs/replit_reserved_vm.md) for start/stop, logs, database backup, storage maintenance, and daily operator checks. This runner remains read-only with respect to Binance: no API key, account access, order placement, Telegram, or web dashboard is included.
+
+## Capital Flow and Space analysis
+
+The scan pipeline now runs `capital` and `space` analysis after scoring and sector ranking, before signal generation. Both engines use public market data only; they do not require credentials, account access, or order endpoints.
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader capital --database data/market_data.db
+PYTHONPATH=src python -m binance_ai_trader space --database data/market_data.db
+```
+
+`capital` reads public current/open-interest history, current funding, and the global long/short account ratio for the latest Top 20 symbols. It combines 24-hour volume expansion, 1h/4h/24h open-interest expansion, a funding-neutrality penalty, and a crowding penalty into a deterministic `capital_score` from 0 to 100. Results are persisted in `capital_snapshots`.
+
+`space` uses 720 already-closed 4h candles (120 days) and measures distance to the 30/60/120-day highs and lows. It produces direction-specific `upside_pct`, `downside_pct`, and `space_score` values for LONG and SHORT, persisted in `space_snapshots`. During `scan`, missing 120-day 4h history is fetched from the public kline endpoint and saved before calculation.
+
+Signal price construction is unchanged. Entry, stop loss, TP1, TP2, and RR are still produced by the existing LONG/SHORT engines. Only candidate ordering changes through `final_signal_score`:
+
+- Capital Score: 30%
+- Space Score: 30%
+- Trend Score: 20%
+- Sector Score: 10%
+- Regime Score: 10%
+
+The generator can emit up to three LONG and three SHORT signals when the existing Regime Gate permits those directions. JSON Lines and the `signals` table include `capital_score`, `space_score`, and `final_signal_score` for auditability.
+
+Backtest summaries include `by_capital_bucket` and `by_space_bucket` groups (`0-40`, `40-60`, `60-80`, `80-100`). Each bucket reports expectancy and RR metrics so research can test whether stronger capital flow improves expectancy and whether greater directional space improves realized opportunity. No strategy parameters are optimized or activated by these statistics.
+
+The daily paper report also includes `top_capital_long` and `top_capital_short`. Each row contains `symbol`, `direction`, `capital_score`, `space_score`, `entry`, `sl`, `tp1`, `tp2`, and `rr`.

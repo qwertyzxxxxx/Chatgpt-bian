@@ -99,6 +99,9 @@ class TradeSignal:
     combined_regime: str = "OBSERVE"
     sector: str = "OTHER"
     sector_rank: int | None = None
+    capital_score: float = 50.0
+    space_score: float = 50.0
+    final_signal_score: float = 50.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +206,9 @@ class BacktestResult:
     result: str
     bars_to_result: int
     realized_r: Decimal
+    capital_score: float = 50.0
+    space_score: float = 50.0
+    final_signal_score: float = 50.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,3 +235,5 @@ class BacktestSummary:
     by_combined_regime: dict[str, BacktestMetrics]
     by_sector: dict[str, BacktestMetrics]
     by_score_bucket: dict[str, BacktestMetrics]
+    by_capital_bucket: dict[str, BacktestMetrics]
+    by_space_bucket: dict[str, BacktestMetrics]

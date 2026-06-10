@@ -9,6 +9,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from binance_ai_trader.application.analyze_market_regime import MarketRegimeAnalyzer
+from binance_ai_trader.application.analyze_capital_flow import CapitalFlowAnalyzer
+from binance_ai_trader.application.analyze_space import SpaceAnalyzer
 from binance_ai_trader.application.analyze_sector_strength import SectorStrengthAnalyzer
 from binance_ai_trader.application.collect_market_data import MarketDataCollector
 from binance_ai_trader.application.evaluate_signals import SignalEvaluator
@@ -48,6 +50,18 @@ def build_parser() -> argparse.ArgumentParser:
     sectors.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     sectors.add_argument("--config", type=Path, default=Path("config/sectors.json"))
     sectors.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+
+    capital = subparsers.add_parser("capital", help="calculate public capital-flow scores")
+    capital.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    capital.add_argument("--base-url", default="https://fapi.binance.com")
+    capital.add_argument("--timeout", type=float, default=10.0)
+    capital.add_argument("--max-retries", type=int, default=3)
+    capital.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    space = subparsers.add_parser("space", help="calculate 30/60/120 day directional space")
+    space.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    space.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
     backtest = subparsers.add_parser("backtest", help="replay LONG/SHORT strategies on stored klines")
     backtest.add_argument("--database", type=Path, default=Path("data/market_data.db"))
@@ -135,7 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -145,6 +159,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_loop(args)
     if args.command == "health":
         return _health(args.database)
+    if args.command == "capital":
+        return _capital(args)
+    if args.command == "space":
+        return _space(args.database)
     if args.command == "strategies":
         return _strategies(args)
     if args.command in {"auto-research", "auto_research"}:
@@ -183,6 +201,8 @@ def _scan(args: argparse.Namespace) -> int:
             excluded_symbols=failed_symbols,
         )
         SectorStrengthAnalyzer(repository, sector_map).analyze_latest()
+        CapitalFlowAnalyzer(repository, client).analyze_latest()
+        SpaceAnalyzer(repository, client).analyze_latest()
         signal_result = SignalGenerator(repository, sector_map=sector_map).generate_latest()
     finally:
         repository.close()
@@ -197,6 +217,9 @@ def _scan(args: argparse.Namespace) -> int:
                     "combined_regime": signal.combined_regime,
                     "sector": signal.sector,
                     "sector_rank": signal.sector_rank,
+                    "capital_score": signal.capital_score,
+                    "space_score": signal.space_score,
+                    "final_signal_score": signal.final_signal_score,
                     "entry": str(signal.entry),
                     "latest_close": str(signal.latest_close),
                     "stop_loss": str(signal.stop_loss),
@@ -302,6 +325,12 @@ def _backtest(args: argparse.Namespace) -> int:
                 "by_score_bucket": {
                     key: asdict(value) for key, value in summary.by_score_bucket.items()
                 },
+                "by_capital_bucket": {
+                    key: asdict(value) for key, value in summary.by_capital_bucket.items()
+                },
+                "by_space_bucket": {
+                    key: asdict(value) for key, value in summary.by_space_bucket.items()
+                },
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -381,6 +410,30 @@ def _daily_report(database: Path, report_date: date | None) -> int:
     finally:
         repository.close()
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _capital(args: argparse.Namespace) -> int:
+    repository = MarketDataRepository(args.database)
+    try:
+        snapshots = CapitalFlowAnalyzer(
+            repository, BinancePublicClient(args.base_url, args.timeout, args.max_retries)
+        ).analyze_latest()
+    finally:
+        repository.close()
+    for item in snapshots:
+        print(json.dumps(asdict(item), default=str, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _space(database: Path) -> int:
+    repository = MarketDataRepository(database)
+    try:
+        snapshots = SpaceAnalyzer(repository).analyze_latest()
+    finally:
+        repository.close()
+    for item in snapshots:
+        print(json.dumps(asdict(item), default=str, separators=(",", ":"), sort_keys=True))
     return 0
 
 

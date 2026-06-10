@@ -44,6 +44,23 @@ class ScanPipelineTest(unittest.TestCase):
                 calls.append("sectors")
                 return ()
 
+
+        class CapitalAnalyzer:
+            def __init__(self, _: object, __: object) -> None:
+                pass
+
+            def analyze_latest(self):
+                calls.append("capital")
+                return ()
+
+        class SpaceAnalyzer:
+            def __init__(self, _: object, __: object) -> None:
+                pass
+
+            def analyze_latest(self):
+                calls.append("space")
+                return ()
+
         class Generator:
             def __init__(self, _: object, **__: object) -> None:
                 pass
@@ -69,12 +86,14 @@ class ScanPipelineTest(unittest.TestCase):
             patch("binance_ai_trader.entrypoints.cli.MarketRegimeAnalyzer", RegimeAnalyzer),
             patch("binance_ai_trader.entrypoints.cli.MarketScorer", Scorer),
             patch("binance_ai_trader.entrypoints.cli.SectorStrengthAnalyzer", SectorAnalyzer),
+            patch("binance_ai_trader.entrypoints.cli.CapitalFlowAnalyzer", CapitalAnalyzer),
+            patch("binance_ai_trader.entrypoints.cli.SpaceAnalyzer", SpaceAnalyzer),
             patch("binance_ai_trader.entrypoints.cli.SignalGenerator", Generator),
         ):
             exit_code = _scan(args)
 
         self.assertEqual(0, exit_code)
-        self.assertEqual(["collect", "regime", "score", "sectors", "signals", "close"], calls)
+        self.assertEqual(["collect", "regime", "score", "sectors", "capital", "space", "signals", "close"], calls)
 
 
 if __name__ == "__main__":

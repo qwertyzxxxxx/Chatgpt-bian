@@ -53,6 +53,44 @@ class BinancePublicClient:
         except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
             raise BinancePublicApiError("Invalid 24h ticker response") from exc
 
+    def open_interest(self, symbol: str) -> Decimal:
+        payload = self._get_json("/fapi/v1/openInterest", {"symbol": symbol})
+        try:
+            return Decimal(payload["openInterest"])
+        except (KeyError, TypeError, InvalidOperation) as exc:
+            raise BinancePublicApiError(f"Invalid open interest response for {symbol}") from exc
+
+    def open_interest_history(self, symbol: str, limit: int = 30) -> tuple[tuple[int, Decimal], ...]:
+        payload = self._get_json(
+            "/futures/data/openInterestHist",
+            {"symbol": symbol, "period": "1h", "limit": str(limit)},
+        )
+        if not isinstance(payload, list):
+            raise BinancePublicApiError("Expected open interest history array")
+        try:
+            return tuple((int(item["timestamp"]), Decimal(item["sumOpenInterest"])) for item in payload)
+        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+            raise BinancePublicApiError(f"Invalid open interest history for {symbol}") from exc
+
+    def current_funding_rate(self, symbol: str) -> Decimal:
+        payload = self._get_json("/fapi/v1/premiumIndex", {"symbol": symbol})
+        try:
+            return Decimal(payload["lastFundingRate"])
+        except (KeyError, TypeError, InvalidOperation) as exc:
+            raise BinancePublicApiError(f"Invalid funding response for {symbol}") from exc
+
+    def global_long_short_ratio(self, symbol: str) -> Decimal:
+        payload = self._get_json(
+            "/futures/data/globalLongShortAccountRatio",
+            {"symbol": symbol, "period": "1h", "limit": "1"},
+        )
+        if not isinstance(payload, list) or not payload:
+            raise BinancePublicApiError(f"Missing global long/short ratio for {symbol}")
+        try:
+            return Decimal(payload[-1]["longShortRatio"])
+        except (KeyError, TypeError, InvalidOperation) as exc:
+            raise BinancePublicApiError(f"Invalid global long/short ratio for {symbol}") from exc
+
     def klines(
         self,
         symbol: str,

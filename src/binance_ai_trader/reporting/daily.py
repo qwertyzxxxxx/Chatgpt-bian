@@ -28,6 +28,8 @@ class DailyReportService:
                 "paused_until": account.paused_until,
                 "current_target": account.current_target,
             },
+            "top_capital_long": self._repository.load_top_capital_signals(start, end, "LONG"),
+            "top_capital_short": self._repository.load_top_capital_signals(start, end, "SHORT"),
             "top_candidates": self._repository.load_top_candidate_report(5),
             "aggressive_allowed": account.aggressive_allowed,
             "disclaimer": "Paper research only; no profit is guaranteed and no orders are placed.",

@@ -92,6 +92,8 @@ class ResearchPaperReportIntegrationTest(unittest.TestCase):
         self.assertIsNone(report["regime"])
         self.assertEqual([], report["sectors"])
         self.assertEqual("1000", report["paper_account"]["equity"])
+        self.assertEqual([], report["top_capital_long"])
+        self.assertEqual([], report["top_capital_short"])
         self.assertEqual([], report["top_candidates"])
         self.assertTrue(report["aggressive_allowed"])
 

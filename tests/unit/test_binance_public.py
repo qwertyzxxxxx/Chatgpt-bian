@@ -37,6 +37,22 @@ class BinancePublicClientTest(unittest.TestCase):
         self.assertEqual("10000000.50", str(tickers[0].quote_volume))
         self.assertEqual("2.75", str(tickers[0].price_change_percent))
 
+    def test_maps_public_capital_flow_endpoints(self) -> None:
+        client = StubClient({
+            "/fapi/v1/openInterest": {"openInterest": "123.45"},
+            "/futures/data/openInterestHist": [
+                {"timestamp": 1, "sumOpenInterest": "100"},
+                {"timestamp": 2, "sumOpenInterest": "110"},
+            ],
+            "/fapi/v1/premiumIndex": {"lastFundingRate": "0.0001"},
+            "/futures/data/globalLongShortAccountRatio": [{"longShortRatio": "1.2"}],
+        })
+        self.assertEqual("123.45", str(client.open_interest("BTCUSDT")))
+        self.assertEqual((2, "110"), (client.open_interest_history("BTCUSDT")[-1][0],
+                                      str(client.open_interest_history("BTCUSDT")[-1][1])))
+        self.assertEqual("0.0001", str(client.current_funding_rate("BTCUSDT")))
+        self.assertEqual("1.2", str(client.global_long_short_ratio("BTCUSDT")))
+
     def test_removes_open_candle(self) -> None:
         client = StubClient({"/fapi/v1/klines": fixture("klines.json")})
 

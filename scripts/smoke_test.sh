@@ -13,3 +13,5 @@ PYTHONPATH=src python -m binance_ai_trader paper-simulate --help
 PYTHONPATH=src python -m binance_ai_trader daily-report --help
 PYTHONPATH=src python -m binance_ai_trader run-loop --help
 PYTHONPATH=src python -m binance_ai_trader health --help
+PYTHONPATH=src python -m binance_ai_trader capital --help
+PYTHONPATH=src python -m binance_ai_trader space --help

@@ -124,6 +124,8 @@ class BacktestIntegrationTest(unittest.TestCase):
             {"90-100", "80-90", "70-80", "below 70"},
             set(payload["by_score_bucket"]),
         )
+        self.assertEqual({"0-40", "40-60", "60-80", "80-100"}, set(payload["by_capital_bucket"]))
+        self.assertEqual({"0-40", "40-60", "60-80", "80-100"}, set(payload["by_space_bucket"]))
 
         with closing(sqlite3.connect(self.database)) as connection:
             run = connection.execute(
