@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
+from binance_ai_trader.capital import CapitalFlowHistory
 from binance_ai_trader.domain.models import (
     BacktestMetrics,
     BacktestResult,
@@ -59,6 +60,7 @@ class BacktestEngine:
         self._regime = MarketRegimeEngine()
         self._sectors = SectorStrengthEngine()
         self._space = SpaceEngine()
+        self._capital = CapitalFlowHistory(repository)
         if strategy_config is None:
             self._scoring = ScoringEngine()
             self._regime_gate = RegimeSignalGate()
@@ -160,8 +162,11 @@ class BacktestEngine:
                     sector, sector_rank, signal_score, bool(sector_ranks)
                 ):
                     continue
-                capital_score = self._repository.load_capital_score_at(
-                    score.symbol, evaluation_time_ms
+                capital_snapshot = self._capital.score_at(
+                    run_id_for_point(evaluation_time_ms), score.symbol, evaluation_time_ms
+                )
+                capital_score = (
+                    50.0 if capital_snapshot is None else float(capital_snapshot.capital_score)
                 )
                 history_4h = self._repository.load_klines_at(
                     score.symbol, "4h", evaluation_time_ms, self._space.REQUIRED_4H_BARS

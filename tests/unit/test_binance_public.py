@@ -45,12 +45,25 @@ class BinancePublicClientTest(unittest.TestCase):
                 {"timestamp": 2, "sumOpenInterest": "110"},
             ],
             "/fapi/v1/premiumIndex": {"lastFundingRate": "0.0001"},
-            "/futures/data/globalLongShortAccountRatio": [{"longShortRatio": "1.2"}],
+            "/fapi/v1/fundingRate": [
+                {"fundingTime": 2, "fundingRate": "0.0002"}
+            ],
+            "/futures/data/globalLongShortAccountRatio": [
+                {"timestamp": 2, "longShortRatio": "1.2"}
+            ],
         })
         self.assertEqual("123.45", str(client.open_interest("BTCUSDT")))
         self.assertEqual((2, "110"), (client.open_interest_history("BTCUSDT")[-1][0],
                                       str(client.open_interest_history("BTCUSDT")[-1][1])))
         self.assertEqual("0.0001", str(client.current_funding_rate("BTCUSDT")))
+        self.assertEqual((2, "0.0002"), (
+            client.funding_rate_history("BTCUSDT")[-1][0],
+            str(client.funding_rate_history("BTCUSDT")[-1][1]),
+        ))
+        self.assertEqual((2, "1.2"), (
+            client.global_long_short_ratio_history("BTCUSDT")[-1][0],
+            str(client.global_long_short_ratio_history("BTCUSDT")[-1][1]),
+        ))
         self.assertEqual("1.2", str(client.global_long_short_ratio("BTCUSDT")))
 
     def test_removes_open_candle(self) -> None:

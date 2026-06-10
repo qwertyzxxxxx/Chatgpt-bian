@@ -28,7 +28,7 @@ from binance_ai_trader.domain.models import (
 from binance_ai_trader.strategy_lab.config import StrategyConfig
 from binance_ai_trader.strategy_lab.models import StrategyVersion
 from binance_ai_trader.paper.models import PaperAccount, PaperOutcome
-from binance_ai_trader.capital import CapitalSnapshot
+from binance_ai_trader.capital import CapitalInputs, CapitalObservation, CapitalSnapshot
 from binance_ai_trader.space import SpaceSnapshot
 
 
@@ -678,6 +678,90 @@ class MarketDataRepository:
             return None
         return sum((Decimal(row[0]) for row in rows), Decimal("0")) / Decimal(len(rows)) * 96
 
+    def save_capital_observations(
+        self, observations: Iterable[CapitalObservation], captured_at: str
+    ) -> None:
+        observations = tuple(observations)
+        for snapshot_id in {item.snapshot_id for item in observations}:
+            self._assert_snapshot_writable(snapshot_id)
+        rows = [
+            (item.symbol, item.metric, item.observed_at_ms, str(item.value),
+             item.snapshot_id, captured_at)
+            for item in observations
+        ]
+        with self._connection:
+            self._connection.executemany(
+                """INSERT OR IGNORE INTO capital_flow_observations (
+                       symbol, metric, observed_at_ms, value, ingested_snapshot_id, captured_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+
+    def load_capital_inputs_at(
+        self, symbol: str, as_of_ms: int
+    ) -> CapitalInputs | None:
+        hour_ms = 3_600_000
+        current_oi = self._load_capital_value_at(
+            symbol, "OPEN_INTEREST", as_of_ms, 2 * hour_ms
+        )
+        oi_1h = self._load_capital_value_at(
+            symbol, "OPEN_INTEREST", as_of_ms - hour_ms, 2 * hour_ms
+        )
+        oi_4h = self._load_capital_value_at(
+            symbol, "OPEN_INTEREST", as_of_ms - 4 * hour_ms, 2 * hour_ms
+        )
+        oi_24h = self._load_capital_value_at(
+            symbol, "OPEN_INTEREST", as_of_ms - 24 * hour_ms, 2 * hour_ms
+        )
+        funding = self._load_capital_value_at(
+            symbol, "FUNDING_RATE", as_of_ms, 12 * hour_ms
+        )
+        ratio = self._load_capital_value_at(
+            symbol, "LONG_SHORT_RATIO", as_of_ms, 2 * hour_ms
+        )
+        required = (current_oi, oi_1h, oi_4h, oi_24h, funding, ratio)
+        if any(value is None for value in required):
+            return None
+        quote_volume = self._load_capital_value_at(
+            symbol, "QUOTE_VOLUME_24H", as_of_ms, 2 * hour_ms
+        )
+        volume_rows = self._connection.execute(
+            """SELECT quote_volume FROM klines
+               WHERE symbol=? AND interval='15m' AND close_time_ms<=?
+               ORDER BY close_time_ms DESC LIMIT 672""",
+            (symbol, as_of_ms),
+        ).fetchall()
+        if quote_volume is None:
+            if len(volume_rows) < 96:
+                return None
+            quote_volume = sum(
+                (Decimal(row[0]) for row in volume_rows[:96]), Decimal("0")
+            )
+        average_volume = (
+            quote_volume if len(volume_rows) < 96 else
+            sum((Decimal(row[0]) for row in volume_rows), Decimal("0"))
+            / Decimal(len(volume_rows)) * 96
+        )
+        return CapitalInputs(
+            symbol=symbol, quote_volume_24h=quote_volume,
+            average_quote_volume_24h=average_volume, oi_current=current_oi,
+            oi_1h_ago=oi_1h, oi_4h_ago=oi_4h, oi_24h_ago=oi_24h,
+            current_funding_rate=funding, long_short_ratio=ratio,
+        )
+
+    def _load_capital_value_at(
+        self, symbol: str, metric: str, as_of_ms: int, maximum_age_ms: int
+    ) -> Decimal | None:
+        row = self._connection.execute(
+            """SELECT value, observed_at_ms FROM capital_flow_observations
+               WHERE symbol=? AND metric=? AND observed_at_ms<=?
+               ORDER BY observed_at_ms DESC LIMIT 1""",
+            (symbol, metric, as_of_ms),
+        ).fetchone()
+        if row is None or as_of_ms - int(row[1]) > maximum_age_ms:
+            return None
+        return Decimal(row[0])
+
     def save_capital_snapshots(
         self, snapshots: Iterable[CapitalSnapshot], calculated_at: str
     ) -> None:
@@ -687,7 +771,8 @@ class MarketDataRepository:
                 self.load_snapshot_for_run(snapshots[0].run_id).snapshot_id
             )
         rows = [(
-            item.run_id, item.symbol, str(item.oi_current), str(item.oi_change_1h_pct),
+            item.run_id, self.load_snapshot_for_run(item.run_id).snapshot_id, item.symbol,
+            str(item.oi_current), str(item.oi_change_1h_pct),
             str(item.oi_change_4h_pct), str(item.oi_change_24h_pct),
             str(item.current_funding_rate), str(item.funding_score),
             str(item.long_short_ratio), str(item.crowding_score),
@@ -697,10 +782,10 @@ class MarketDataRepository:
         with self._connection:
             self._connection.executemany(
                 """INSERT INTO capital_snapshots (
-                    run_id,symbol,oi_current,oi_change_1h_pct,oi_change_4h_pct,
+                    run_id,snapshot_id,symbol,oi_current,oi_change_1h_pct,oi_change_4h_pct,
                     oi_change_24h_pct,current_funding_rate,funding_score,long_short_ratio,
                     crowding_score,volume_expansion_score,oi_expansion_score,capital_score,calculated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id,symbol) DO UPDATE SET
                     oi_current=excluded.oi_current,oi_change_1h_pct=excluded.oi_change_1h_pct,
                     oi_change_4h_pct=excluded.oi_change_4h_pct,oi_change_24h_pct=excluded.oi_change_24h_pct,
@@ -1208,8 +1293,24 @@ class MarketDataRepository:
 
             CREATE INDEX IF NOT EXISTS idx_scores_run_score ON scores(run_id, score DESC);
 
+            CREATE TABLE IF NOT EXISTS capital_flow_observations (
+                symbol TEXT NOT NULL,
+                metric TEXT NOT NULL CHECK(metric IN (
+                    'OPEN_INTEREST', 'FUNDING_RATE', 'LONG_SHORT_RATIO', 'QUOTE_VOLUME_24H'
+                )),
+                observed_at_ms INTEGER NOT NULL,
+                value TEXT NOT NULL,
+                ingested_snapshot_id TEXT NOT NULL REFERENCES analysis_snapshots(snapshot_id),
+                captured_at TEXT NOT NULL,
+                PRIMARY KEY(symbol, metric, observed_at_ms)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_capital_observation_lookup
+                ON capital_flow_observations(symbol, metric, observed_at_ms DESC);
+
             CREATE TABLE IF NOT EXISTS capital_snapshots (
                 run_id TEXT NOT NULL REFERENCES collection_runs(id) ON DELETE CASCADE,
+                snapshot_id TEXT NOT NULL REFERENCES analysis_snapshots(snapshot_id),
                 symbol TEXT NOT NULL, oi_current TEXT NOT NULL, oi_change_1h_pct TEXT NOT NULL,
                 oi_change_4h_pct TEXT NOT NULL, oi_change_24h_pct TEXT NOT NULL,
                 current_funding_rate TEXT NOT NULL, funding_score TEXT NOT NULL,
@@ -1404,6 +1505,7 @@ class MarketDataRepository:
         self._ensure_signal_rank_capacity()
         self._ensure_backtest_v2_columns()
         self._ensure_analysis_snapshot_lineage()
+        self._ensure_capital_flow_history()
 
     def _ensure_analysis_snapshot_lineage(self) -> None:
         table_columns = {
@@ -1550,6 +1652,49 @@ class MarketDataRepository:
                 )
                 BEGIN
                     SELECT RAISE(ABORT, 'backtest snapshot does not match evaluation point');
+                END;
+                """
+            )
+
+    def _ensure_capital_flow_history(self) -> None:
+        columns = {
+            row[1] for row in self._connection.execute("PRAGMA table_info(capital_snapshots)")
+        }
+        with self._connection:
+            if "snapshot_id" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE capital_snapshots ADD COLUMN snapshot_id "
+                    "TEXT REFERENCES analysis_snapshots(snapshot_id)"
+                )
+            self._connection.execute(
+                """UPDATE capital_snapshots SET snapshot_id='snapshot-' || run_id
+                   WHERE snapshot_id IS NULL AND EXISTS (
+                       SELECT 1 FROM analysis_snapshots AS a
+                       WHERE a.snapshot_id='snapshot-' || capital_snapshots.run_id
+                   )"""
+            )
+            self._connection.executescript(
+                """
+                CREATE INDEX IF NOT EXISTS idx_capital_snapshots_snapshot
+                    ON capital_snapshots(snapshot_id);
+                CREATE TRIGGER IF NOT EXISTS trg_capital_observation_no_update
+                BEFORE UPDATE ON capital_flow_observations
+                BEGIN
+                    SELECT RAISE(ABORT, 'capital observations are immutable');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_capital_observation_no_delete
+                BEFORE DELETE ON capital_flow_observations
+                BEGIN
+                    SELECT RAISE(ABORT, 'capital observations are immutable');
+                END;
+                CREATE TRIGGER IF NOT EXISTS trg_capital_snapshot_matches_run
+                BEFORE INSERT ON capital_snapshots
+                WHEN NEW.snapshot_id IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM analysis_snapshots AS a
+                    WHERE a.snapshot_id=NEW.snapshot_id AND a.collection_run_id=NEW.run_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'capital snapshot does not match collection run');
                 END;
                 """
             )

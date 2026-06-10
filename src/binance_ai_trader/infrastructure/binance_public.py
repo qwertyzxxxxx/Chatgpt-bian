@@ -60,17 +60,56 @@ class BinancePublicClient:
         except (KeyError, TypeError, InvalidOperation) as exc:
             raise BinancePublicApiError(f"Invalid open interest response for {symbol}") from exc
 
-    def open_interest_history(self, symbol: str, limit: int = 30) -> tuple[tuple[int, Decimal], ...]:
-        payload = self._get_json(
-            "/futures/data/openInterestHist",
-            {"symbol": symbol, "period": "1h", "limit": str(limit)},
-        )
+    def open_interest_history(
+        self, symbol: str, limit: int = 30, start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> tuple[tuple[int, Decimal], ...]:
+        params = {"symbol": symbol, "period": "1h", "limit": str(limit)}
+        if start_time_ms is not None:
+            params["startTime"] = str(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = str(end_time_ms)
+        payload = self._get_json("/futures/data/openInterestHist", params)
         if not isinstance(payload, list):
             raise BinancePublicApiError("Expected open interest history array")
         try:
             return tuple((int(item["timestamp"]), Decimal(item["sumOpenInterest"])) for item in payload)
         except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
             raise BinancePublicApiError(f"Invalid open interest history for {symbol}") from exc
+
+    def funding_rate_history(
+        self, symbol: str, limit: int = 100, start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> tuple[tuple[int, Decimal], ...]:
+        params = {"symbol": symbol, "limit": str(limit)}
+        if start_time_ms is not None:
+            params["startTime"] = str(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = str(end_time_ms)
+        payload = self._get_json("/fapi/v1/fundingRate", params)
+        if not isinstance(payload, list):
+            raise BinancePublicApiError("Expected funding history array")
+        try:
+            return tuple((int(item["fundingTime"]), Decimal(item["fundingRate"])) for item in payload)
+        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+            raise BinancePublicApiError(f"Invalid funding history for {symbol}") from exc
+
+    def global_long_short_ratio_history(
+        self, symbol: str, limit: int = 30, start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> tuple[tuple[int, Decimal], ...]:
+        params = {"symbol": symbol, "period": "1h", "limit": str(limit)}
+        if start_time_ms is not None:
+            params["startTime"] = str(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = str(end_time_ms)
+        payload = self._get_json("/futures/data/globalLongShortAccountRatio", params)
+        if not isinstance(payload, list):
+            raise BinancePublicApiError("Expected global long/short ratio array")
+        try:
+            return tuple((int(item["timestamp"]), Decimal(item["longShortRatio"])) for item in payload)
+        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+            raise BinancePublicApiError(f"Invalid global long/short ratio history for {symbol}") from exc
 
     def current_funding_rate(self, symbol: str) -> Decimal:
         payload = self._get_json("/fapi/v1/premiumIndex", {"symbol": symbol})

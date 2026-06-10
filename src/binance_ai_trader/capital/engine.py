@@ -18,6 +18,15 @@ class CapitalInputs:
 
 
 @dataclass(frozen=True, slots=True)
+class CapitalObservation:
+    symbol: str
+    metric: str
+    observed_at_ms: int
+    value: Decimal
+    snapshot_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class CapitalSnapshot:
     run_id: str
     symbol: str
