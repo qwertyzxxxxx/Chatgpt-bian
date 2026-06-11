@@ -19,6 +19,7 @@ class DailyReportService:
         return {
             "date": selected.isoformat(),
             "signals": self._repository.load_signal_report(start, end),
+            "top3": self._repository.load_daily_top_signals(start, end),
             "regime": self._repository.load_regime_report(start, end),
             "sectors": self._repository.load_sector_report(start, end),
             "paper_account": {
@@ -34,3 +35,19 @@ class DailyReportService:
             "aggressive_allowed": account.aggressive_allowed,
             "disclaimer": "Paper research only; no profit is guaranteed and no orders are placed.",
         }
+
+
+def format_top3_message(report: dict[str, object]) -> str:
+    lines = [f"Daily Top3 report — {report['date']}"]
+    top3 = report.get("top3", [])
+    if not top3:
+        lines.append("No signals generated.")
+    else:
+        for index, item in enumerate(top3, start=1):
+            lines.append(
+                f"{index}. {item['symbol']} {item['direction']} | "
+                f"score {item['score']} | entry {item['entry']} | "
+                f"SL {item['sl']} | TP1 {item['tp1']} | TP2 {item['tp2']} | RR {item['rr']}"
+            )
+    lines.append("Paper research only; no orders are placed.")
+    return "\n".join(lines)

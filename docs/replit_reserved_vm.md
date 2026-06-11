@@ -1,6 +1,6 @@
 # Replit Reserved VM 24/7 Runner
 
-This guide runs Binance AI Trader as a persistent **read-only research process** on a Replit Reserved VM. The runner uses Binance public market endpoints only. It has no API key, account access, order endpoint, live-trading capability, Telegram integration, or web dashboard.
+This guide runs Binance AI Trader as a persistent **read-only research process** on a Replit Reserved VM. The runner uses Binance public market endpoints only. It has no API key, account access, order endpoint, live-trading capability, or web dashboard. Optional Telegram Bot API notifications are outbound-only.
 
 ## Before starting
 
@@ -36,11 +36,25 @@ The process remains in the foreground so Replit can monitor and restart it. Its 
 | `evaluate` | Every 15 minutes |
 | `paper-simulate` | Every 15 minutes |
 | `daily-report` | Daily at 00:05 UTC |
+| `collect-history` | Every 24 hours |
 | `auto-research` | Every 6 hours |
 
 Each execution is written to `runner_events`. A task exception or non-zero exit code is recorded as `FAILED`; later tasks and future ticks continue. `auto-research` remains parameter research only and cannot approve or activate candidates.
 
-For a one-cycle operational check, use `--once`. This intentionally attempts all five tasks immediately:
+The history job uses the existing resumable collector with a 180-day window. Operational cadence can be changed with `--history-interval-hours`, and the window with `--history-days`; neither option changes signal, scoring, or strategy behavior.
+
+### Optional Telegram notifications
+
+Set both deployment environment variables (never commit the real token):
+
+```bash
+export TELEGRAM_BOT_TOKEN="your-bot-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
+```
+
+The runner sends failed-task alerts and the successful 00:05 UTC daily Top3 report. Telegram delivery errors are logged and isolated from later runner tasks.
+
+For a one-cycle operational check, use `--once`. This intentionally attempts all six tasks immediately:
 
 ```bash
 PYTHONPATH=src python -m binance_ai_trader run-loop --once \
@@ -76,7 +90,7 @@ PYTHONPATH=src python -m binance_ai_trader health \
   --database data/market_data.db
 ```
 
-The health JSON includes the latest scan time, latest BTC/ETH regime, latest signal count, latest runner error, paper equity, database size, and `aggressive_allowed`.
+The health JSON includes the latest scan time, latest BTC/ETH regime, latest signal count, latest runner error, paper equity, database size, `aggressive_allowed`, and SQLite `quick_check`, foreign-key violation count, and journal mode. The command exits with code `2` when SQLite is unhealthy.
 
 You can inspect recent runner events with SQLite if the `sqlite3` command is available:
 

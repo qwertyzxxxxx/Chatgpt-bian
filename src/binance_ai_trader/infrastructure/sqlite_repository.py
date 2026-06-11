@@ -44,6 +44,23 @@ class MarketDataRepository:
     def close(self) -> None:
         self._connection.close()
 
+    def sqlite_health(self) -> dict[str, object]:
+        quick_check = tuple(
+            str(row[0]) for row in self._connection.execute("PRAGMA quick_check").fetchall()
+        )
+        foreign_key_violations = self._connection.execute(
+            "PRAGMA foreign_key_check"
+        ).fetchall()
+        journal_mode = str(
+            self._connection.execute("PRAGMA journal_mode").fetchone()[0]
+        ).lower()
+        return {
+            "healthy": quick_check == ("ok",) and not foreign_key_violations,
+            "quick_check": list(quick_check),
+            "foreign_key_violations": len(foreign_key_violations),
+            "journal_mode": journal_mode,
+        }
+
     def start_runner_event(self, event_id: str, event_type: str, started_at: str) -> None:
         with self._connection:
             self._connection.execute(
@@ -631,6 +648,29 @@ class MarketDataRepository:
             {"symbol": row[0], "direction": row[1], "score": row[2],
              "combined_regime": row[3], "sector": row[4], "sector_rank": row[5],
              "generated_at": row[6]} for row in rows
+        ]
+
+    def load_daily_top_signals(
+        self, start: str, end: str, limit: int = 3
+    ) -> list[dict[str, object]]:
+        rows = self._connection.execute(
+            """SELECT symbol, direction, score, final_signal_score, combined_regime,
+                      sector, sector_rank, entry, stop_loss, tp1, tp2, rr_tp2, generated_at
+               FROM signals
+               WHERE run_id=(
+                   SELECT run_id FROM signals WHERE generated_at BETWEEN ? AND ?
+                   ORDER BY generated_at DESC, rank LIMIT 1
+               )
+               ORDER BY rank LIMIT ?""",
+            (start, end, limit),
+        ).fetchall()
+        return [
+            {"symbol": row[0], "direction": row[1], "score": row[2],
+             "final_signal_score": row[3], "combined_regime": row[4],
+             "sector": row[5], "sector_rank": row[6], "entry": row[7],
+             "sl": row[8], "tp1": row[9], "tp2": row[10], "rr": row[11],
+             "generated_at": row[12]}
+            for row in rows
         ]
 
     def load_top_capital_signals(

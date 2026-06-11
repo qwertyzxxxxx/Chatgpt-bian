@@ -32,7 +32,7 @@ class HealthIntegrationTest(unittest.TestCase):
         self.assertEqual(
             {
                 "last_scan_at", "last_regime", "last_signal_count", "last_runner_error",
-                "paper_equity", "database_size_bytes", "aggressive_allowed",
+                "paper_equity", "database_size_bytes", "sqlite", "aggressive_allowed",
             },
             set(payload),
         )
@@ -42,6 +42,10 @@ class HealthIntegrationTest(unittest.TestCase):
         self.assertEqual("scan", payload["last_runner_error"]["event_type"])
         self.assertEqual("1000", payload["paper_equity"])
         self.assertGreater(payload["database_size_bytes"], 0)
+        self.assertTrue(payload["sqlite"]["healthy"])
+        self.assertEqual(["ok"], payload["sqlite"]["quick_check"])
+        self.assertEqual(0, payload["sqlite"]["foreign_key_violations"])
+        self.assertEqual("wal", payload["sqlite"]["journal_mode"])
         self.assertTrue(payload["aggressive_allowed"])
 
 
