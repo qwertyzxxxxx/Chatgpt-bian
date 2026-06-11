@@ -1,0 +1,26 @@
+{
+  "minimum_quote_volume_24h": "5000000",
+  "stablecoin_base_assets": [
+    "BFUSD",
+    "BUSD",
+    "DAI",
+    "FDUSD",
+    "PYUSD",
+    "RLUSD",
+    "TUSD",
+    "USD1",
+    "USDC",
+    "USDD",
+    "USDE",
+    "USDP",
+    "USTC",
+    "XUSD"
+  ],
+  "leveraged_token_suffixes": [
+    "UP",
+    "DOWN",
+    "BULL",
+    "BEAR"
+  ],
+  "denied_symbols": []
+}
