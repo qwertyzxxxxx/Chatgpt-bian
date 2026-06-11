@@ -89,6 +89,7 @@ class ResearchPaperReportIntegrationTest(unittest.TestCase):
         self.assertEqual(0, report_exit)
         self.assertEqual("2026-06-06", report["date"])
         self.assertEqual([], report["signals"])
+        self.assertEqual([], report["top3"])
         self.assertIsNone(report["regime"])
         self.assertEqual([], report["sectors"])
         self.assertEqual("1000", report["paper_account"]["equity"])

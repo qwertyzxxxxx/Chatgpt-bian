@@ -20,6 +20,7 @@ class HealthService:
             "last_runner_error": self._repository.load_latest_runner_error(),
             "paper_equity": str(account.equity),
             "database_size_bytes": self._database_size(),
+            "sqlite": self._repository.sqlite_health(),
             "aggressive_allowed": account.aggressive_allowed,
         }
 

@@ -9,6 +9,7 @@ from binance_ai_trader.runner import (
     RunnerLockError,
     RunnerTask,
     SingleInstanceLock,
+    default_tasks,
 )
 
 
@@ -24,6 +25,10 @@ class ProductionRunnerTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.repository.close()
         self.tempdir.cleanup()
+
+    def test_interval_schedule_must_be_positive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "interval must be positive"):
+            RunnerTask("invalid", lambda: 0, interval=timedelta(0))
 
     def test_single_tick_executes_due_interval_and_daily_tasks(self) -> None:
         calls = []
@@ -66,6 +71,33 @@ class ProductionRunnerTest(unittest.TestCase):
         self.assertEqual("FAILED", rows[0][1])
         self.assertIn("fixture failure", rows[0][2])
         self.assertEqual(("paper_simulate", "SUCCEEDED", None), rows[1])
+
+    def test_observer_receives_failure_without_interrupting_runner(self) -> None:
+        observations = []
+        runner = ProductionRunner(
+            self.repository,
+            (RunnerTask("scan", lambda: 2, interval=timedelta(minutes=15)),),
+            Path(self.tempdir.name) / "runner.lock",
+            clock=lambda: NOW,
+            observer=lambda event, status, error: observations.append((event, status, error)),
+        )
+
+        runner.tick(NOW)
+
+        self.assertEqual("scan", observations[0][0])
+        self.assertEqual("FAILED", observations[0][1])
+        self.assertIn("exit code 2", observations[0][2])
+
+    def test_default_tasks_schedule_pipeline_and_history(self) -> None:
+        callback = lambda: 0
+        tasks = default_tasks(callback, callback, callback, callback, callback, callback)
+        schedules = {task.event_type: task for task in tasks}
+
+        self.assertEqual(timedelta(minutes=15), schedules["scan"].interval)
+        self.assertEqual(timedelta(minutes=15), schedules["evaluate"].interval)
+        self.assertEqual(timedelta(minutes=15), schedules["paper_simulate"].interval)
+        self.assertEqual(timedelta(hours=24), schedules["collect_history"].interval)
+        self.assertEqual(time(0, 5), schedules["daily_report"].daily_at)
 
     def test_single_instance_lock_rejects_second_owner(self) -> None:
         path = Path(self.tempdir.name) / "runner.lock"

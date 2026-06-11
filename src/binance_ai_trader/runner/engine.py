@@ -13,6 +13,7 @@ from binance_ai_trader.infrastructure.sqlite_repository import MarketDataReposit
 
 LOGGER = logging.getLogger(__name__)
 TaskCallback = Callable[[], int | None]
+TaskObserver = Callable[[str, str, str | None], None]
 
 
 class RunnerLockError(RuntimeError):
@@ -29,6 +30,8 @@ class RunnerTask:
     def __post_init__(self) -> None:
         if (self.interval is None) == (self.daily_at is None):
             raise ValueError("runner task requires exactly one schedule")
+        if self.interval is not None and self.interval <= timedelta(0):
+            raise ValueError("runner task interval must be positive")
 
 
 class SingleInstanceLock:
@@ -76,6 +79,7 @@ class ProductionRunner:
         poll_seconds: float = 30.0,
         clock: Callable[[], datetime] | None = None,
         sleeper: Callable[[float], None] = time.sleep,
+        observer: TaskObserver | None = None,
     ) -> None:
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be positive")
@@ -85,6 +89,7 @@ class ProductionRunner:
         self._poll_seconds = poll_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleeper = sleeper
+        self._observer = observer
 
     def tick(self, now: datetime | None = None, force: bool = False) -> tuple[str, ...]:
         current = _utc(now or self._clock())
@@ -131,6 +136,11 @@ class ProductionRunner:
         self._repository.finish_runner_event(
             event_id, status, completed_at, error_message, duration_ms
         )
+        if self._observer is not None:
+            try:
+                self._observer(task.event_type, status, error_message)
+            except Exception:
+                LOGGER.exception("Runner observer failed for task: %s", task.event_type)
 
 
 def default_tasks(
@@ -139,6 +149,8 @@ def default_tasks(
     paper_simulate: TaskCallback,
     daily_report: TaskCallback,
     auto_research: TaskCallback,
+    collect_history: TaskCallback,
+    history_interval: timedelta = timedelta(hours=24),
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
     return (
@@ -146,6 +158,7 @@ def default_tasks(
         RunnerTask("evaluate", evaluate, interval=quarter_hour),
         RunnerTask("paper_simulate", paper_simulate, interval=quarter_hour),
         RunnerTask("daily_report", daily_report, daily_at=datetime_time(0, 5)),
+        RunnerTask("collect_history", collect_history, interval=history_interval),
         RunnerTask("auto_research", auto_research, interval=timedelta(hours=6)),
     )
 

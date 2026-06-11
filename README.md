@@ -1,6 +1,6 @@
 # Binance AI Trader V1
 
-The current implementation provides a read-only Binance USDⓈ-M Futures public-data layer, deterministic scoring engine, and deterministic regime-directed LONG/SHORT signal engine. It contains no authentication, account, order, Telegram, AI-model, or web functionality.
+The current implementation provides a read-only Binance USDⓈ-M Futures public-data layer, deterministic scoring engine, and deterministic regime-directed LONG/SHORT signal engine. It contains no authentication, account, order, AI-model, or web functionality; optional Telegram Bot API notifications are outbound-only.
 
 ## Capabilities
 
@@ -292,7 +292,7 @@ PYTHONPATH=src python -m binance_ai_trader daily-report \
   --date 2026-06-06
 ```
 
-The JSON report contains that day's LONG/SHORT signals, latest same-day BTC/ETH regime, latest same-day sector ranking, current paper equity and risk mode, latest Top 5 ranked candidate strategies, milestone target, and whether aggressive risk is currently allowed.
+The JSON report contains that day's LONG/SHORT signals, the latest same-day signal batch's existing rank-ordered `top3`, latest same-day BTC/ETH regime, latest same-day sector ranking, current paper equity and risk mode, latest Top 5 ranked candidate strategies, milestone target, and whether aggressive risk is currently allowed. This report does not rescore or rerank signals.
 
 ## Reserved VM production runner
 
@@ -303,14 +303,21 @@ PYTHONPATH=src python -m binance_ai_trader run-loop \
   --database data/market_data.db
 ```
 
-The fault-isolated UTC scheduler runs scan/evaluate/paper simulation every 15 minutes, daily reporting at 00:05 UTC, and parameter-only auto research every six hours. Every attempt is audited in `runner_events`, and an OS file lock prevents two loops from using the same runner lock. Check current state with:
+Optionally configure Telegram before starting the loop:
+
+```bash
+export TELEGRAM_BOT_TOKEN="your-bot-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
+```
+
+Telegram receives failed runner task alerts and the successful daily Top3 report. The fault-isolated UTC scheduler runs scan/evaluate/paper simulation every 15 minutes, daily reporting at 00:05 UTC, the resumable `collect-history` job every 24 hours, and parameter-only auto research every six hours. Change only the history cadence with `--history-interval-hours`; `--history-days` controls the retained bootstrap window. Every attempt is audited in `runner_events`, and an OS file lock prevents two loops from using the same runner lock. Check current state with:
 
 ```bash
 PYTHONPATH=src python -m binance_ai_trader health \
   --database data/market_data.db
 ```
 
-See [`docs/replit_reserved_vm.md`](docs/replit_reserved_vm.md) for start/stop, logs, database backup, storage maintenance, and daily operator checks. This runner remains read-only with respect to Binance: no API key, account access, order placement, Telegram, or web dashboard is included.
+See [`docs/replit_reserved_vm.md`](docs/replit_reserved_vm.md) for start/stop, logs, database backup, storage maintenance, and daily operator checks. The health payload includes SQLite `quick_check`, foreign-key violation count, and journal mode, and exits with status 2 when SQLite reports an unhealthy database. The runner remains read-only with respect to Binance: no API key, account access, or order placement is included.
 
 ## Capital Flow and Space analysis
 

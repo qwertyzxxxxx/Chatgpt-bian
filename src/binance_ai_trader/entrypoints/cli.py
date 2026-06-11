@@ -3,8 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 from dataclasses import asdict
 from pathlib import Path
 
@@ -22,13 +23,30 @@ from binance_ai_trader.config import SectorConfig, UniverseConfig
 from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 from binance_ai_trader.paper.service import PaperSimulator
-from binance_ai_trader.reporting import DailyReportService
+from binance_ai_trader.notifications import TelegramNotifier
+from binance_ai_trader.reporting import DailyReportService, format_top3_message
 from binance_ai_trader.runner import HealthService, ProductionRunner, RunnerLockError, default_tasks
 from binance_ai_trader.sectors import SectorMap
 from binance_ai_trader.strategy_lab.service import StrategyLab
 from binance_ai_trader.walk_forward import (
     WalkForwardPolicy, WalkForwardValidator, render_markdown,
 )
+
+
+def _add_telegram_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--telegram-bot-token", default=os.environ.get("TELEGRAM_BOT_TOKEN"))
+    parser.add_argument("--telegram-chat-id", default=os.environ.get("TELEGRAM_CHAT_ID"))
+    parser.add_argument("--telegram-timeout", type=float, default=10.0)
+
+
+def _telegram_notifier(args: argparse.Namespace) -> TelegramNotifier | None:
+    token = getattr(args, "telegram_bot_token", None)
+    chat_id = getattr(args, "telegram_chat_id", None)
+    if not token and not chat_id:
+        return None
+    if not token or not chat_id:
+        raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be configured together")
+    return TelegramNotifier(token, chat_id, getattr(args, "telegram_timeout", 10.0))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -134,6 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily = subparsers.add_parser("daily-report", help="print the daily research and paper summary")
     daily.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     daily.add_argument("--date", type=date.fromisoformat)
+    _add_telegram_arguments(daily)
     daily.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
 
@@ -155,6 +174,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--poll-seconds", type=float, default=30.0)
     run_loop.add_argument("--lock-file", type=Path)
     run_loop.add_argument("--once", action="store_true")
+    run_loop.add_argument("--history-days", type=int, default=180)
+    run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
+    run_loop.add_argument("--history-request-pause", type=float, default=0.05)
+    _add_telegram_arguments(run_loop)
     run_loop.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
     health = subparsers.add_parser("health", help="print runner and database health JSON")
@@ -218,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "paper-simulate":
         return _paper_simulate(args.database)
     if args.command == "daily-report":
-        return _daily_report(args.database, args.date)
+        return _daily_report(args.database, args.date, _telegram_notifier(args))
     if args.command == "backtest":
         return _backtest(args)
     if args.command == "regime":
@@ -548,13 +571,19 @@ def _paper_simulate(database: Path) -> int:
     return 0
 
 
-def _daily_report(database: Path, report_date: date | None) -> int:
+def _daily_report(
+    database: Path,
+    report_date: date | None,
+    notifier: TelegramNotifier | None = None,
+) -> int:
     repository = MarketDataRepository(database)
     try:
         payload = DailyReportService(repository).build(report_date)
     finally:
         repository.close()
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    if notifier is not None:
+        notifier.send(format_top3_message(payload))
     return 0
 
 
@@ -589,6 +618,12 @@ def _run_loop(args: argparse.Namespace) -> int:
     def invoke(arguments: list[str]) -> int:
         return main(arguments)
 
+    notifier = _telegram_notifier(args)
+
+    def observe_task(event_type: str, status: str, error: str | None) -> None:
+        if notifier is not None and status == "FAILED":
+            notifier.send(f"Runner task failed: {event_type}\n{error or 'unknown error'}")
+
     tasks = default_tasks(
         scan=lambda: invoke([
             "scan", "--database", str(database), "--config", str(args.config),
@@ -599,18 +634,27 @@ def _run_loop(args: argparse.Namespace) -> int:
         ]),
         evaluate=lambda: invoke(["evaluate", "--database", str(database)]),
         paper_simulate=lambda: invoke(["paper-simulate", "--database", str(database)]),
-        daily_report=lambda: invoke(["daily-report", "--database", str(database)]),
+        daily_report=lambda: _daily_report(database, None, notifier),
         auto_research=lambda: invoke([
             "auto-research", "--database", str(database),
             "--sectors-config", str(args.sectors_config),
             "--baseline-config", str(args.baseline_config),
             "--step-bars", str(args.research_step_bars),
         ]),
+        collect_history=lambda: invoke([
+            "collect-history", "--database", str(database), "--config", str(args.config),
+            "--sectors-config", str(args.sectors_config), "--base-url", args.base_url,
+            "--days", str(args.history_days), "--timeout", str(args.timeout),
+            "--max-retries", str(args.max_retries),
+            "--request-pause", str(args.history_request_pause),
+            "--log-level", args.log_level,
+        ]),
+        history_interval=timedelta(hours=args.history_interval_hours),
     )
     repository = MarketDataRepository(database)
     try:
         runner = ProductionRunner(
-            repository, tasks, lock_path, poll_seconds=args.poll_seconds
+            repository, tasks, lock_path, poll_seconds=args.poll_seconds, observer=observe_task
         )
         try:
             runner.run_forever(once=args.once)
@@ -631,7 +675,7 @@ def _health(database: Path) -> int:
     finally:
         repository.close()
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
-    return 0
+    return 0 if payload["sqlite"]["healthy"] else 2
 
 
 def _comparison_json(comparison: object) -> dict[str, object]:
