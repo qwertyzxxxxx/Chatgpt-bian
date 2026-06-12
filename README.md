@@ -240,7 +240,15 @@ PYTHONPATH=src python -m binance_ai_trader strategies compare \
   --step-bars 1
 ```
 
-Each JSON Line contains `strategy_id`, `total_signals`, `tp1_hit_rate`, `tp2_win_rate`, `loss_rate`, `profit_factor`, `expectancy_r`, and `max_drawdown_r`. Comparison is research-only and does not activate any strategy.
+Each JSON Line contains `strategy_id`, `trades`, `win_rate` (completed TP2 wins), `profit_factor`, `expectancy`, `max_drawdown`, and a `regime_breakdown` with the same metrics for BULL, BEAR, RANGE, and OBSERVE. Comparison is research-only and does not activate any strategy.
+
+Strategy Lab Phase 1 also registers three file-configured research variants from `config/strategies/`:
+
+- `range_disabled_v1` excludes RANGE-regime results;
+- `bear_short_space80_v1` includes only BEAR SHORT results with `space_score >= 80`;
+- `capital_60_80_space80_v1` includes results with capital score from 60 through 80 and `space_score >= 80`.
+
+These filters are applied only to Strategy Lab backtest results. They do not alter the canonical baseline, production signal construction, scoring, the production runner, or Telegram behavior.
 
 The legacy command spelling `auto_research` remains an alias for `auto-research`. Auto Research changes only configured parameters; it does not generate algorithm code. Only observation-gate-passing Top candidates are stored, always with `candidate` status. A candidate cannot be manually selected for a production-style run unless its status has first been changed to `approved` through a separate human review process; this release intentionally provides no automatic approval command.
 

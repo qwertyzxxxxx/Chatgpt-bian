@@ -682,13 +682,21 @@ def _comparison_json(comparison: object) -> dict[str, object]:
     metrics = comparison.metrics
     return {
         "strategy_id": comparison.strategy_id,
-        "total_signals": metrics.total_signals,
-        "tp1_hit_rate": metrics.tp1_hit_rate,
-        "tp2_win_rate": metrics.tp2_win_rate,
-        "loss_rate": metrics.loss_rate,
+        "trades": metrics.total_signals,
+        "win_rate": metrics.tp2_win_rate,
         "profit_factor": metrics.profit_factor,
-        "expectancy_r": metrics.expectancy_r,
-        "max_drawdown_r": metrics.max_drawdown_r,
+        "expectancy": metrics.expectancy_r,
+        "max_drawdown": metrics.max_drawdown_r,
+        "regime_breakdown": {
+            regime: {
+                "trades": regime_metrics.total_signals,
+                "win_rate": regime_metrics.tp2_win_rate,
+                "profit_factor": regime_metrics.profit_factor,
+                "expectancy": regime_metrics.expectancy_r,
+                "max_drawdown": regime_metrics.max_drawdown_r,
+            }
+            for regime, regime_metrics in comparison.regime_breakdown.items()
+        },
     }
 
 

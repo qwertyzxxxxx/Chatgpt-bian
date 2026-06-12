@@ -26,7 +26,14 @@ class StrategyLab:
 
     def ensure_baseline(self) -> StrategyVersion:
         config = StrategyConfig.load(self._baseline_path)
-        self._repository.register_strategy_version(config, "baseline", _utc_now())
+        created_at = _utc_now()
+        self._repository.register_strategy_version(config, "baseline", created_at)
+        for path in sorted(self._baseline_path.parent.glob("*.json")):
+            if path == self._baseline_path:
+                continue
+            self._repository.register_strategy_version(
+                StrategyConfig.load(path), "candidate", created_at
+            )
         version = self._repository.load_strategy_version(config.strategy_id)
         assert version is not None
         return version
@@ -74,9 +81,14 @@ class StrategyLab:
                     maximum_evaluation_bars=version.config.evaluation_window_bars,
                 ),
                 strategy_config=version.config,
+                result_filter=version.config.includes_result,
             ).run(start_ms, end_ms, common_points)
             self._repository.update_strategy_metrics(version.strategy_id, summary.metrics)
-            comparisons.append(StrategyComparison(version.strategy_id, summary.metrics))
+            comparisons.append(
+                StrategyComparison(
+                    version.strategy_id, summary.metrics, summary.by_combined_regime
+                )
+            )
         return tuple(comparisons)
 
     def auto_research(
@@ -104,9 +116,15 @@ class StrategyLab:
                     maximum_evaluation_bars=candidate.evaluation_window_bars,
                 ),
                 strategy_config=candidate,
+                result_filter=candidate.includes_result,
             ).run(start_ms, end_ms, common_points)
             researched.append(
-                (candidate, StrategyComparison(candidate.strategy_id, summary.metrics))
+                (
+                    candidate,
+                    StrategyComparison(
+                        candidate.strategy_id, summary.metrics, summary.by_combined_regime
+                    ),
+                )
             )
         passed = [item for item in researched if _passes_observation_gate(item[1])]
         ranked = sorted(passed, key=lambda item: _research_rank(item[1]))

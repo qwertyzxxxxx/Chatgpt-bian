@@ -24,8 +24,11 @@ class ResearchPaperReportIntegrationTest(unittest.TestCase):
         calls = []
 
         class FakeBacktest:
-            def __init__(self, _repository, _sector_map, _policy, strategy_config) -> None:
+            def __init__(
+                self, _repository, _sector_map, _policy, strategy_config, result_filter
+            ) -> None:
                 self.config = strategy_config
+                self.result_filter = result_filter
 
             def run(self, _start, _end, evaluation_times):
                 index = int(self.config.strategy_id.rsplit("_", 1)[1])
@@ -35,7 +38,7 @@ class ResearchPaperReportIntegrationTest(unittest.TestCase):
                     expired_rate=0, profit_factor=float(index), expectancy_r=index / 100,
                     max_drawdown_r=float(21 - index), avg_rr_tp2=2,
                 )
-                return SimpleNamespace(metrics=metrics)
+                return SimpleNamespace(metrics=metrics, by_combined_regime={})
 
         output = StringIO()
         with (
@@ -58,7 +61,7 @@ class ResearchPaperReportIntegrationTest(unittest.TestCase):
             versions = connection.execute(
                 "SELECT status, COUNT(*) FROM strategy_versions GROUP BY status"
             ).fetchall()
-        self.assertEqual({"baseline": 1, "candidate": 10}, dict(versions))
+        self.assertEqual({"baseline": 1, "candidate": 13}, dict(versions))
 
         report_output = StringIO()
         with redirect_stdout(report_output):

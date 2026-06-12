@@ -1,0 +1,25 @@
+{
+  "strategy_id": "bear_short_space80_v1",
+  "name": "Bear Short Space 80 V1",
+  "description": "Research variant limited to BEAR-regime SHORT trades with a minimum directional space score of 80.",
+  "scoring_weights": {
+    "trend": 30.0,
+    "volume": 20.0,
+    "momentum": 20.0,
+    "structure": 15.0,
+    "risk": 15.0
+  },
+  "range_min_score": 85.0,
+  "sector_medium_min_score": 85.0,
+  "sector_weak_min_score": 90.0,
+  "entry_distance_min_pct": -3.0,
+  "entry_distance_max_pct": 1.0,
+  "max_stop_loss_pct": 7.0,
+  "min_rr_tp2": 2.0,
+  "evaluation_window_bars": 96,
+  "enabled_regimes": ["BEAR"],
+  "enabled_directions": ["SHORT"],
+  "capital_score_min": 0.0,
+  "capital_score_max": 100.0,
+  "space_score_min": 80.0
+}
