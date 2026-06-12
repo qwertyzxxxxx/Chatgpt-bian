@@ -49,18 +49,23 @@ class StrategyLabTest(unittest.TestCase):
             ).allows_long("DEFI", 4, 85, True),
         )
         self.assertEqual(96, config.evaluation_window_bars)
+        self.assertNotIn("enabled_regimes", config.as_dict())
+        self.assertNotIn("space_score_min", config.as_dict())
 
     def test_compare_passes_identical_evaluation_times_to_every_strategy(self) -> None:
         metrics = BacktestMetrics(0, 0, 0, 0, 0, None, 0, 0, 0)
         captured: list[tuple[str, tuple[int, ...]]] = []
 
         class FakeBacktestEngine:
-            def __init__(self, _repository, _sector_map, _policy, strategy_config) -> None:
+            def __init__(
+                self, _repository, _sector_map, _policy, strategy_config, result_filter
+            ) -> None:
                 self.strategy_id = strategy_config.strategy_id
+                self.result_filter = result_filter
 
             def run(self, _start, _end, evaluation_times):
                 captured.append((self.strategy_id, tuple(evaluation_times)))
-                return SimpleNamespace(metrics=metrics)
+                return SimpleNamespace(metrics=metrics, by_combined_regime={})
 
         with tempfile.TemporaryDirectory() as directory:
             repository = MarketDataRepository(Path(directory) / "lab.db")
@@ -84,6 +89,46 @@ class StrategyLabTest(unittest.TestCase):
         self.assertEqual(
             [("baseline_v1", (10, 20, 30)), ("candidate_manual", (10, 20, 30))],
             captured,
+        )
+
+    def test_configured_phase_one_variants_apply_research_filters(self) -> None:
+        result = SimpleNamespace(
+            combined_regime="BEAR", direction="SHORT", capital_score=70, space_score=85
+        )
+        expected = {
+            "range_disabled_v1": True,
+            "bear_short_space80_v1": True,
+            "capital_60_80_space80_v1": True,
+        }
+        for strategy_id, included in expected.items():
+            config = StrategyConfig.load(Path(f"config/strategies/{strategy_id}.json"))
+            self.assertEqual(included, config.includes_result(result))
+
+        range_config = StrategyConfig.load(Path("config/strategies/range_disabled_v1.json"))
+        self.assertFalse(
+            range_config.includes_result(
+                SimpleNamespace(
+                    combined_regime="RANGE", direction="LONG", capital_score=70, space_score=85
+                )
+            )
+        )
+        bear_config = StrategyConfig.load(Path("config/strategies/bear_short_space80_v1.json"))
+        self.assertFalse(
+            bear_config.includes_result(
+                SimpleNamespace(
+                    combined_regime="BEAR", direction="SHORT", capital_score=70, space_score=79
+                )
+            )
+        )
+        capital_config = StrategyConfig.load(
+            Path("config/strategies/capital_60_80_space80_v1.json")
+        )
+        self.assertFalse(
+            capital_config.includes_result(
+                SimpleNamespace(
+                    combined_regime="BULL", direction="LONG", capital_score=81, space_score=85
+                )
+            )
         )
 
     def test_candidate_cannot_be_loaded_for_manual_run(self) -> None:

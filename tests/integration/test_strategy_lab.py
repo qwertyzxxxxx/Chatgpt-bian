@@ -21,8 +21,10 @@ class StrategyLabIntegrationTest(unittest.TestCase):
         output = StringIO()
         with redirect_stdout(output):
             exit_code = main(["strategies", "list", "--database", str(self.database)])
-        payload = json.loads(output.getvalue())
+        payloads = [json.loads(line) for line in output.getvalue().splitlines()]
+        payload = next(item for item in payloads if item["strategy_id"] == "baseline_v1")
         self.assertEqual(0, exit_code)
+        self.assertEqual(4, len(payloads))
         self.assertEqual("baseline_v1", payload["strategy_id"])
         self.assertEqual("baseline", payload["status"])
         self.assertEqual(96, payload["config"]["evaluation_window_bars"])
@@ -46,8 +48,8 @@ class StrategyLabIntegrationTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertEqual(
             {
-                "strategy_id", "total_signals", "tp1_hit_rate", "tp2_win_rate",
-                "loss_rate", "profit_factor", "expectancy_r", "max_drawdown_r",
+                "strategy_id", "trades", "win_rate", "profit_factor",
+                "expectancy", "max_drawdown", "regime_breakdown",
             },
             set(payload),
         )
@@ -70,7 +72,15 @@ class StrategyLabIntegrationTest(unittest.TestCase):
         candidates = [row for row in versions if row[0] != "baseline_v1"]
         self.assertEqual(1, len(baseline))
         self.assertEqual("baseline", baseline[0][1])
-        self.assertEqual(0, len(candidates))
+        self.assertEqual(
+            {
+                "range_disabled_v1",
+                "bear_short_space80_v1",
+                "capital_60_80_space80_v1",
+            },
+            {row[0] for row in candidates},
+        )
+        self.assertTrue(all(row[1] == "candidate" for row in candidates))
         self.assertNotIn("approved", {row[1] for row in versions})
 
 

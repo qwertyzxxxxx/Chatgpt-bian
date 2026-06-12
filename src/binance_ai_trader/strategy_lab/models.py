@@ -21,3 +21,4 @@ class StrategyVersion:
 class StrategyComparison:
     strategy_id: str
     metrics: BacktestMetrics
+    regime_breakdown: dict[str, BacktestMetrics]

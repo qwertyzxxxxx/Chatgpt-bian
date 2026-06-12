@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -54,10 +54,12 @@ class BacktestEngine:
         sector_map: SectorMap,
         policy: BacktestPolicy | None = None,
         strategy_config: StrategyConfig | None = None,
+        result_filter: Callable[[BacktestResult], bool] | None = None,
     ) -> None:
         self._repository = repository
         self._sector_map = sector_map
         self._policy = policy or BacktestPolicy()
+        self._result_filter = result_filter
         self._regime = MarketRegimeEngine()
         self._sectors = SectorStrengthEngine()
         self._space = SpaceEngine()
@@ -106,6 +108,8 @@ class BacktestEngine:
         try:
             for evaluation_time_ms in points:
                 results.extend(self._evaluate_point(run_id, evaluation_time_ms))
+            if self._result_filter is not None:
+                results = [item for item in results if self._result_filter(item)]
             completed_at = _utc_now()
             summary = summarize_results(run_id, started_at, completed_at, len(points), results)
             self._repository.save_backtest_results(run_id, results)
