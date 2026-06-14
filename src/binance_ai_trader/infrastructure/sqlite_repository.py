@@ -469,6 +469,44 @@ class MarketDataRepository:
                 rows,
             )
 
+    def load_backtest_results(self, run_id: str) -> tuple[BacktestResult, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT evaluation_time_ms, symbol, direction, combined_regime, sector,
+                   sector_rank, score, entry, stop_loss, tp1, tp2, rr_tp1, rr_tp2,
+                   result, bars_to_result, realized_r, capital_score, space_score,
+                   final_signal_score, snapshot_id, data_quality_status, data_quality_json
+            FROM backtest_results
+            WHERE backtest_run_id=?
+            ORDER BY evaluation_time_ms, symbol
+            """,
+            (run_id,),
+        ).fetchall()
+        return tuple(_row_to_backtest_result(row) for row in rows)
+
+    def load_latest_successful_backtest(
+        self,
+    ) -> tuple[str, str, str, int, tuple[BacktestResult, ...]] | None:
+        row = self._connection.execute(
+            """
+            SELECT id, started_at, completed_at, evaluation_points
+            FROM backtest_runs
+            WHERE status='SUCCEEDED'
+            ORDER BY completed_at DESC, started_at DESC, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        run_id = str(row[0])
+        return (
+            run_id,
+            str(row[1]),
+            str(row[2]),
+            int(row[3]),
+            self.load_backtest_results(run_id),
+        )
+
     def finish_backtest_run(
         self, run_id: str, completed_at: str, status: str,
         summary: BacktestSummary | None, error_summary: str | None = None,
@@ -2153,6 +2191,33 @@ def _backtest_summary_dict(summary: BacktestSummary) -> dict[str, object]:
         "by_capital_bucket": {key: asdict(value) for key, value in summary.by_capital_bucket.items()},
         "by_space_bucket": {key: asdict(value) for key, value in summary.by_space_bucket.items()},
     }
+
+
+def _row_to_backtest_result(row: tuple[object, ...]) -> BacktestResult:
+    return BacktestResult(
+        evaluation_time_ms=int(row[0]),
+        symbol=str(row[1]),
+        direction=str(row[2]),
+        combined_regime=str(row[3]),
+        sector=str(row[4]),
+        sector_rank=int(row[5]) if row[5] is not None else None,
+        score=float(row[6]),
+        entry=Decimal(str(row[7])),
+        stop_loss=Decimal(str(row[8])),
+        tp1=Decimal(str(row[9])),
+        tp2=Decimal(str(row[10])),
+        rr_tp1=Decimal(str(row[11])),
+        rr_tp2=Decimal(str(row[12])),
+        result=str(row[13]),
+        bars_to_result=int(row[14]),
+        realized_r=Decimal(str(row[15])),
+        capital_score=float(row[16]),
+        space_score=float(row[17]),
+        final_signal_score=float(row[18]),
+        snapshot_id=str(row[19]) if row[19] is not None else None,
+        data_quality_status=str(row[20]),
+        data_quality=json.loads(str(row[21])) if row[21] else {},
+    )
 
 
 def _row_to_strategy_version(row: tuple[object, ...]) -> StrategyVersion:

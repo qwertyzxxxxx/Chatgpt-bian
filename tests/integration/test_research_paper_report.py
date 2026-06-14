@@ -9,6 +9,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 
 from binance_ai_trader.domain.models import BacktestMetrics
+from binance_ai_trader.strategy_lab.models import StrategyComparison
 from binance_ai_trader.entrypoints.cli import main
 
 
@@ -35,11 +36,36 @@ class ResearchPaperReportIntegrationTest(unittest.TestCase):
                     expired_rate=0, profit_factor=float(index), expectancy_r=index / 100,
                     max_drawdown_r=float(21 - index), avg_rr_tp2=2,
                 )
-                return SimpleNamespace(metrics=metrics)
+                return SimpleNamespace(
+                    run_id=self.config.strategy_id,
+                    started_at="start",
+                    completed_at="complete",
+                    evaluation_points=len(evaluation_times),
+                    metrics=metrics,
+                )
 
         output = StringIO()
         with (
             patch("binance_ai_trader.strategy_lab.service.BacktestEngine", FakeBacktest),
+            patch(
+                "binance_ai_trader.strategy_lab.service._comparison_from_results",
+                side_effect=lambda strategy_id, _config, *_args: StrategyComparison(
+                    strategy_id,
+                    BacktestMetrics(
+                        total_signals=10,
+                        tp1_hit_rate=50,
+                        tp2_win_rate=20,
+                        loss_rate=30,
+                        expired_rate=0,
+                        profit_factor=float(strategy_id.rsplit("_", 1)[1]),
+                        expectancy_r=int(strategy_id.rsplit("_", 1)[1]) / 100,
+                        max_drawdown_r=float(21 - int(strategy_id.rsplit("_", 1)[1])),
+                        avg_rr_tp2=2,
+                    ),
+                    {},
+                    {},
+                ),
+            ),
             patch(
                 "binance_ai_trader.infrastructure.sqlite_repository.MarketDataRepository.load_backtest_evaluation_times",
                 return_value=(100, 200),
@@ -58,7 +84,7 @@ class ResearchPaperReportIntegrationTest(unittest.TestCase):
             versions = connection.execute(
                 "SELECT status, COUNT(*) FROM strategy_versions GROUP BY status"
             ).fetchall()
-        self.assertEqual({"baseline": 1, "candidate": 10}, dict(versions))
+        self.assertEqual({"baseline": 1, "candidate": 13}, dict(versions))
 
         report_output = StringIO()
         with redirect_stdout(report_output):

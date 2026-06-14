@@ -21,3 +21,15 @@ class StrategyVersion:
 class StrategyComparison:
     strategy_id: str
     metrics: BacktestMetrics
+    regime_breakdown: dict[str, BacktestMetrics]
+    direction_breakdown: dict[str, BacktestMetrics]
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyRanking:
+    rank: int
+    strategy_id: str
+    metrics: BacktestMetrics
+    regime_breakdown: dict[str, BacktestMetrics]
+    direction_breakdown: dict[str, BacktestMetrics]
+    verdict: str

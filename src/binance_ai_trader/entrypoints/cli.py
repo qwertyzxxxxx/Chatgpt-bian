@@ -130,6 +130,17 @@ def build_parser() -> argparse.ArgumentParser:
     strategy_compare.add_argument("--step-bars", type=int, default=1)
     strategy_compare.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+    strategy_rank = strategy_commands.add_parser(
+        "rank", help="rank Phase 1 strategies from the latest successful backtest results"
+    )
+    strategy_rank.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    strategy_rank.add_argument(
+        "--baseline-config", type=Path, default=Path("config/strategies/baseline_v1.json")
+    )
+    strategy_rank.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
     auto_research = subparsers.add_parser("auto-research", aliases=["auto_research"], help="research 20 parameter sets and save the Top 10 candidates")
     auto_research.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     auto_research.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
@@ -517,6 +528,13 @@ def _strategies(args: argparse.Namespace) -> int:
             for version in versions:
                 print(json.dumps(_strategy_version_json(version), separators=(",", ":"), sort_keys=True))
             return 0
+        if args.strategies_command == "rank":
+            rankings = StrategyLab(
+                repository, SectorMap({}), args.baseline_config
+            ).rank()
+            for ranking in rankings:
+                print(json.dumps(_ranking_json(ranking), separators=(",", ":"), sort_keys=True))
+            return 0
         sector_config = SectorConfig.load(args.sectors_config)
         comparisons = StrategyLab(
             repository,
@@ -682,13 +700,35 @@ def _comparison_json(comparison: object) -> dict[str, object]:
     metrics = comparison.metrics
     return {
         "strategy_id": comparison.strategy_id,
-        "total_signals": metrics.total_signals,
-        "tp1_hit_rate": metrics.tp1_hit_rate,
-        "tp2_win_rate": metrics.tp2_win_rate,
-        "loss_rate": metrics.loss_rate,
+        "trades": metrics.total_signals,
+        "win_rate": metrics.tp2_win_rate,
         "profit_factor": metrics.profit_factor,
-        "expectancy_r": metrics.expectancy_r,
-        "max_drawdown_r": metrics.max_drawdown_r,
+        "expectancy": metrics.expectancy_r,
+        "max_drawdown": metrics.max_drawdown_r,
+        "regime_breakdown": _metrics_breakdown_json(comparison.regime_breakdown),
+        "direction_breakdown": _metrics_breakdown_json(comparison.direction_breakdown),
+    }
+
+
+def _ranking_json(ranking: object) -> dict[str, object]:
+    payload = _comparison_json(ranking)
+    return {
+        "rank": ranking.rank,
+        **payload,
+        "verdict": ranking.verdict,
+    }
+
+
+def _metrics_breakdown_json(breakdown: object) -> dict[str, object]:
+    return {
+        name: {
+            "trades": metrics.total_signals,
+            "win_rate": metrics.tp2_win_rate,
+            "profit_factor": metrics.profit_factor,
+            "expectancy": metrics.expectancy_r,
+            "max_drawdown": metrics.max_drawdown_r,
+        }
+        for name, metrics in breakdown.items()
     }
 
 

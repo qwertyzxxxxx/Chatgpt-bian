@@ -11,7 +11,8 @@ from binance_ai_trader.scoring import ScoringEngine
 from binance_ai_trader.sectors import SectorMap
 from binance_ai_trader.signals import RegimeSignalGate, SectorSignalGate, SignalEngine, SignalPolicy
 from binance_ai_trader.strategy_lab.config import StrategyConfig
-from binance_ai_trader.strategy_lab.service import StrategyLab
+from binance_ai_trader.strategy_lab.models import StrategyComparison
+from binance_ai_trader.strategy_lab.service import StrategyLab, _verdict
 from tests.unit.test_scoring_engine import market
 from tests.unit.test_signal_engine import candidate
 
@@ -49,6 +50,8 @@ class StrategyLabTest(unittest.TestCase):
             ).allows_long("DEFI", 4, 85, True),
         )
         self.assertEqual(96, config.evaluation_window_bars)
+        self.assertNotIn("enabled_regimes", config.as_dict())
+        self.assertNotIn("space_score_min", config.as_dict())
 
     def test_compare_passes_identical_evaluation_times_to_every_strategy(self) -> None:
         metrics = BacktestMetrics(0, 0, 0, 0, 0, None, 0, 0, 0)
@@ -60,7 +63,12 @@ class StrategyLabTest(unittest.TestCase):
 
             def run(self, _start, _end, evaluation_times):
                 captured.append((self.strategy_id, tuple(evaluation_times)))
-                return SimpleNamespace(metrics=metrics)
+                return SimpleNamespace(
+                    run_id=f"run-{self.strategy_id}",
+                    started_at="start",
+                    completed_at="complete",
+                    evaluation_points=len(evaluation_times),
+                )
 
         with tempfile.TemporaryDirectory() as directory:
             repository = MarketDataRepository(Path(directory) / "lab.db")
@@ -75,6 +83,12 @@ class StrategyLabTest(unittest.TestCase):
                 with (
                     patch.object(repository, "load_backtest_evaluation_times", return_value=(10, 20, 30)),
                     patch("binance_ai_trader.strategy_lab.service.BacktestEngine", FakeBacktestEngine),
+                    patch(
+                        "binance_ai_trader.strategy_lab.service._comparison_from_results",
+                        side_effect=lambda strategy_id, *_args: StrategyComparison(
+                            strategy_id, metrics, {}, {}
+                        ),
+                    ),
                 ):
                     comparisons = lab.compare(("baseline_v1", "candidate_manual"))
             finally:
@@ -85,6 +99,64 @@ class StrategyLabTest(unittest.TestCase):
             [("baseline_v1", (10, 20, 30)), ("candidate_manual", (10, 20, 30))],
             captured,
         )
+
+    def test_configured_phase_one_variants_apply_research_filters(self) -> None:
+        result = SimpleNamespace(
+            combined_regime="BEAR", direction="SHORT", capital_score=70, space_score=85
+        )
+        expected = {
+            "range_disabled_v1": True,
+            "bear_short_space80_v1": True,
+            "capital_60_80_space80_v1": True,
+        }
+        for strategy_id, included in expected.items():
+            config = StrategyConfig.load(Path(f"config/strategies/{strategy_id}.json"))
+            self.assertEqual(included, config.includes_result(result))
+
+        range_config = StrategyConfig.load(Path("config/strategies/range_disabled_v1.json"))
+        self.assertFalse(
+            range_config.includes_result(
+                SimpleNamespace(
+                    combined_regime="RANGE", direction="LONG", capital_score=70, space_score=85
+                )
+            )
+        )
+        bear_config = StrategyConfig.load(Path("config/strategies/bear_short_space80_v1.json"))
+        self.assertFalse(
+            bear_config.includes_result(
+                SimpleNamespace(
+                    combined_regime="BEAR", direction="SHORT", capital_score=70, space_score=79
+                )
+            )
+        )
+        capital_config = StrategyConfig.load(
+            Path("config/strategies/capital_60_80_space80_v1.json")
+        )
+        self.assertFalse(
+            capital_config.includes_result(
+                SimpleNamespace(
+                    combined_regime="BULL", direction="LONG", capital_score=81, space_score=85
+                )
+            )
+        )
+
+    def test_phase_two_verdict_rules(self) -> None:
+        def comparison(
+            trades: int, expectancy: float, profit_factor: float | None, drawdown: float
+        ) -> StrategyComparison:
+            return StrategyComparison(
+                "candidate",
+                BacktestMetrics(
+                    trades, 0, 0, 0, 0, profit_factor, expectancy, drawdown, 0
+                ),
+                {},
+                {},
+            )
+
+        self.assertEqual("PASS", _verdict(comparison(20, 0.3, 1.2, 10)))
+        self.assertEqual("WATCH", _verdict(comparison(19, 0.3, 1.2, 2)))
+        self.assertEqual("REJECT", _verdict(comparison(20, 0, 1.2, 2)))
+        self.assertEqual("REJECT", _verdict(comparison(20, 0.3, 0.9, 2)))
 
     def test_candidate_cannot_be_loaded_for_manual_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
