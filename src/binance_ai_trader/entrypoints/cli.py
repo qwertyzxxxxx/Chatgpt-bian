@@ -27,6 +27,8 @@ from binance_ai_trader.hotlist import (
     HotlistAlert,
     HotlistAlertEngine,
     HotlistEntryPlan,
+    HotlistFunnelAnalyzer,
+    HotlistFunnelPolicy,
     HotlistPerformanceRepository,
     HotlistPerformanceTracker,
     HotlistWatcher,
@@ -36,8 +38,10 @@ from binance_ai_trader.hotlist import (
     HotlistWatchlistRepository,
     format_hotlist_ai_review_message,
     format_hotlist_alert_message,
+    format_hotlist_funnel_message,
     format_hotlist_performance_summary,
     render_hotlist_daily_summary,
+    render_hotlist_funnel,
     render_hotlist_performance,
     render_hotlist_top5_review,
     review_hotlist_opportunities,
@@ -252,6 +256,33 @@ def build_parser() -> argparse.ArgumentParser:
     hotlist_review.add_argument("--timeout", type=float, default=10.0)
     hotlist_review.add_argument("--max-retries", type=int, default=3)
     hotlist_review.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
+    hotlist_funnel = hotlist_commands.add_parser(
+        "funnel", help="diagnostic funnel — trace why no signals are generated"
+    )
+    hotlist_funnel.add_argument("--min-move-pct", type=Decimal, default=Decimal("15"))
+    hotlist_funnel.add_argument(
+        "--min-quote-volume", type=Decimal, default=Decimal("5000000")
+    )
+    hotlist_funnel.add_argument("--min-rr", type=Decimal, default=Decimal("2"))
+    hotlist_funnel.add_argument("--max-stop-pct", type=Decimal, default=Decimal("5"))
+    hotlist_funnel.add_argument(
+        "--database", type=Path, default=Path("data/market_data.db")
+    )
+    hotlist_funnel.add_argument(
+        "--config", type=Path, default=Path("config/universe.json")
+    )
+    hotlist_funnel.add_argument("--base-url", default="https://fapi.binance.com")
+    hotlist_funnel.add_argument("--timeout", type=float, default=10.0)
+    hotlist_funnel.add_argument("--max-retries", type=int, default=3)
+    hotlist_funnel.add_argument(
+        "--report", type=Path, default=Path("reports/hotlist_funnel.md")
+    )
+    hotlist_funnel.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(hotlist_funnel)
+    hotlist_funnel.add_argument(
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
 
@@ -839,6 +870,8 @@ def _hotlist(args: argparse.Namespace) -> int:
         timeout_seconds=args.timeout,
         max_retries=args.max_retries,
     )
+    if args.hotlist_command == "funnel":
+        return _hotlist_funnel(args, client)
     if args.hotlist_command == "review":
         repository = HotlistWatchlistRepository(args.database)
         try:
@@ -877,6 +910,71 @@ def _hotlist(args: argparse.Namespace) -> int:
             for key, value in asdict(plan).items()
         }
         print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _hotlist_funnel(args: argparse.Namespace, client) -> int:
+    repository = HotlistWatchlistRepository(args.database)
+    try:
+        report = HotlistFunnelAnalyzer(
+            client,
+            repository,
+            UniverseConfig.load(args.config),
+            HotlistFunnelPolicy(
+                min_move_pct=args.min_move_pct,
+                min_quote_volume=args.min_quote_volume,
+                min_rr=args.min_rr,
+                max_stop_pct=args.max_stop_pct,
+            ),
+        ).run()
+    finally:
+        repository.close()
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(render_hotlist_funnel(report), encoding="utf-8")
+
+    telegram_status: dict = {}
+    if getattr(args, "send_telegram", False):
+        token = getattr(args, "telegram_bot_token", None)
+        chat_id = getattr(args, "telegram_chat_id", None)
+        if not token or not chat_id:
+            telegram_status = {"telegram": "SKIPPED", "telegram_skip_reason": "secrets_not_configured"}
+        else:
+            notifier = TelegramNotifier(token, chat_id, getattr(args, "telegram_timeout", 10.0))
+            msg = format_hotlist_funnel_message(report)
+            notifier.send(msg)
+            telegram_status = {"telegram": "SENT", "telegram_chars": len(msg)}
+
+    print(
+        json.dumps(
+            {
+                "generated_at": report.generated_at,
+                "parameters": report.parameters,
+                "funnel": [
+                    {
+                        "label": step.label,
+                        "count": step.count,
+                        "dropped": step.dropped,
+                        "drop_off_pct": step.drop_off_pct,
+                    }
+                    for step in report.steps
+                ],
+                "top_rejections": [
+                    {
+                        "symbol": r.symbol,
+                        "reason": r.reason,
+                        "detail": r.detail,
+                    }
+                    for r in report.top_rejections
+                ],
+                "final_opportunities": report.final_opportunities,
+                "report": str(args.report),
+                "research_only": report.research_only,
+                **telegram_status,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
     return 0
 
 
