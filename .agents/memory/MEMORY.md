@@ -1,0 +1,1 @@
+- [Git sync under sandbox](git-sandbox-sync.md) — when git pull merge is blocked, read fetched objects via `git show <sha>:path` and cp into working tree; deploys snapshot working tree.

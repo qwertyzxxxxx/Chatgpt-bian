@@ -1,4 +1,5 @@
 from binance_ai_trader.hotlist.funnel import (
+    FunnelOpportunity,
     FunnelStep,
     HotlistFunnelAnalyzer,
     HotlistFunnelPolicy,
@@ -50,6 +51,7 @@ from binance_ai_trader.hotlist.watchlist import HotlistWatchlist, HotlistWatchli
 
 __all__ = [
     "AIHotlistDecision",
+    "FunnelOpportunity",
     "FunnelStep",
     "HotlistAlert",
     "HotlistAlertEngine",
