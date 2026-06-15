@@ -1,3 +1,10 @@
+from binance_ai_trader.hotlist.funnel import (
+    FunnelStep,
+    HotlistFunnelAnalyzer,
+    HotlistFunnelPolicy,
+    HotlistFunnelReport,
+    RejectedSymbol,
+)
 from binance_ai_trader.hotlist.ai_review import (
     build_ai_hotlist_review_prompt,
     parse_ai_hotlist_review_response,
@@ -27,6 +34,7 @@ from binance_ai_trader.hotlist.performance_repository import (
 from binance_ai_trader.hotlist.repository import HotlistWatchlistRepository
 from binance_ai_trader.hotlist.reporting import (
     render_hotlist_daily_summary,
+    render_hotlist_funnel,
     render_hotlist_performance,
     render_hotlist_top5_review,
 )
@@ -41,12 +49,16 @@ from binance_ai_trader.hotlist.watchlist import HotlistWatchlist, HotlistWatchli
 
 __all__ = [
     "AIHotlistDecision",
+    "FunnelStep",
     "HotlistAlert",
     "HotlistAlertEngine",
     "HotlistAIReview",
     "HotlistCandidate",
     "HotlistDailySummary",
     "HotlistEntryPlan",
+    "HotlistFunnelAnalyzer",
+    "HotlistFunnelPolicy",
+    "HotlistFunnelReport",
     "HotlistOutcome",
     "HotlistPerformanceRepository",
     "HotlistPerformanceSlice",
@@ -58,6 +70,7 @@ __all__ = [
     "HotlistWatchlistRepository",
     "HotlistWatcher",
     "HotlistWatcherPolicy",
+    "RejectedSymbol",
     "TrackedHotlistOpportunity",
     "alert_level",
     "build_ai_hotlist_review_prompt",
@@ -66,6 +79,7 @@ __all__ = [
     "format_hotlist_message",
     "format_hotlist_performance_summary",
     "parse_ai_hotlist_review_response",
+    "render_hotlist_funnel",
     "render_hotlist_top5_review",
     "render_hotlist_daily_summary",
     "render_hotlist_performance",
