@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from binance_ai_trader.hotlist.models import HotlistAlert, HotlistEntryPlan
+from binance_ai_trader.hotlist.models import (
+    HotlistAIReview,
+    HotlistAlert,
+    HotlistEntryPlan,
+)
 
 
 def format_hotlist_message(plans: Sequence[HotlistEntryPlan]) -> str:
@@ -42,3 +46,20 @@ def format_hotlist_alert_message(alert: HotlistAlert) -> str:
             "Research only",
         ]
     )
+
+
+def format_hotlist_ai_review_message(reviews: Sequence[HotlistAIReview]) -> str:
+    """Format the Top 5 review without sending a Telegram message."""
+    lines = ["HOTLIST AI REVIEW V2", "", "Research only"]
+    for review in reviews[:5]:
+        lines.extend(
+            [
+                "",
+                f"{review.symbol} {review.direction} — {review.confidence}",
+                f"entry: {review.entry} | SL: {review.stop_loss}",
+                f"TP1: {review.tp1} | TP2: {review.tp2} | RR: {review.rr}",
+                f"expiry: {review.expires_at}",
+                f"reason: {review.reason}",
+            ]
+        )
+    return "\n".join(lines)

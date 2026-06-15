@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from binance_ai_trader.hotlist.models import HotlistDailySummary
+from collections.abc import Sequence
+
+from binance_ai_trader.hotlist.models import HotlistAIReview, HotlistDailySummary
 
 
 def render_hotlist_daily_summary(summary: HotlistDailySummary) -> str:
@@ -27,6 +29,35 @@ def render_hotlist_daily_summary(summary: HotlistDailySummary) -> str:
         [
             "",
             "> Research only. No live trading action is performed by this report.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_hotlist_top5_review(
+    reviews: Sequence[HotlistAIReview], generated_at: str
+) -> str:
+    lines = [
+        "# Hotlist Top 5 Research Review",
+        "",
+        f"- **Generated at:** {generated_at}",
+        f"- **Opportunities reviewed:** {len(reviews)}",
+        "",
+        "| Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Confidence | Expiry |",
+        "| --- | :--- | ---: | ---: | ---: | ---: | ---: | :--- | --- |",
+    ]
+    for review in reviews:
+        lines.append(
+            f"| `{review.symbol}` | {review.direction} | {review.entry} | "
+            f"{review.stop_loss} | {review.tp1} | {review.tp2} | {review.rr} | "
+            f"{review.confidence} | {review.expires_at} |"
+        )
+        lines.append(f"|  |  | **Reason:** {review.reason} |  |  |  |  |  |  |")
+    lines.extend(
+        [
+            "",
+            "> Research only. This review is not live trading advice and performs no trades.",
             "",
         ]
     )

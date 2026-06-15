@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import sys
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from dataclasses import asdict
 from decimal import Decimal
 from pathlib import Path
@@ -30,8 +30,11 @@ from binance_ai_trader.hotlist import (
     HotlistWatchlist,
     HotlistWatchlistPolicy,
     HotlistWatchlistRepository,
+    format_hotlist_ai_review_message,
     format_hotlist_alert_message,
     render_hotlist_daily_summary,
+    render_hotlist_top5_review,
+    review_hotlist_opportunities,
 )
 from binance_ai_trader.paper.service import PaperSimulator
 from binance_ai_trader.notifications import TelegramNotifier
@@ -265,6 +268,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
 
+    hotlist_ai_review = subparsers.add_parser(
+        "hotlist-ai-review",
+        help="rank and export the Top 5 public-data hotlist research plans",
+    )
+    hotlist_ai_review.add_argument("--limit", type=int, choices=range(1, 6), default=5)
+    hotlist_ai_review.add_argument(
+        "--min-move-pct", type=Decimal, default=Decimal("15")
+    )
+    hotlist_ai_review.add_argument(
+        "--min-quote-volume", type=Decimal, default=Decimal("5000000")
+    )
+    hotlist_ai_review.add_argument("--expiry-minutes", type=int, default=60)
+    hotlist_ai_review.add_argument(
+        "--config", type=Path, default=Path("config/universe.json")
+    )
+    hotlist_ai_review.add_argument("--base-url", default="https://fapi.binance.com")
+    hotlist_ai_review.add_argument("--timeout", type=float, default=10.0)
+    hotlist_ai_review.add_argument("--max-retries", type=int, default=3)
+    hotlist_ai_review.add_argument(
+        "--report", type=Path, default=Path("reports/hotlist_top5_review.md")
+    )
+    hotlist_ai_review.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
     auto_research = subparsers.add_parser("auto-research", aliases=["auto_research"], help="research 20 parameter sets and save the Top 10 candidates")
     auto_research.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     auto_research.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
@@ -352,7 +380,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -376,6 +404,8 @@ def main(argv: list[str] | None = None) -> int:
         return _hotlist(args)
     if args.command == "hotlist-alert":
         return _hotlist_alert(args)
+    if args.command == "hotlist-ai-review":
+        return _hotlist_ai_review(args)
     if args.command in {"auto-research", "auto_research"}:
         return _auto_research(args)
     if args.command == "paper-simulate":
@@ -825,6 +855,49 @@ def _hotlist_alert(args: argparse.Namespace) -> int:
                 sort_keys=True,
             )
         )
+    return 0
+
+
+def _hotlist_ai_review(args: argparse.Namespace) -> int:
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    plans = HotlistWatcher(
+        client,
+        UniverseConfig.load(args.config),
+        HotlistWatcherPolicy(
+            limit=args.limit,
+            min_move_pct=args.min_move_pct,
+            min_quote_volume=args.min_quote_volume,
+            expiry_minutes=args.expiry_minutes,
+        ),
+    ).watch()
+    reviews = review_hotlist_opportunities(plans, args.limit)
+    generated_at = datetime.now(UTC).isoformat(timespec="seconds")
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(
+        render_hotlist_top5_review(reviews, generated_at), encoding="utf-8"
+    )
+    print(
+        json.dumps(
+            {
+                "generated_at": generated_at,
+                "research_only": True,
+                "reviews": [
+                    {
+                        key: str(value) if isinstance(value, Decimal) else value
+                        for key, value in asdict(review).items()
+                    }
+                    for review in reviews
+                ],
+                "telegram_message": format_hotlist_ai_review_message(reviews),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
     return 0
 
 
