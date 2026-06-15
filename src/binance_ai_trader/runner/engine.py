@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 import time
 from collections.abc import Callable, Sequence
@@ -12,12 +13,22 @@ from uuid import uuid4
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 
 LOGGER = logging.getLogger(__name__)
-TaskCallback = Callable[[], int | None]
+TaskCallback = Callable[[], int | None | "RunnerTaskResult"]
 TaskObserver = Callable[[str, str, str | None], None]
 
 
 class RunnerLockError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerTaskResult:
+    status: str = "SUCCEEDED"
+    details: dict[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in {"SUCCEEDED", "SKIPPED"}:
+            raise ValueError("runner task result status must be SUCCEEDED or SKIPPED")
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,9 +135,20 @@ class ProductionRunner:
         status = "SUCCEEDED"
         error_message = None
         try:
-            exit_code = task.callback()
-            if exit_code not in (None, 0):
-                raise RuntimeError(f"task returned exit code {exit_code}")
+            result = task.callback()
+            if isinstance(result, RunnerTaskResult):
+                status = result.status
+                if result.details:
+                    LOGGER.info(
+                        "Runner task result: %s",
+                        json.dumps(
+                            {"event_type": task.event_type, **result.details},
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                    )
+            elif result not in (None, 0):
+                raise RuntimeError(f"task returned exit code {result}")
         except Exception as error:  # fault isolation is the runner's primary contract
             status = "FAILED"
             error_message = f"{type(error).__name__}: {error}"
@@ -151,16 +173,20 @@ def default_tasks(
     auto_research: TaskCallback,
     collect_history: TaskCallback,
     history_interval: timedelta = timedelta(hours=24),
+    hotlist_alert: TaskCallback | None = None,
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
-    return (
+    tasks = [
         RunnerTask("scan", scan, interval=quarter_hour),
         RunnerTask("evaluate", evaluate, interval=quarter_hour),
         RunnerTask("paper_simulate", paper_simulate, interval=quarter_hour),
         RunnerTask("daily_report", daily_report, daily_at=datetime_time(0, 5)),
         RunnerTask("collect_history", collect_history, interval=history_interval),
         RunnerTask("auto_research", auto_research, interval=timedelta(hours=6)),
-    )
+    ]
+    if hotlist_alert is not None:
+        tasks.append(RunnerTask("hotlist_alert", hotlist_alert, interval=quarter_hour))
+    return tuple(tasks)
 
 
 def _parse(value: str) -> datetime:
