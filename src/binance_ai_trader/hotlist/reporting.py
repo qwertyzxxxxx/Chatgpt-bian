@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from binance_ai_trader.hotlist.funnel import HotlistFunnelReport
 
 from binance_ai_trader.hotlist.models import (
     HotlistAIReview,
@@ -139,3 +143,67 @@ def _slice_rows(slices) -> list[str]:
         f"{item.average_return:.2f}% |"
         for item in slices
     ]
+
+
+def render_hotlist_funnel(report: "HotlistFunnelReport") -> str:
+    lines = [
+        "# Hotlist Funnel Diagnostic",
+        "",
+        f"- **Generated at (UTC):** {report.generated_at}",
+        f"- **Research only:** {report.research_only}",
+        "",
+        "## Parameters",
+        "",
+        "| Parameter | Value |",
+        "| --- | --- |",
+    ]
+    for k, v in report.parameters.items():
+        lines.append(f"| `{k}` | {v} |")
+    lines += [
+        "",
+        "## Funnel",
+        "",
+        "| # | Step | Count | Dropped | Drop-off |",
+        "| ---: | --- | ---: | ---: | ---: |",
+    ]
+    for i, step in enumerate(report.steps, start=1):
+        lines.append(
+            f"| {i} | `{step.label}` | **{step.count}** | {step.dropped} | {step.drop_off_pct:.1f}% |"
+        )
+    reason_counts: dict[str, int] = {}
+    for r in report.top_rejections:
+        reason_counts[r.reason] = reason_counts.get(r.reason, 0) + 1
+    lines += [
+        "",
+        "## Top Rejection Reasons",
+        "",
+        "| Reason | Count |",
+        "| --- | ---: |",
+    ]
+    for reason, count in sorted(reason_counts.items(), key=lambda x: -x[1]):
+        lines.append(f"| `{reason}` | {count} |")
+    lines += [
+        "",
+        "## Top 10 Rejected Symbols",
+        "",
+        "| Symbol | Reason | Detail |",
+        "| --- | --- | --- |",
+    ]
+    for r in report.top_rejections:
+        lines.append(f"| `{r.symbol}` | `{r.reason}` | {r.detail} |")
+    lines += [
+        "",
+        "## Final Opportunities",
+        "",
+    ]
+    if report.final_opportunities:
+        for symbol in report.final_opportunities:
+            lines.append(f"- `{symbol}`")
+    else:
+        lines.append("_No opportunities passed all filters._")
+    lines += [
+        "",
+        "> Research only. No live trading is performed.",
+        "",
+    ]
+    return "\n".join(lines)
