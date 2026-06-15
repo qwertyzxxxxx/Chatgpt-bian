@@ -250,6 +250,15 @@ Strategy Lab Phase 1 also registers three file-configured research variants from
 
 These filters are applied only to Strategy Lab backtest results. They do not alter the canonical baseline, production signal construction, scoring, the production runner, or Telegram behavior.
 
+Rank the four Phase 1 strategies from the latest successful persisted backtest result set without running another backtest:
+
+```bash
+PYTHONPATH=src python -m binance_ai_trader strategies rank \
+  --database data/market_data.db
+```
+
+Each JSON Line contains `rank`, `strategy_id`, `trades`, `win_rate`, `profit_factor`, `expectancy`, `max_drawdown`, `regime_breakdown`, `direction_breakdown`, and `verdict`. Ranking uses higher expectancy, then higher profit factor, then lower maximum drawdown, with strategy ID as the deterministic final tie-breaker. A strategy is `REJECT` when it has no trades, non-positive expectancy, or profit factor below 1.0. It is `PASS` when it has at least 20 trades, positive expectancy, profit factor of at least 1.2 (or no losing trades), and maximum drawdown no greater than 10R. Other positive strategies are `WATCH`.
+
 The legacy command spelling `auto_research` remains an alias for `auto-research`. Auto Research changes only configured parameters; it does not generate algorithm code. Only observation-gate-passing Top candidates are stored, always with `candidate` status. A candidate cannot be manually selected for a production-style run unless its status has first been changed to `approved` through a separate human review process; this release intentionally provides no automatic approval command.
 
 ## Regime-directed SHORT signals

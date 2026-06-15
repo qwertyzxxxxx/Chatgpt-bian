@@ -29,6 +29,9 @@ class StrategyConfig:
     capital_score_min: float = 0.0
     capital_score_max: float = 100.0
     space_score_min: float = 0.0
+    absolute_move_top_percent: float = 100.0
+    quote_volume_min: float = 0.0
+    output_limit: int | None = None
 
     def __post_init__(self) -> None:
         if not self.strategy_id or not self.strategy_id.replace("_", "").replace("-", "").isalnum():
@@ -63,6 +66,12 @@ class StrategyConfig:
             raise ValueError("capital score range must satisfy 0 <= min <= max <= 100")
         if not 0 <= self.space_score_min <= 100:
             raise ValueError("space_score_min must be between 0 and 100")
+        if not 0 < self.absolute_move_top_percent <= 100:
+            raise ValueError("absolute_move_top_percent must be between 0 and 100")
+        if self.quote_volume_min < 0:
+            raise ValueError("quote_volume_min cannot be negative")
+        if self.output_limit is not None and self.output_limit < 1:
+            raise ValueError("output_limit must be positive")
 
     @classmethod
     def load(cls, path: Path) -> "StrategyConfig":
@@ -88,6 +97,9 @@ class StrategyConfig:
             capital_score_min=float(raw.get("capital_score_min", 0.0)),
             capital_score_max=float(raw.get("capital_score_max", 100.0)),
             space_score_min=float(raw.get("space_score_min", 0.0)),
+            absolute_move_top_percent=float(raw.get("absolute_move_top_percent", 100.0)),
+            quote_volume_min=float(raw.get("quote_volume_min", 0.0)),
+            output_limit=int(raw["output_limit"]) if raw.get("output_limit") is not None else None,
         )
 
     def as_dict(self) -> dict[str, object]:
@@ -98,6 +110,9 @@ class StrategyConfig:
             "capital_score_min": 0.0,
             "capital_score_max": 100.0,
             "space_score_min": 0.0,
+            "absolute_move_top_percent": 100.0,
+            "quote_volume_min": 0.0,
+            "output_limit": None,
         }
         for key, default in research_defaults.items():
             if payload[key] == default:
@@ -113,4 +128,15 @@ class StrategyConfig:
             and getattr(result, "direction") in self.enabled_directions
             and self.capital_score_min <= float(getattr(result, "capital_score")) <= self.capital_score_max
             and float(getattr(result, "space_score")) >= self.space_score_min
+            and float(getattr(result, "rr_tp2", self.min_rr_tp2)) >= self.min_rr_tp2
+            and _stop_loss_pct(result, self.max_stop_loss_pct) <= self.max_stop_loss_pct
         )
+
+
+def _stop_loss_pct(result: object, default: float) -> float:
+    if not hasattr(result, "entry") or not hasattr(result, "stop_loss"):
+        return default
+    entry = float(getattr(result, "entry"))
+    if entry <= 0:
+        return float("inf")
+    return abs(float(getattr(result, "stop_loss")) - entry) / entry * 100

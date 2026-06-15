@@ -2,6 +2,7 @@ from binance_ai_trader.runner.engine import (
     ProductionRunner,
     RunnerLockError,
     RunnerTask,
+    RunnerTaskResult,
     SingleInstanceLock,
     default_tasks,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "ProductionRunner",
     "RunnerLockError",
     "RunnerTask",
+    "RunnerTaskResult",
     "SingleInstanceLock",
     "default_tasks",
 ]
