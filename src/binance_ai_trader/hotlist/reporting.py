@@ -197,8 +197,20 @@ def render_hotlist_funnel(report: "HotlistFunnelReport") -> str:
         "",
     ]
     if report.final_opportunities:
-        for symbol in report.final_opportunities:
-            lines.append(f"- `{symbol}`")
+        for opp in report.final_opportunities:
+            lines += [
+                f"### `{opp.symbol}`",
+                "",
+                f"| Field | Value |",
+                f"| --- | --- |",
+                f"| Direction | {opp.direction} |",
+                f"| Entry | {opp.entry} |",
+                f"| Stop Loss | {opp.stop_loss} |",
+                f"| TP1 | {opp.tp1} |",
+                f"| TP2 | {opp.tp2} |",
+                f"| RR | {opp.rr} |",
+                "",
+            ]
     else:
         lines.append("_No opportunities passed all filters._")
     lines += [

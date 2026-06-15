@@ -966,7 +966,18 @@ def _hotlist_funnel(args: argparse.Namespace, client) -> int:
                     }
                     for r in report.top_rejections
                 ],
-                "final_opportunities": report.final_opportunities,
+                "final_opportunities": [
+                    {
+                        "symbol": o.symbol,
+                        "direction": o.direction,
+                        "entry": str(o.entry),
+                        "stop_loss": str(o.stop_loss),
+                        "tp1": str(o.tp1),
+                        "tp2": str(o.tp2),
+                        "rr": str(o.rr),
+                    }
+                    for o in report.final_opportunities
+                ],
                 "report": str(args.report),
                 "research_only": report.research_only,
                 **telegram_status,
