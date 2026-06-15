@@ -31,7 +31,7 @@ outputType = "console"
 
 [deployment]
 deploymentTarget = "vm"
-run = ["bash", "-c", "PYTHONPATH=src python -m binance_ai_trader run-loop"]
+run = ["python", "run_server.py"]
 
 [userenv]
 
