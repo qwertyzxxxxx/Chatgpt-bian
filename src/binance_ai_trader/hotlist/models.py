@@ -67,6 +67,52 @@ class HotlistAIReview:
 
 
 @dataclass(frozen=True, slots=True)
+class TrackedHotlistOpportunity:
+    id: int | None
+    symbol: str
+    direction: str
+    entry: Decimal
+    stop_loss: Decimal
+    tp1: Decimal
+    tp2: Decimal
+    rr: Decimal
+    confidence: str
+    created_at: str
+    expires_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class HotlistOutcome:
+    opportunity_id: int
+    horizon_hours: int
+    status: str
+    evaluated_at: str
+    return_pct: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class HotlistPerformanceSlice:
+    label: str
+    opportunities: int
+    win_rate: Decimal
+    tp1_rate: Decimal
+    tp2_rate: Decimal
+    average_return: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class HotlistPerformanceStatistics:
+    total_opportunities: int
+    win_rate: Decimal
+    tp1_rate: Decimal
+    tp2_rate: Decimal
+    average_rr: Decimal
+    average_return: Decimal
+    confidence_performance: tuple[HotlistPerformanceSlice, ...]
+    symbol_performance: tuple[HotlistPerformanceSlice, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class HotlistAlert:
     symbol: str
     direction: str
