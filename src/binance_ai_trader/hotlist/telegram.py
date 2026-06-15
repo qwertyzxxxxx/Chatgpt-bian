@@ -125,6 +125,8 @@ def format_hotlist_funnel_message(report: "HotlistFunnelReport") -> str:
             lines.append(
                 f"{label}: {step.count}  (↓{step.dropped}, -{step.drop_off_pct:.1f}%)"
             )
+
+    # Top rejection reasons summary
     reason_counts: dict[str, int] = {}
     for r in report.top_rejections:
         reason_counts[r.reason] = reason_counts.get(r.reason, 0) + 1
@@ -132,15 +134,20 @@ def format_hotlist_funnel_message(report: "HotlistFunnelReport") -> str:
         lines += ["", "── 主要淘汰原因 ──"]
         for reason, count in sorted(reason_counts.items(), key=lambda x: -x[1])[:5]:
             lines.append(f"  {reason}: {count}")
+
+    # Top rejections detail
     if report.top_rejections:
         lines += ["", "── 前10被淘汰币种 ──"]
         for r in report.top_rejections:
             lines.append(f"  {r.symbol} — {r.reason} ({r.detail})")
+
+    # Final opportunities
     lines += ["", "── 最终机会 ──"]
     if report.final_opportunities:
         for symbol in report.final_opportunities:
             lines.append(f"  ✅ {symbol}")
     else:
         lines.append("  （无机会）")
+
     lines += ["", "Research Only — 仅供研究"]
     return "\n".join(lines)
