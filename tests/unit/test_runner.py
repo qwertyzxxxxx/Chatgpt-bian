@@ -8,6 +8,7 @@ from binance_ai_trader.runner import (
     ProductionRunner,
     RunnerLockError,
     RunnerTask,
+    RunnerTaskResult,
     SingleInstanceLock,
     default_tasks,
 )
@@ -98,6 +99,45 @@ class ProductionRunnerTest(unittest.TestCase):
         self.assertEqual(timedelta(minutes=15), schedules["paper_simulate"].interval)
         self.assertEqual(timedelta(hours=24), schedules["collect_history"].interval)
         self.assertEqual(time(0, 5), schedules["daily_report"].daily_at)
+        self.assertNotIn("hotlist_alert", schedules)
+
+        enabled = default_tasks(
+            callback, callback, callback, callback, callback, callback,
+            hotlist_alert=callback,
+        )
+        enabled_schedules = {task.event_type: task for task in enabled}
+        self.assertEqual(
+            timedelta(minutes=15), enabled_schedules["hotlist_alert"].interval
+        )
+
+    def test_skipped_task_is_persisted_without_failure(self) -> None:
+        observations = []
+        runner = ProductionRunner(
+            self.repository,
+            (
+                RunnerTask(
+                    "hotlist_alert",
+                    lambda: RunnerTaskResult(
+                        status="SKIPPED",
+                        details={"skipped_reason": "telegram_not_configured"},
+                    ),
+                    interval=timedelta(minutes=15),
+                ),
+            ),
+            Path(self.tempdir.name) / "runner.lock",
+            clock=lambda: NOW,
+            observer=lambda event, status, error: observations.append(
+                (event, status, error)
+            ),
+        )
+
+        runner.tick(NOW)
+
+        row = self.repository._connection.execute(
+            "SELECT status, error_message FROM runner_events"
+        ).fetchone()
+        self.assertEqual(("SKIPPED", None), row)
+        self.assertEqual(("hotlist_alert", "SKIPPED", None), observations[0])
 
     def test_single_instance_lock_rejects_second_owner(self) -> None:
         path = Path(self.tempdir.name) / "runner.lock"

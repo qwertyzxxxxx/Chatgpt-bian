@@ -1,0 +1,27 @@
+{
+  "strategy_id": "breakout_hunter_v1",
+  "name": "Breakout Hunter V1",
+  "description": "Research-only LONG/SHORT breakout strategy selecting the Top 3 high-momentum results with strong capital flow and remaining space.",
+  "scoring_weights": {
+    "trend": 30.0,
+    "volume": 20.0,
+    "momentum": 20.0,
+    "structure": 15.0,
+    "risk": 15.0
+  },
+  "range_min_score": 85.0,
+  "sector_medium_min_score": 85.0,
+  "sector_weak_min_score": 90.0,
+  "entry_distance_min_pct": -3.0,
+  "entry_distance_max_pct": 1.0,
+  "max_stop_loss_pct": 5.0,
+  "min_rr_tp2": 2.0,
+  "evaluation_window_bars": 96,
+  "enabled_regimes": ["BULL", "BEAR", "RANGE"],
+  "enabled_directions": ["LONG", "SHORT"],
+  "capital_score_min": 60.0,
+  "space_score_min": 80.0,
+  "absolute_move_top_percent": 20.0,
+  "quote_volume_min": 5000000.0,
+  "output_limit": 3
+}

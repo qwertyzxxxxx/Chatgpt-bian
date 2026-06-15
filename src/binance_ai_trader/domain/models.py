@@ -235,6 +235,8 @@ class BacktestResult:
     snapshot_id: str | None = None
     data_quality_status: str = "COMPLETE"
     data_quality: dict[str, str] | None = None
+    change_24h: Decimal = Decimal("0")
+    quote_volume_24h: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True, slots=True)
