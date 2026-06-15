@@ -24,7 +24,9 @@ from binance_ai_trader.config import SectorConfig, UniverseConfig
 from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 from binance_ai_trader.hotlist import (
+    HotlistAlert,
     HotlistAlertEngine,
+    HotlistEntryPlan,
     HotlistPerformanceRepository,
     HotlistPerformanceTracker,
     HotlistWatcher,
@@ -42,6 +44,11 @@ from binance_ai_trader.hotlist import (
 )
 from binance_ai_trader.paper.service import PaperSimulator
 from binance_ai_trader.notifications import TelegramNotifier
+from binance_ai_trader.operations import (
+    build_ops_status,
+    render_ops_daily,
+    run_safety_audit,
+)
 from binance_ai_trader.reporting import DailyReportService, format_top3_message
 from binance_ai_trader.runner import (
     HealthService,
@@ -317,6 +324,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
 
+    ops = subparsers.add_parser("ops", help="operational status, reports, and safety checks")
+    ops_commands = ops.add_subparsers(dest="ops_command", required=True)
+    for name in ("status", "daily", "safety-audit"):
+        ops_command = ops_commands.add_parser(name)
+        ops_command.add_argument(
+            "--database", type=Path, default=Path("data/market_data.db")
+        )
+        ops_command.add_argument(
+            "--baseline-config",
+            type=Path,
+            default=Path("config/strategies/baseline_v1.json"),
+        )
+        ops_command.add_argument(
+            "--log-level",
+            choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+            default="INFO",
+        )
+        if name == "daily":
+            ops_command.add_argument(
+                "--report", type=Path, default=Path("reports/ops_daily.md")
+            )
+
+    telegram = subparsers.add_parser("telegram", help="Telegram operational checks")
+    telegram_commands = telegram.add_subparsers(dest="telegram_command", required=True)
+    telegram_test = telegram_commands.add_parser(
+        "hotlist-test", help="send one research-only sample alert"
+    )
+    telegram_test.add_argument("--telegram-timeout", type=float, default=10.0)
+    telegram_test.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
     auto_research = subparsers.add_parser("auto-research", aliases=["auto_research"], help="research 20 parameter sets and save the Top 10 candidates")
     auto_research.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     auto_research.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
@@ -404,7 +443,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -432,6 +471,10 @@ def main(argv: list[str] | None = None) -> int:
         return _hotlist_ai_review(args)
     if args.command == "hotlist-performance":
         return _hotlist_performance(args)
+    if args.command == "ops":
+        return _ops(args)
+    if args.command == "telegram":
+        return _telegram(args)
     if args.command in {"auto-research", "auto_research"}:
         return _auto_research(args)
     if args.command == "paper-simulate":
@@ -1170,6 +1213,89 @@ def _health(database: Path) -> int:
         repository.close()
     print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
     return 0 if payload["sqlite"]["healthy"] else 2
+
+
+def _ops(args: argparse.Namespace) -> int:
+    if args.ops_command == "status":
+        configured = bool(
+            os.environ.get("TELEGRAM_BOT_TOKEN")
+            and os.environ.get("TELEGRAM_CHAT_ID")
+        )
+        payload = build_ops_status(args.database, configured)
+        print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+        return 0 if payload["database_health"]["healthy"] else 2
+    if args.ops_command == "daily":
+        report = render_ops_daily(args.database, args.baseline_config)
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(report, encoding="utf-8")
+        print(
+            json.dumps(
+                {"status": "SUCCEEDED", "report": str(args.report), "research_only": True},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        return 0
+    payload = run_safety_audit(Path.cwd(), args.baseline_config)
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    return 0 if payload["status"] == "PASS" else 2
+
+
+def _telegram(args: argparse.Namespace) -> int:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        print(
+            json.dumps(
+                {
+                    "status": "SKIPPED",
+                    "skipped_reason": "telegram_not_configured",
+                    "research_only": True,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        return 0
+    now = datetime.now(UTC)
+    plan = HotlistEntryPlan(
+        symbol="BTCUSDT",
+        direction="LONG",
+        current_price=Decimal("100"),
+        change_24h_pct=Decimal("15"),
+        quote_volume=Decimal("5000000"),
+        volume_ratio_15m=Decimal("1.5"),
+        ema20_15m=Decimal("99"),
+        atr14=Decimal("2"),
+        swing_high=Decimal("105"),
+        swing_low=Decimal("95"),
+        suggested_limit_entry=Decimal("99"),
+        stop_loss=Decimal("96"),
+        tp1=Decimal("102"),
+        tp2=Decimal("105"),
+        rr=Decimal("2"),
+        expires_at=(now + timedelta(hours=1)).isoformat(timespec="seconds"),
+        reason="Operational Telegram test using a sample research-only plan.",
+    )
+    alert = HotlistAlert(
+        symbol=plan.symbol,
+        direction=plan.direction,
+        entry=plan.suggested_limit_entry,
+        created_at=now.isoformat(timespec="seconds"),
+        level="MEDIUM",
+        plan=plan,
+    )
+    TelegramNotifier(token, chat_id, args.telegram_timeout).send(
+        format_hotlist_alert_message(alert)
+    )
+    print(
+        json.dumps(
+            {"status": "SENT", "symbol": alert.symbol, "research_only": True},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+    return 0
 
 
 def _comparison_json(comparison: object) -> dict[str, object]:
