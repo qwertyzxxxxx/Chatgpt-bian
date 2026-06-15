@@ -42,6 +42,7 @@ from binance_ai_trader.hotlist.service import HotlistWatcher, HotlistWatcherPoli
 from binance_ai_trader.hotlist.telegram import (
     format_hotlist_alert_message,
     format_hotlist_ai_review_message,
+    format_hotlist_funnel_message,
     format_hotlist_performance_summary,
     format_hotlist_message,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "build_ai_hotlist_review_prompt",
     "format_hotlist_alert_message",
     "format_hotlist_ai_review_message",
+    "format_hotlist_funnel_message",
     "format_hotlist_message",
     "format_hotlist_performance_summary",
     "parse_ai_hotlist_review_response",
