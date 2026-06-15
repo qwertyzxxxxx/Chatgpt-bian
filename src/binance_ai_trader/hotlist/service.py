@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Protocol
+
+from binance_ai_trader.config import UniverseConfig
+from binance_ai_trader.domain.models import Contract, Kline, Ticker24h
+from binance_ai_trader.hotlist.models import HotlistCandidate, HotlistEntryPlan
+
+
+class PublicMarketData(Protocol):
+    def exchange_info(self) -> tuple[Contract, ...]: ...
+    def tickers_24h(self) -> tuple[Ticker24h, ...]: ...
+    def klines(self, symbol: str, interval: str, limit: int = 200) -> tuple[Kline, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class HotlistWatcherPolicy:
+    limit: int = 5
+    min_move_pct: Decimal = Decimal("15")
+    min_quote_volume: Decimal = Decimal("5000000")
+    expiry_minutes: int = 60
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.limit <= 5:
+            raise ValueError("limit must be between 1 and 5")
+        if self.min_move_pct < 0 or self.min_quote_volume < 0:
+            raise ValueError("hotlist thresholds cannot be negative")
+        if self.expiry_minutes < 1:
+            raise ValueError("expiry_minutes must be positive")
+
+
+class HotlistWatcher:
+    """Public-data-only, research-only momentum watcher."""
+
+    def __init__(
+        self,
+        client: PublicMarketData,
+        universe_config: UniverseConfig,
+        policy: HotlistWatcherPolicy = HotlistWatcherPolicy(),
+    ) -> None:
+        self._client = client
+        self._universe_config = universe_config
+        self._policy = policy
+
+    def candidates(self) -> tuple[HotlistCandidate, ...]:
+        contracts = {
+            item.symbol: item
+            for item in self._client.exchange_info()
+            if item.quote_asset == "USDT"
+            and item.margin_asset == "USDT"
+            and item.contract_type == "PERPETUAL"
+            and item.status == "TRADING"
+            and item.base_asset not in self._universe_config.stablecoin_base_assets
+            and item.symbol not in self._universe_config.denied_symbols
+            and not item.base_asset.endswith(self._universe_config.leveraged_token_suffixes)
+        }
+        eligible = [
+            ticker
+            for ticker in self._client.tickers_24h()
+            if ticker.symbol in contracts
+            and abs(ticker.price_change_percent) >= self._policy.min_move_pct
+            and ticker.quote_volume >= self._policy.min_quote_volume
+        ]
+        gainers = sorted(
+            (item for item in eligible if item.price_change_percent > 0),
+            key=lambda item: (-item.price_change_percent, -item.quote_volume, item.symbol),
+        )
+        losers = sorted(
+            (item for item in eligible if item.price_change_percent < 0),
+            key=lambda item: (item.price_change_percent, -item.quote_volume, item.symbol),
+        )
+        volume_movers = sorted(
+            eligible, key=lambda item: (-item.quote_volume, -abs(item.price_change_percent), item.symbol)
+        )
+        combined = {item.symbol: item for item in (*gainers, *losers, *volume_movers)}
+        ranked = sorted(
+            combined.values(),
+            key=lambda item: (-abs(item.price_change_percent), -item.quote_volume, item.symbol),
+        )
+        return tuple(
+            HotlistCandidate(
+                symbol=item.symbol,
+                direction="LONG" if item.price_change_percent > 0 else "SHORT",
+                change_24h_pct=item.price_change_percent,
+                quote_volume=item.quote_volume,
+            )
+            for item in ranked
+        )
+
+    def watch(self, now: datetime | None = None) -> tuple[HotlistEntryPlan, ...]:
+        generated_at = (now or datetime.now(UTC)).astimezone(UTC)
+        plans = []
+        for candidate in self.candidates():
+            fifteen = self._client.klines(candidate.symbol, "15m", limit=60)
+            hourly = self._client.klines(candidate.symbol, "1h", limit=30)
+            if len(fifteen) < 21 or len(hourly) < 20:
+                continue
+            plans.append(self._plan(candidate, fifteen, hourly, generated_at))
+            if len(plans) >= self._policy.limit:
+                break
+        return tuple(plans)
+
+    def plan_candidate(
+        self, candidate: HotlistCandidate, now: datetime | None = None
+    ) -> HotlistEntryPlan | None:
+        generated_at = (now or datetime.now(UTC)).astimezone(UTC)
+        fifteen = self._client.klines(candidate.symbol, "15m", limit=60)
+        hourly = self._client.klines(candidate.symbol, "1h", limit=30)
+        if len(fifteen) < 21 or len(hourly) < 20:
+            return None
+        return self._plan(candidate, fifteen, hourly, generated_at)
+
+    def _plan(
+        self,
+        candidate: HotlistCandidate,
+        fifteen: tuple[Kline, ...],
+        hourly: tuple[Kline, ...],
+        generated_at: datetime,
+    ) -> HotlistEntryPlan:
+        current = fifteen[-1].close
+        ema20 = _ema(tuple(item.close for item in fifteen), 20)
+        atr14 = _atr(fifteen, 14)
+        recent = fifteen[-21:-1]
+        swing_high = max(item.high for item in recent)
+        swing_low = min(item.low for item in recent)
+        average_volume = sum((item.quote_volume for item in recent), Decimal("0")) / Decimal(len(recent))
+        volume_ratio = (
+            fifteen[-1].quote_volume / average_volume if average_volume > 0 else Decimal("0")
+        )
+        hourly_ema = _ema(tuple(item.close for item in hourly), 20)
+        buffer = atr14 * Decimal("0.25")
+        if candidate.direction == "LONG":
+            entry = min(ema20, current - buffer)
+            stop = min(swing_low, entry - atr14)
+            risk = entry - stop
+            tp1 = entry + risk
+            tp2 = entry + risk * Decimal("2")
+            trend = "above" if current >= hourly_ema else "below"
+            reason = (
+                f"24h gainer; wait for a 15m EMA20/retest pullback instead of chasing; "
+                f"15m volume is {_fmt(volume_ratio)}x its 20-period average; price is {trend} 1h EMA20."
+            )
+        else:
+            entry = max(ema20, current + buffer)
+            stop = max(swing_high, entry + atr14)
+            risk = stop - entry
+            tp1 = entry - risk
+            tp2 = entry - risk * Decimal("2")
+            trend = "below" if current <= hourly_ema else "above"
+            reason = (
+                f"24h loser; wait for a 15m EMA20/retest bounce instead of shorting the low; "
+                f"15m volume is {_fmt(volume_ratio)}x its 20-period average; price is {trend} 1h EMA20."
+            )
+        return HotlistEntryPlan(
+            symbol=candidate.symbol,
+            direction=candidate.direction,
+            current_price=_price(current),
+            change_24h_pct=candidate.change_24h_pct,
+            quote_volume=candidate.quote_volume,
+            volume_ratio_15m=_ratio(volume_ratio),
+            ema20_15m=_price(ema20),
+            atr14=_price(atr14),
+            swing_high=_price(swing_high),
+            swing_low=_price(swing_low),
+            suggested_limit_entry=_price(entry),
+            stop_loss=_price(stop),
+            tp1=_price(tp1),
+            tp2=_price(tp2),
+            rr=Decimal("2.00"),
+            expires_at=(generated_at + timedelta(minutes=self._policy.expiry_minutes)).isoformat(
+                timespec="seconds"
+            ),
+            reason=reason,
+        )
+
+
+def _ema(values: tuple[Decimal, ...], period: int) -> Decimal:
+    if len(values) < period:
+        raise ValueError("not enough values for EMA")
+    multiplier = Decimal("2") / Decimal(period + 1)
+    value = sum(values[:period], Decimal("0")) / Decimal(period)
+    for current in values[period:]:
+        value = (current - value) * multiplier + value
+    return value
+
+
+def _atr(klines: tuple[Kline, ...], period: int) -> Decimal:
+    if len(klines) < period + 1:
+        raise ValueError("not enough klines for ATR")
+    ranges = []
+    for previous, current in zip(klines[-period - 1:-1], klines[-period:]):
+        ranges.append(
+            max(
+                current.high - current.low,
+                abs(current.high - previous.close),
+                abs(current.low - previous.close),
+            )
+        )
+    return sum(ranges, Decimal("0")) / Decimal(period)
+
+
+def _price(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP).normalize()
+
+
+def _ratio(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _fmt(value: Decimal) -> str:
+    return str(_ratio(value))
