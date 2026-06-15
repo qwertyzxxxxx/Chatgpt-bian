@@ -38,6 +38,7 @@ from binance_ai_trader.hotlist import (
     HotlistWatchlistRepository,
     format_hotlist_ai_review_message,
     format_hotlist_alert_message,
+    format_hotlist_funnel_message,
     format_hotlist_performance_summary,
     render_hotlist_daily_summary,
     render_hotlist_funnel,
@@ -279,6 +280,8 @@ def build_parser() -> argparse.ArgumentParser:
     hotlist_funnel.add_argument(
         "--report", type=Path, default=Path("reports/hotlist_funnel.md")
     )
+    hotlist_funnel.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(hotlist_funnel)
     hotlist_funnel.add_argument(
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
@@ -928,6 +931,19 @@ def _hotlist_funnel(args: argparse.Namespace, client) -> int:
         repository.close()
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(render_hotlist_funnel(report), encoding="utf-8")
+
+    telegram_status: dict = {}
+    if getattr(args, "send_telegram", False):
+        token = getattr(args, "telegram_bot_token", None)
+        chat_id = getattr(args, "telegram_chat_id", None)
+        if not token or not chat_id:
+            telegram_status = {"telegram": "SKIPPED", "telegram_skip_reason": "secrets_not_configured"}
+        else:
+            notifier = TelegramNotifier(token, chat_id, getattr(args, "telegram_timeout", 10.0))
+            msg = format_hotlist_funnel_message(report)
+            notifier.send(msg)
+            telegram_status = {"telegram": "SENT", "telegram_chars": len(msg)}
+
     print(
         json.dumps(
             {
@@ -953,6 +969,7 @@ def _hotlist_funnel(args: argparse.Namespace, client) -> int:
                 "final_opportunities": report.final_opportunities,
                 "report": str(args.report),
                 "research_only": report.research_only,
+                **telegram_status,
             },
             separators=(",", ":"),
             sort_keys=True,
