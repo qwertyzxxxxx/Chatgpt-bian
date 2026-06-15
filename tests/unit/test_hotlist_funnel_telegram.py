@@ -8,6 +8,7 @@ from urllib.parse import parse_qs
 
 from binance_ai_trader.entrypoints.cli import build_parser
 from binance_ai_trader.hotlist.funnel import (
+    FunnelOpportunity,
     FunnelStep,
     HotlistFunnelReport,
     RejectedSymbol,
@@ -15,7 +16,19 @@ from binance_ai_trader.hotlist.funnel import (
 from binance_ai_trader.hotlist.telegram import format_hotlist_funnel_message
 
 
-def _sample_report(final: list[str] | None = None) -> HotlistFunnelReport:
+def _alpha_opp() -> FunnelOpportunity:
+    return FunnelOpportunity(
+        symbol="ALPHAUSDT",
+        direction="LONG",
+        entry=Decimal("0.12300"),
+        stop_loss=Decimal("0.11800"),
+        tp1=Decimal("0.13300"),
+        tp2=Decimal("0.14500"),
+        rr=Decimal("2.4"),
+    )
+
+
+def _sample_report(final: list[FunnelOpportunity] | None = None) -> HotlistFunnelReport:
     steps = [
         FunnelStep("universe_total", 500, 0, 0.0),
         FunnelStep("usdt_perpetual", 400, 100, 20.0),
@@ -93,9 +106,30 @@ class FormatHotlistFunnelMessageTest(unittest.TestCase):
         self.assertIn("无机会", msg)
 
     def test_message_with_opportunities_shows_symbols(self) -> None:
-        msg = format_hotlist_funnel_message(_sample_report(final=["ALPHAUSDT"]))
+        msg = format_hotlist_funnel_message(_sample_report(final=[_alpha_opp()]))
         self.assertIn("ALPHAUSDT", msg)
-        self.assertIn("✅", msg)
+        self.assertIn("🔥", msg)
+
+    def test_message_with_opportunities_shows_direction(self) -> None:
+        msg = format_hotlist_funnel_message(_sample_report(final=[_alpha_opp()]))
+        self.assertIn("LONG", msg)
+        self.assertIn("方向", msg)
+
+    def test_message_with_opportunities_shows_entry(self) -> None:
+        msg = format_hotlist_funnel_message(_sample_report(final=[_alpha_opp()]))
+        self.assertIn("买入", msg)
+        self.assertIn("0.12300", msg)
+
+    def test_message_with_opportunities_shows_sl_tp_rr(self) -> None:
+        msg = format_hotlist_funnel_message(_sample_report(final=[_alpha_opp()]))
+        self.assertIn("止损", msg)
+        self.assertIn("0.11800", msg)
+        self.assertIn("TP1", msg)
+        self.assertIn("0.13300", msg)
+        self.assertIn("TP2", msg)
+        self.assertIn("0.14500", msg)
+        self.assertIn("RR", msg)
+        self.assertIn("2.4", msg)
 
     def test_message_ends_with_research_only(self) -> None:
         msg = format_hotlist_funnel_message(_sample_report())
@@ -162,7 +196,18 @@ class HotlistFunnelSkippedTest(unittest.TestCase):
                 "parameters": fake_report.parameters,
                 "funnel": [{"label": s.label, "count": s.count, "dropped": s.dropped, "drop_off_pct": s.drop_off_pct} for s in fake_report.steps],
                 "top_rejections": [{"symbol": r.symbol, "reason": r.reason, "detail": r.detail} for r in fake_report.top_rejections],
-                "final_opportunities": fake_report.final_opportunities,
+                "final_opportunities": [
+                    {
+                        "symbol": o.symbol,
+                        "direction": o.direction,
+                        "entry": str(o.entry),
+                        "stop_loss": str(o.stop_loss),
+                        "tp1": str(o.tp1),
+                        "tp2": str(o.tp2),
+                        "rr": str(o.rr),
+                    }
+                    for o in fake_report.final_opportunities
+                ],
                 "report": str(args.report),
                 "research_only": True,
             }
@@ -222,12 +267,14 @@ class HotlistFunnelTelegramSendTest(unittest.TestCase):
             sent.append(parse_qs(req.data.decode()).get("text", [""])[0])
             return _Resp()
 
-        report = _sample_report(final=["ALPHAUSDT"])
+        report = _sample_report(final=[_alpha_opp()])
         msg = format_hotlist_funnel_message(report)
         TelegramNotifier("tok", "cid", timeout=5.0, opener=opener).send(msg)
         self.assertEqual(1, len(sent))
         self.assertIn("📊 Hotlist 漏斗报告", sent[0])
         self.assertIn("ALPHAUSDT", sent[0])
+        self.assertIn("LONG", sent[0])
+        self.assertIn("0.12300", sent[0])
         self.assertIn("Research Only", sent[0])
 
     def test_send_with_no_opportunities(self) -> None:

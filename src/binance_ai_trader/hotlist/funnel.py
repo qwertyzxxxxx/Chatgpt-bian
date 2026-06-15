@@ -42,13 +42,24 @@ class RejectedSymbol:
     detail: str
 
 
+@dataclass(frozen=True, slots=True)
+class FunnelOpportunity:
+    symbol: str
+    direction: str
+    entry: Decimal
+    stop_loss: Decimal
+    tp1: Decimal
+    tp2: Decimal
+    rr: Decimal
+
+
 @dataclass
 class HotlistFunnelReport:
     generated_at: str
     parameters: dict
     steps: list[FunnelStep]
     top_rejections: list[RejectedSymbol]
-    final_opportunities: list[str]
+    final_opportunities: list[FunnelOpportunity]
     research_only: bool = True
 
 
@@ -301,5 +312,16 @@ class HotlistFunnelAnalyzer:
             },
             steps=steps,
             top_rejections=top_rejections,
-            final_opportunities=[p.symbol for p in final],
+            final_opportunities=[
+                FunnelOpportunity(
+                    symbol=p.symbol,
+                    direction=p.direction,
+                    entry=p.suggested_limit_entry,
+                    stop_loss=p.stop_loss,
+                    tp1=p.tp1,
+                    tp2=p.tp2,
+                    rr=p.rr,
+                )
+                for p in final
+            ],
         )

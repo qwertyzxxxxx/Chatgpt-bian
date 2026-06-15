@@ -141,11 +141,20 @@ def format_hotlist_funnel_message(report: "HotlistFunnelReport") -> str:
         for r in report.top_rejections:
             lines.append(f"  {r.symbol} — {r.reason} ({r.detail})")
 
-    # Final opportunities
+    # Final opportunities with trade plan details
     lines += ["", "── 最终机会 ──"]
     if report.final_opportunities:
-        for symbol in report.final_opportunities:
-            lines.append(f"  ✅ {symbol}")
+        for opp in report.final_opportunities:
+            lines += [
+                "",
+                f"🔥 {opp.symbol}",
+                f"方向: {opp.direction}",
+                f"买入: {opp.entry}",
+                f"止损: {opp.stop_loss}",
+                f"TP1: {opp.tp1}",
+                f"TP2: {opp.tp2}",
+                f"RR: {opp.rr}",
+            ]
     else:
         lines.append("  （无机会）")
 

@@ -10,6 +10,7 @@ from binance_ai_trader.config import UniverseConfig
 from binance_ai_trader.domain.models import Contract, Kline, Ticker24h
 from binance_ai_trader.entrypoints.cli import build_parser
 from binance_ai_trader.hotlist.funnel import (
+    FunnelOpportunity,
     FunnelStep,
     HotlistFunnelAnalyzer,
     HotlistFunnelPolicy,
@@ -320,7 +321,17 @@ class HotlistFunnelReportRenderTest(unittest.TestCase):
             },
             steps=steps,
             top_rejections=rejections,
-            final_opportunities=["ALPHAUSDT"],
+            final_opportunities=[
+                FunnelOpportunity(
+                    symbol="ALPHAUSDT",
+                    direction="LONG",
+                    entry=Decimal("0.123"),
+                    stop_loss=Decimal("0.118"),
+                    tp1=Decimal("0.133"),
+                    tp2=Decimal("0.145"),
+                    rr=Decimal("2.4"),
+                )
+            ],
         )
 
     def test_report_contains_generated_at(self) -> None:
@@ -349,6 +360,15 @@ class HotlistFunnelReportRenderTest(unittest.TestCase):
     def test_report_contains_research_only_disclaimer(self) -> None:
         md = render_hotlist_funnel(self._make_report())
         self.assertIn("Research only", md)
+
+    def test_report_contains_opportunity_plan_fields(self) -> None:
+        md = render_hotlist_funnel(self._make_report())
+        self.assertIn("LONG", md)
+        self.assertIn("0.123", md)
+        self.assertIn("0.118", md)
+        self.assertIn("0.133", md)
+        self.assertIn("0.145", md)
+        self.assertIn("2.4", md)
 
     def test_report_no_signals_shows_message(self) -> None:
         report = self._make_report()
