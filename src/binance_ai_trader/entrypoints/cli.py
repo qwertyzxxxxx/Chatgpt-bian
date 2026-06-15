@@ -25,6 +25,8 @@ from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 from binance_ai_trader.hotlist import (
     HotlistAlertEngine,
+    HotlistPerformanceRepository,
+    HotlistPerformanceTracker,
     HotlistWatcher,
     HotlistWatcherPolicy,
     HotlistWatchlist,
@@ -32,7 +34,9 @@ from binance_ai_trader.hotlist import (
     HotlistWatchlistRepository,
     format_hotlist_ai_review_message,
     format_hotlist_alert_message,
+    format_hotlist_performance_summary,
     render_hotlist_daily_summary,
+    render_hotlist_performance,
     render_hotlist_top5_review,
     review_hotlist_opportunities,
 )
@@ -293,6 +297,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
 
+    hotlist_performance = subparsers.add_parser(
+        "hotlist-performance",
+        help="track and evaluate Hotlist AI Reviewer opportunities",
+    )
+    hotlist_performance.add_argument(
+        "--database", type=Path, default=Path("data/market_data.db")
+    )
+    hotlist_performance.add_argument(
+        "--config", type=Path, default=Path("config/universe.json")
+    )
+    hotlist_performance.add_argument("--base-url", default="https://fapi.binance.com")
+    hotlist_performance.add_argument("--timeout", type=float, default=10.0)
+    hotlist_performance.add_argument("--max-retries", type=int, default=3)
+    hotlist_performance.add_argument(
+        "--report", type=Path, default=Path("reports/hotlist_performance.md")
+    )
+    hotlist_performance.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
     auto_research = subparsers.add_parser("auto-research", aliases=["auto_research"], help="research 20 parameter sets and save the Top 10 candidates")
     auto_research.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     auto_research.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
@@ -380,7 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -406,6 +430,8 @@ def main(argv: list[str] | None = None) -> int:
         return _hotlist_alert(args)
     if args.command == "hotlist-ai-review":
         return _hotlist_ai_review(args)
+    if args.command == "hotlist-performance":
+        return _hotlist_performance(args)
     if args.command in {"auto-research", "auto_research"}:
         return _auto_research(args)
     if args.command == "paper-simulate":
@@ -893,6 +919,71 @@ def _hotlist_ai_review(args: argparse.Namespace) -> int:
                     for review in reviews
                 ],
                 "telegram_message": format_hotlist_ai_review_message(reviews),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _hotlist_performance(args: argparse.Namespace) -> int:
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    now = datetime.now(UTC)
+    plans = HotlistWatcher(
+        client,
+        UniverseConfig.load(args.config),
+        HotlistWatcherPolicy(
+            limit=5,
+            min_move_pct=Decimal("15"),
+            min_quote_volume=Decimal("5000000"),
+            expiry_minutes=60,
+        ),
+    ).watch(now)
+    reviews = review_hotlist_opportunities(plans)
+    repository = HotlistPerformanceRepository(args.database)
+    try:
+        tracker = HotlistPerformanceTracker(client, repository)
+        tracker.track(reviews, now)
+        tracker.evaluate(now)
+        statistics = tracker.statistics()
+        opportunities = repository.opportunities(limit=50)
+        outcomes = repository.outcomes()
+    finally:
+        repository.close()
+    generated_at = now.isoformat(timespec="seconds")
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(
+        render_hotlist_performance(
+            statistics, opportunities, outcomes, generated_at
+        ),
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "generated_at": generated_at,
+                "research_only": True,
+                "statistics": {
+                    "total_opportunities": statistics.total_opportunities,
+                    "win_rate": str(statistics.win_rate),
+                    "tp1_rate": str(statistics.tp1_rate),
+                    "tp2_rate": str(statistics.tp2_rate),
+                    "average_rr": str(statistics.average_rr),
+                    "average_return": str(statistics.average_return),
+                    "confidence_performance": [
+                        {
+                            key: str(value) if isinstance(value, Decimal) else value
+                            for key, value in asdict(item).items()
+                        }
+                        for item in statistics.confidence_performance
+                    ],
+                },
+                "telegram_message": format_hotlist_performance_summary(statistics),
             },
             separators=(",", ":"),
             sort_keys=True,

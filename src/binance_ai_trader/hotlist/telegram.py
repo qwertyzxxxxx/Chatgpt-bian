@@ -6,6 +6,7 @@ from binance_ai_trader.hotlist.models import (
     HotlistAIReview,
     HotlistAlert,
     HotlistEntryPlan,
+    HotlistPerformanceStatistics,
 )
 
 
@@ -63,3 +64,23 @@ def format_hotlist_ai_review_message(reviews: Sequence[HotlistAIReview]) -> str:
             ]
         )
     return "\n".join(lines)
+
+
+def format_hotlist_performance_summary(
+    statistics: HotlistPerformanceStatistics,
+) -> str:
+    """Format aggregate research performance without sending it."""
+    return "\n".join(
+        [
+            "HOTLIST PERFORMANCE V1",
+            "",
+            f"Opportunities: {statistics.total_opportunities}",
+            f"Win rate: {statistics.win_rate:.2f}%",
+            f"TP1 rate: {statistics.tp1_rate:.2f}%",
+            f"TP2 rate: {statistics.tp2_rate:.2f}%",
+            f"Average RR: {statistics.average_rr:.2f}",
+            f"Average return: {statistics.average_return:.2f}%",
+            "",
+            "Research only",
+        ]
+    )
