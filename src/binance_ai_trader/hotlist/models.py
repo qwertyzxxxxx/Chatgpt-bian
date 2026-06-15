@@ -53,6 +53,20 @@ class AIHotlistDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class HotlistAIReview:
+    symbol: str
+    direction: str
+    entry: Decimal
+    stop_loss: Decimal
+    tp1: Decimal
+    tp2: Decimal
+    rr: Decimal
+    confidence: str
+    reason: str
+    expires_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class HotlistAlert:
     symbol: str
     direction: str
