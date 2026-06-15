@@ -9,11 +9,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, time as datetime_time, timedelta
 from pathlib import Path
 from uuid import uuid4
+from typing import Union
 
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 
 LOGGER = logging.getLogger(__name__)
-TaskCallback = Callable[[], int | None | "RunnerTaskResult"]
+TaskCallback = Callable[[], Union[int, None, "RunnerTaskResult"]]
 TaskObserver = Callable[[str, str, str | None], None]
 
 
