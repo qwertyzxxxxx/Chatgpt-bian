@@ -7,6 +7,7 @@ import os
 import sys
 from datetime import date, timedelta
 from dataclasses import asdict
+from decimal import Decimal
 from pathlib import Path
 
 from binance_ai_trader.application.analyze_market_regime import MarketRegimeAnalyzer
@@ -22,12 +23,34 @@ from binance_ai_trader.backtest import BacktestEngine, BacktestPolicy
 from binance_ai_trader.config import SectorConfig, UniverseConfig
 from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
+from binance_ai_trader.hotlist import (
+    HotlistAlertEngine,
+    HotlistWatcher,
+    HotlistWatcherPolicy,
+    HotlistWatchlist,
+    HotlistWatchlistPolicy,
+    HotlistWatchlistRepository,
+    format_hotlist_alert_message,
+    render_hotlist_daily_summary,
+)
 from binance_ai_trader.paper.service import PaperSimulator
 from binance_ai_trader.notifications import TelegramNotifier
 from binance_ai_trader.reporting import DailyReportService, format_top3_message
-from binance_ai_trader.runner import HealthService, ProductionRunner, RunnerLockError, default_tasks
+from binance_ai_trader.runner import (
+    HealthService,
+    ProductionRunner,
+    RunnerLockError,
+    RunnerTaskResult,
+    default_tasks,
+)
 from binance_ai_trader.sectors import SectorMap
 from binance_ai_trader.strategy_lab.service import StrategyLab
+from binance_ai_trader.strategy_lab.reporting import (
+    render_champion_league_markdown,
+    render_sweep_markdown,
+    write_sweep_markdown,
+)
+from binance_ai_trader.strategy_lab.service import BREAKOUT_HUNTER_SWEEP_COMBINATIONS
 from binance_ai_trader.walk_forward import (
     WalkForwardPolicy, WalkForwardValidator, render_markdown,
 )
@@ -130,6 +153,118 @@ def build_parser() -> argparse.ArgumentParser:
     strategy_compare.add_argument("--step-bars", type=int, default=1)
     strategy_compare.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+    strategy_rank = strategy_commands.add_parser(
+        "rank", help="rank Phase 1 strategies from the latest successful backtest results"
+    )
+    strategy_rank.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    strategy_rank.add_argument(
+        "--baseline-config", type=Path, default=Path("config/strategies/baseline_v1.json")
+    )
+    strategy_rank.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+    strategy_sweep = strategy_commands.add_parser(
+        "sweep", help="sweep Breakout Hunter parameters using the latest backtest"
+    )
+    strategy_sweep.add_argument("strategy_id")
+    strategy_sweep.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    strategy_sweep.add_argument("--report", type=Path)
+    strategy_sweep.add_argument(
+        "--baseline-config", type=Path, default=Path("config/strategies/baseline_v1.json")
+    )
+    strategy_sweep.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+    strategy_champion = strategy_commands.add_parser(
+        "champion", help="select the weekly research champion from all strategies"
+    )
+    strategy_champion.add_argument(
+        "--database", type=Path, default=Path("data/market_data.db")
+    )
+    strategy_champion.add_argument(
+        "--baseline-config", type=Path, default=Path("config/strategies/baseline_v1.json")
+    )
+    strategy_champion.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
+    hotlist = subparsers.add_parser("hotlist", help="research public futures hotlists")
+    hotlist_commands = hotlist.add_subparsers(dest="hotlist_command", required=True)
+    for name in ("watch", "scan"):
+        hotlist_watch = hotlist_commands.add_parser(
+            name, help="produce research-only entry plans for high-momentum contracts"
+        )
+        hotlist_watch.add_argument("--limit", type=int, choices=range(1, 6), default=5)
+        hotlist_watch.add_argument("--min-move-pct", type=Decimal, default=Decimal("15"))
+        hotlist_watch.add_argument(
+            "--min-quote-volume", type=Decimal, default=Decimal("5000000")
+        )
+        hotlist_watch.add_argument("--expiry-minutes", type=int, default=60)
+        hotlist_watch.add_argument(
+            "--database", type=Path, default=Path("data/market_data.db")
+        )
+        hotlist_watch.add_argument(
+            "--config", type=Path, default=Path("config/universe.json")
+        )
+        hotlist_watch.add_argument("--base-url", default="https://fapi.binance.com")
+        hotlist_watch.add_argument("--timeout", type=float, default=10.0)
+        hotlist_watch.add_argument("--max-retries", type=int, default=3)
+        hotlist_watch.add_argument(
+            "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+        )
+    hotlist_review = hotlist_commands.add_parser(
+        "review", help="refresh and analyze the rolling hotlist observation pool"
+    )
+    hotlist_review.add_argument("--gainers", type=int, default=6)
+    hotlist_review.add_argument("--losers", type=int, default=6)
+    hotlist_review.add_argument(
+        "--max-opportunities", type=int, choices=range(1, 4), default=3
+    )
+    hotlist_review.add_argument("--expiry-minutes", type=int, default=60)
+    hotlist_review.add_argument("--max-ttl-minutes", type=int, default=120)
+    hotlist_review.add_argument("--refresh-minutes", type=int, default=15)
+    hotlist_review.add_argument("--min-rr", type=Decimal, default=Decimal("2"))
+    hotlist_review.add_argument("--max-stop-pct", type=Decimal, default=Decimal("5"))
+    hotlist_review.add_argument(
+        "--min-quote-volume", type=Decimal, default=Decimal("5000000")
+    )
+    hotlist_review.add_argument(
+        "--database", type=Path, default=Path("data/market_data.db")
+    )
+    hotlist_review.add_argument(
+        "--config", type=Path, default=Path("config/universe.json")
+    )
+    hotlist_review.add_argument("--base-url", default="https://fapi.binance.com")
+    hotlist_review.add_argument("--timeout", type=float, default=10.0)
+    hotlist_review.add_argument("--max-retries", type=int, default=3)
+    hotlist_review.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
+    hotlist_alert = subparsers.add_parser(
+        "hotlist-alert", help="generate deduplicated research alerts from the hotlist pool"
+    )
+    hotlist_alert.add_argument("--gainers", type=int, default=6)
+    hotlist_alert.add_argument("--losers", type=int, default=6)
+    hotlist_alert.add_argument("--expiry-minutes", type=int, default=60)
+    hotlist_alert.add_argument("--max-ttl-minutes", type=int, default=120)
+    hotlist_alert.add_argument("--refresh-minutes", type=int, default=15)
+    hotlist_alert.add_argument(
+        "--database", type=Path, default=Path("data/market_data.db")
+    )
+    hotlist_alert.add_argument(
+        "--config", type=Path, default=Path("config/universe.json")
+    )
+    hotlist_alert.add_argument("--base-url", default="https://fapi.binance.com")
+    hotlist_alert.add_argument("--timeout", type=float, default=10.0)
+    hotlist_alert.add_argument("--max-retries", type=int, default=3)
+    hotlist_alert.add_argument(
+        "--report", type=Path, default=Path("reports/hotlist_daily_summary.md")
+    )
+    hotlist_alert.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
     auto_research = subparsers.add_parser("auto-research", aliases=["auto_research"], help="research 20 parameter sets and save the Top 10 candidates")
     auto_research.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     auto_research.add_argument("--sectors-config", type=Path, default=Path("config/sectors.json"))
@@ -174,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--poll-seconds", type=float, default=30.0)
     run_loop.add_argument("--lock-file", type=Path)
     run_loop.add_argument("--once", action="store_true")
+    run_loop.add_argument("--enable-hotlist-alerts", action="store_true")
     run_loop.add_argument("--history-days", type=int, default=180)
     run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
     run_loop.add_argument("--history-request-pause", type=float, default=0.05)
@@ -216,7 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -236,6 +372,10 @@ def main(argv: list[str] | None = None) -> int:
         return _space(args.database)
     if args.command == "strategies":
         return _strategies(args)
+    if args.command == "hotlist":
+        return _hotlist(args)
+    if args.command == "hotlist-alert":
+        return _hotlist_alert(args)
     if args.command in {"auto-research", "auto_research"}:
         return _auto_research(args)
     if args.command == "paper-simulate":
@@ -517,6 +657,50 @@ def _strategies(args: argparse.Namespace) -> int:
             for version in versions:
                 print(json.dumps(_strategy_version_json(version), separators=(",", ":"), sort_keys=True))
             return 0
+        if args.strategies_command == "rank":
+            rankings = StrategyLab(
+                repository, SectorMap({}), args.baseline_config
+            ).rank()
+            for ranking in rankings:
+                print(json.dumps(_ranking_json(ranking), separators=(",", ":"), sort_keys=True))
+            return 0
+        if args.strategies_command == "sweep":
+            results = StrategyLab(
+                repository, SectorMap({}), args.baseline_config
+            ).sweep(args.strategy_id)
+            if args.report is not None:
+                write_sweep_markdown(
+                    args.report,
+                    render_sweep_markdown(
+                        args.strategy_id,
+                        args.database,
+                        results,
+                        BREAKOUT_HUNTER_SWEEP_COMBINATIONS,
+                    ),
+                )
+            for result in results:
+                print(json.dumps(_sweep_json(result), separators=(",", ":"), sort_keys=True))
+            return 0
+        if args.strategies_command == "champion":
+            standings = StrategyLab(
+                repository, SectorMap({}), args.baseline_config
+            ).champion_league()
+            report = Path("reports/champion_league.md")
+            write_sweep_markdown(
+                report,
+                render_champion_league_markdown(args.database, standings),
+            )
+            print(
+                json.dumps(
+                    {
+                        "champion": _champion_json(standings[0]) if standings else None,
+                        "leaderboard": [_champion_json(item) for item in standings],
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+            return 0
         sector_config = SectorConfig.load(args.sectors_config)
         comparisons = StrategyLab(
             repository,
@@ -548,6 +732,142 @@ def _auto_research(args: argparse.Namespace) -> int:
         payload.update({"rank": rank, "status": "candidate"})
         print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
     return 0
+
+
+def _hotlist(args: argparse.Namespace) -> int:
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    if args.hotlist_command == "review":
+        repository = HotlistWatchlistRepository(args.database)
+        try:
+            plans = HotlistWatchlist(
+                client,
+                repository,
+                UniverseConfig.load(args.config),
+                HotlistWatchlistPolicy(
+                    gainers=args.gainers,
+                    losers=args.losers,
+                    max_opportunities=args.max_opportunities,
+                    expiry_minutes=args.expiry_minutes,
+                    max_ttl_minutes=args.max_ttl_minutes,
+                    refresh_minutes=args.refresh_minutes,
+                    min_rr=args.min_rr,
+                    max_stop_pct=args.max_stop_pct,
+                    min_quote_volume=args.min_quote_volume,
+                ),
+            ).review()
+        finally:
+            repository.close()
+    else:
+        plans = HotlistWatcher(
+            client,
+            UniverseConfig.load(args.config),
+            HotlistWatcherPolicy(
+                limit=args.limit,
+                min_move_pct=args.min_move_pct,
+                min_quote_volume=args.min_quote_volume,
+                expiry_minutes=args.expiry_minutes,
+            ),
+        ).watch()
+    for plan in plans:
+        payload = {
+            key: str(value) if isinstance(value, Decimal) else value
+            for key, value in asdict(plan).items()
+        }
+        print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _hotlist_alert(args: argparse.Namespace) -> int:
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    repository = HotlistWatchlistRepository(args.database)
+    try:
+        review = HotlistWatchlist(
+            client,
+            repository,
+            UniverseConfig.load(args.config),
+            HotlistWatchlistPolicy(
+                gainers=args.gainers,
+                losers=args.losers,
+                max_opportunities=3,
+                expiry_minutes=args.expiry_minutes,
+                max_ttl_minutes=args.max_ttl_minutes,
+                refresh_minutes=args.refresh_minutes,
+                min_rr=Decimal("2"),
+                max_stop_pct=Decimal("5"),
+                min_quote_volume=Decimal("5000000"),
+            ),
+        )
+        alerts, summary = HotlistAlertEngine(review, repository).generate()
+    finally:
+        repository.close()
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(render_hotlist_daily_summary(summary), encoding="utf-8")
+    for alert in alerts:
+        print(
+            json.dumps(
+                {
+                    "symbol": alert.symbol,
+                    "direction": alert.direction,
+                    "entry": str(alert.entry),
+                    "created_at": alert.created_at,
+                    "level": alert.level,
+                    "message": format_hotlist_alert_message(alert),
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+    return 0
+
+
+def _run_hotlist_alert_task(
+    args: argparse.Namespace, notifier: TelegramNotifier | None
+) -> RunnerTaskResult:
+    if notifier is None:
+        return RunnerTaskResult(
+            status="SKIPPED",
+            details={
+                "alerts_generated": 0,
+                "alerts_sent": 0,
+                "skipped_reason": "telegram_not_configured",
+            },
+        )
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    repository = HotlistWatchlistRepository(args.database)
+    try:
+        review = HotlistWatchlist(
+            client,
+            repository,
+            UniverseConfig.load(args.config),
+            HotlistWatchlistPolicy(),
+        )
+        alerts, summary = HotlistAlertEngine(review, repository).generate()
+    finally:
+        repository.close()
+    report = Path("reports/hotlist_daily_summary.md")
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(render_hotlist_daily_summary(summary), encoding="utf-8")
+    for alert in alerts:
+        notifier.send(format_hotlist_alert_message(alert))
+    return RunnerTaskResult(
+        details={
+            "alerts_generated": len(alerts),
+            "alerts_sent": len(alerts),
+            "skipped_reason": None,
+        }
+    )
 
 
 def _paper_simulate(database: Path) -> int:
@@ -618,7 +938,13 @@ def _run_loop(args: argparse.Namespace) -> int:
     def invoke(arguments: list[str]) -> int:
         return main(arguments)
 
-    notifier = _telegram_notifier(args)
+    token = getattr(args, "telegram_bot_token", None)
+    chat_id = getattr(args, "telegram_chat_id", None)
+    notifier = (
+        TelegramNotifier(token, chat_id, getattr(args, "telegram_timeout", 10.0))
+        if token and chat_id
+        else None
+    )
 
     def observe_task(event_type: str, status: str, error: str | None) -> None:
         if notifier is not None and status == "FAILED":
@@ -649,6 +975,10 @@ def _run_loop(args: argparse.Namespace) -> int:
             "--request-pause", str(args.history_request_pause),
             "--log-level", args.log_level,
         ]),
+        hotlist_alert=(
+            (lambda: _run_hotlist_alert_task(args, notifier))
+            if args.enable_hotlist_alerts else None
+        ),
         history_interval=timedelta(hours=args.history_interval_hours),
     )
     repository = MarketDataRepository(database)
@@ -682,13 +1012,63 @@ def _comparison_json(comparison: object) -> dict[str, object]:
     metrics = comparison.metrics
     return {
         "strategy_id": comparison.strategy_id,
-        "total_signals": metrics.total_signals,
-        "tp1_hit_rate": metrics.tp1_hit_rate,
-        "tp2_win_rate": metrics.tp2_win_rate,
-        "loss_rate": metrics.loss_rate,
+        "trades": metrics.total_signals,
+        "win_rate": metrics.tp2_win_rate,
         "profit_factor": metrics.profit_factor,
-        "expectancy_r": metrics.expectancy_r,
-        "max_drawdown_r": metrics.max_drawdown_r,
+        "expectancy": metrics.expectancy_r,
+        "max_drawdown": metrics.max_drawdown_r,
+        "regime_breakdown": _metrics_breakdown_json(comparison.regime_breakdown),
+        "direction_breakdown": _metrics_breakdown_json(comparison.direction_breakdown),
+    }
+
+
+def _ranking_json(ranking: object) -> dict[str, object]:
+    payload = _comparison_json(ranking)
+    return {
+        "rank": ranking.rank,
+        **payload,
+        "verdict": ranking.verdict,
+    }
+
+
+def _sweep_json(result: object) -> dict[str, object]:
+    metrics = result.metrics
+    return {
+        "rank": result.rank,
+        "parameters": result.parameters,
+        "trades": metrics.total_signals,
+        "win_rate": metrics.tp2_win_rate,
+        "profit_factor": metrics.profit_factor,
+        "expectancy": metrics.expectancy_r,
+        "max_drawdown": metrics.max_drawdown_r,
+        "verdict": result.verdict,
+    }
+
+
+def _champion_json(standing: object) -> dict[str, object]:
+    metrics = standing.metrics
+    return {
+        "rank": standing.rank,
+        "strategy_id": standing.strategy_id,
+        "score": standing.score,
+        "profit_factor": metrics.profit_factor,
+        "expectancy": metrics.expectancy_r,
+        "max_drawdown": metrics.max_drawdown_r,
+        "trade_count": metrics.total_signals,
+        "verdict": standing.verdict,
+    }
+
+
+def _metrics_breakdown_json(breakdown: object) -> dict[str, object]:
+    return {
+        name: {
+            "trades": metrics.total_signals,
+            "win_rate": metrics.tp2_win_rate,
+            "profit_factor": metrics.profit_factor,
+            "expectancy": metrics.expectancy_r,
+            "max_drawdown": metrics.max_drawdown_r,
+        }
+        for name, metrics in breakdown.items()
     }
 
 
