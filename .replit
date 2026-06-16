@@ -40,4 +40,4 @@ run = ["python", "run_server.py"]
 
 [[ports]]
 localPort = 8080
-externalPort = 8080
+externalPort = 80
