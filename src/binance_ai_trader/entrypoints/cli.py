@@ -550,12 +550,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
 
+    perf_center = subparsers.add_parser(
+        "performance-center",
+        help="Unified Performance Center V1 — settle, summarise and rank all strategies",
+    )
+    perf_center_cmds = perf_center.add_subparsers(dest="pc_command", required=True)
+
+    _pc_settle_p = perf_center_cmds.add_parser(
+        "settle", help="settle all OPEN results using K-line history"
+    )
+    _pc_settle_p.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    _pc_settle_p.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
+    _pc_settle_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    _pc_summary_p = perf_center_cmds.add_parser(
+        "summary", help="print per-strategy statistics and write markdown report"
+    )
+    _pc_summary_p.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    _pc_summary_p.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
+    _pc_summary_p.add_argument("--summary-report", type=Path, default=Path("reports/performance_summary.md"))
+    _pc_summary_p.add_argument("--leaderboard-report", type=Path, default=Path("reports/performance_leaderboard.md"))
+    _pc_summary_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_pc_summary_p)
+    _pc_summary_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    _pc_lb_p = perf_center_cmds.add_parser(
+        "leaderboard", help="print strategy leaderboard ranked by win rate"
+    )
+    _pc_lb_p.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    _pc_lb_p.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
+    _pc_lb_p.add_argument("--leaderboard-report", type=Path, default=Path("reports/performance_leaderboard.md"))
+    _pc_lb_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "gemini-committee", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "gemini-committee", "performance-center", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -603,6 +635,8 @@ def main(argv: list[str] | None = None) -> int:
         return _ai_macro(args)
     if args.command == "gemini-committee":
         return _gemini_committee(args)
+    if args.command == "performance-center":
+        return _performance_center(args)
     return _scan(args)
 
 
@@ -2047,6 +2081,43 @@ def _gemini_committee(args: argparse.Namespace) -> int:
 
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
     return 0
+
+
+def _performance_center(args: argparse.Namespace) -> int:
+    import json as _json
+    import os as _os
+    from binance_ai_trader.performance_center.center import PerformanceCenter
+
+    pc = PerformanceCenter(
+        market_db=str(args.database),
+        ai_macro_db=str(args.ai_macro_database),
+        summary_report_path=str(getattr(args, "summary_report", "reports/performance_summary.md")),
+        leaderboard_report_path=str(getattr(args, "leaderboard_report", "reports/performance_leaderboard.md")),
+    )
+
+    if args.pc_command == "settle":
+        result = pc.settle()
+        print(_json.dumps(result, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    if args.pc_command == "summary":
+        bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+        result = pc.summary(
+            send_telegram=getattr(args, "send_telegram", False),
+            bot_token=bot_token,
+            chat_id=chat_id,
+            telegram_timeout=int(getattr(args, "telegram_timeout", 10) or 10),
+        )
+        print(_json.dumps(result, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    if args.pc_command == "leaderboard":
+        result = pc.leaderboard()
+        print(_json.dumps(result, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    return 1
 
 
 if __name__ == "__main__":
