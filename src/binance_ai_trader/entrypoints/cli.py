@@ -469,12 +469,72 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate = subparsers.add_parser("evaluate", help="evaluate stored LONG/SHORT signals")
     evaluate.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     evaluate.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    ai_macro = subparsers.add_parser(
+        "ai-macro", help="AI Macro Trader V1 — research-only macro analysis and virtual trade tracking"
+    )
+    ai_macro_commands = ai_macro.add_subparsers(dest="ai_macro_command", required=True)
+
+    _ai_macro_scan_p = ai_macro_commands.add_parser(
+        "scan", help="run macro analysis, score candidates and create virtual trades"
+    )
+    _ai_macro_scan_p.add_argument("--database", type=Path, default=Path("data/ai_macro.db"))
+    _ai_macro_scan_p.add_argument("--config", type=Path, default=Path("config/universe.json"))
+    _ai_macro_scan_p.add_argument("--base-url", default="https://fapi.binance.com")
+    _ai_macro_scan_p.add_argument("--timeout", type=float, default=10.0)
+    _ai_macro_scan_p.add_argument("--max-retries", type=int, default=3)
+    _ai_macro_scan_p.add_argument("--gainers", type=int, default=6)
+    _ai_macro_scan_p.add_argument("--losers", type=int, default=6)
+    _ai_macro_scan_p.add_argument("--report", type=Path, default=Path("reports/ai_macro_report.md"))
+    _ai_macro_scan_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_ai_macro_scan_p)
+    _ai_macro_scan_p.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
+    _ai_macro_review_p = ai_macro_commands.add_parser(
+        "review", help="review open virtual trades against current prices"
+    )
+    _ai_macro_review_p.add_argument("--database", type=Path, default=Path("data/ai_macro.db"))
+    _ai_macro_review_p.add_argument("--base-url", default="https://fapi.binance.com")
+    _ai_macro_review_p.add_argument("--timeout", type=float, default=10.0)
+    _ai_macro_review_p.add_argument("--max-retries", type=int, default=3)
+    _ai_macro_review_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_ai_macro_review_p)
+    _ai_macro_review_p.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
+    _ai_macro_settle_p = ai_macro_commands.add_parser(
+        "settle", help="force-settle virtual trades that have exceeded 48 hours"
+    )
+    _ai_macro_settle_p.add_argument("--database", type=Path, default=Path("data/ai_macro.db"))
+    _ai_macro_settle_p.add_argument("--base-url", default="https://fapi.binance.com")
+    _ai_macro_settle_p.add_argument("--timeout", type=float, default=10.0)
+    _ai_macro_settle_p.add_argument("--max-retries", type=int, default=3)
+    _ai_macro_settle_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_ai_macro_settle_p)
+    _ai_macro_settle_p.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
+    _ai_macro_perf_p = ai_macro_commands.add_parser(
+        "performance", help="display AI macro virtual trading performance statistics"
+    )
+    _ai_macro_perf_p.add_argument("--database", type=Path, default=Path("data/ai_macro.db"))
+    _ai_macro_perf_p.add_argument("--report", type=Path, default=Path("reports/ai_macro_performance.md"))
+    _ai_macro_perf_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_ai_macro_perf_p)
+    _ai_macro_perf_p.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -518,6 +578,8 @@ def main(argv: list[str] | None = None) -> int:
         return _regime(args.database)
     if args.command == "sectors":
         return _sectors(args.database, args.config)
+    if args.command == "ai-macro":
+        return _ai_macro(args)
     return _scan(args)
 
 
@@ -1513,6 +1575,422 @@ def _evaluate(database: Path) -> int:
         )
     )
     return 0
+
+
+def _ai_macro(args: argparse.Namespace) -> int:
+    if args.ai_macro_command == "scan":
+        return _ai_macro_scan(args)
+    if args.ai_macro_command == "review":
+        return _ai_macro_review(args)
+    if args.ai_macro_command == "settle":
+        return _ai_macro_settle(args)
+    if args.ai_macro_command == "performance":
+        return _ai_macro_performance(args)
+    return 1
+
+
+def _ai_macro_scan(args: argparse.Namespace) -> int:
+    import uuid
+    from datetime import UTC, datetime
+
+    from binance_ai_trader.ai_macro import (
+        AIMacroRepository,
+        AIMacroTrade,
+        MacroAnalyzer,
+        MIN_SCORE,
+        calculate_performance,
+        format_ai_macro_scan_message,
+        render_ai_macro_report,
+        score_candidate,
+    )
+
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    repository = AIMacroRepository(args.database)
+    now = datetime.now(UTC).astimezone(UTC)
+
+    try:
+        all_tickers = {t.symbol: t for t in client.tickers_24h()}
+        btc = all_tickers.get("BTCUSDT")
+        eth = all_tickers.get("ETHUSDT")
+        if btc is None or eth is None:
+            print(json.dumps({"error": "BTC or ETH ticker unavailable"}, separators=(",", ":")))
+            return 1
+
+        analysis = MacroAnalyzer().analyze(btc, eth, now)
+
+        if analysis.trade_bias == "NO_TRADE":
+            payload = {
+                "generated_at": analysis.generated_at,
+                "market_state": analysis.market_state,
+                "risk_grade": analysis.risk_grade,
+                "trade_bias": analysis.trade_bias,
+                "new_trades": [],
+                "reason": "RISK_OFF: no new virtual trades",
+            }
+            print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+            return 0
+
+        universe = UniverseConfig.load(args.config)
+        valid = {
+            t.symbol
+            for t in all_tickers.values()
+            if t.symbol.endswith("USDT")
+            and t.symbol not in universe.denied_symbols
+        }
+        pool = [
+            t for t in all_tickers.values()
+            if t.symbol in valid and t.symbol not in {"BTCUSDT", "ETHUSDT"}
+        ]
+        gainers = sorted(
+            [t for t in pool if t.price_change_percent > 0],
+            key=lambda t: (-t.price_change_percent, -t.quote_volume),
+        )[: args.gainers]
+        losers = sorted(
+            [t for t in pool if t.price_change_percent < 0],
+            key=lambda t: (t.price_change_percent, -t.quote_volume),
+        )[: args.losers]
+
+        if analysis.trade_bias == "LONG_ONLY":
+            candidates = [(t, "LONG") for t in gainers]
+        elif analysis.trade_bias == "SHORT_ONLY":
+            candidates = [(t, "SHORT") for t in losers]
+        else:
+            candidates = [(t, "LONG") for t in gainers] + [(t, "SHORT") for t in losers]
+
+        scores = []
+        for ticker, direction in candidates:
+            klines_15m = client.klines(ticker.symbol, "15m", limit=60)
+            scored = score_candidate(ticker.symbol, direction, ticker, klines_15m, now)
+            scores.append(scored)
+
+        open_count = repository.open_count()
+        new_trades: list[AIMacroTrade] = []
+        for scored in sorted(scores, key=lambda s: -s.score):
+            if scored.direction == "PASS":
+                continue
+            if open_count >= 5:
+                break
+            if scored.entry is None or scored.stop_loss is None or scored.tp1 is None or scored.tp2 is None:
+                continue
+            trade = AIMacroTrade(
+                trade_id=str(uuid.uuid4())[:8],
+                created_at=now.isoformat(timespec="seconds"),
+                symbol=scored.symbol,
+                direction=scored.direction,
+                entry=scored.entry,
+                stop_loss=scored.stop_loss,
+                tp1=scored.tp1,
+                tp2=scored.tp2,
+                score=scored.score,
+                market_state=analysis.market_state,
+                risk_grade=analysis.risk_grade,
+                reason=scored.reason,
+                status="OPEN",
+                pnl_pct=None,
+                closed_at=None,
+            )
+            repository.save_trade(trade)
+            new_trades.append(trade)
+            open_count += 1
+
+        skipped = sum(1 for s in scores if s.direction == "PASS")
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(
+            render_ai_macro_report(analysis, scores, new_trades, skipped),
+            encoding="utf-8",
+        )
+
+        telegram_status: dict[str, str] = {}
+        if getattr(args, "send_telegram", False):
+            notifier = _telegram_notifier(args)
+            if notifier:
+                notifier.send(format_ai_macro_scan_message(analysis, new_trades))
+                telegram_status = {"telegram": "SENT"}
+            else:
+                telegram_status = {"telegram": "SKIPPED"}
+
+        print(json.dumps(
+            {
+                "generated_at": analysis.generated_at,
+                "market_state": analysis.market_state,
+                "risk_grade": analysis.risk_grade,
+                "trade_bias": analysis.trade_bias,
+                "btc_change_pct": str(analysis.btc_change_pct),
+                "eth_change_pct": str(analysis.eth_change_pct),
+                "candidates_scored": len(scores),
+                "new_trades": [
+                    {
+                        "trade_id": t.trade_id,
+                        "symbol": t.symbol,
+                        "direction": t.direction,
+                        "score": t.score,
+                        "entry": str(t.entry),
+                        "stop_loss": str(t.stop_loss),
+                        "tp1": str(t.tp1),
+                        "tp2": str(t.tp2),
+                    }
+                    for t in new_trades
+                ],
+                "report": str(args.report),
+                **telegram_status,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ))
+        return 0
+    finally:
+        repository.close()
+
+
+def _ai_macro_review(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal as _Decimal
+
+    from binance_ai_trader.ai_macro import (
+        AIMacroRepository,
+        format_ai_macro_review_message,
+    )
+
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    repository = AIMacroRepository(args.database)
+    now = datetime.now(UTC).astimezone(UTC)
+
+    try:
+        open_trades = list(repository.open_trades())
+        if not open_trades:
+            print(json.dumps({"open_trades": 0, "updated": []}, separators=(",", ":")))
+            return 0
+
+        all_tickers = {t.symbol: t for t in client.tickers_24h()}
+        updated_ids: list[str] = []
+
+        for trade in open_trades:
+            if trade.symbol not in all_tickers:
+                continue
+            klines = client.klines(trade.symbol, "15m", limit=2)
+            if not klines:
+                continue
+            current_price = klines[-1].close
+
+            if trade.direction == "LONG":
+                if current_price >= trade.tp2:
+                    pnl = (trade.tp2 - trade.entry) / trade.entry * _Decimal("100")
+                    repository.update_trade(trade.trade_id, "TP2", pnl.quantize(_Decimal("0.01")), now.isoformat(timespec="seconds"))
+                    updated_ids.append(trade.trade_id)
+                elif current_price >= trade.tp1:
+                    pnl = (trade.tp1 - trade.entry) / trade.entry * _Decimal("100")
+                    repository.update_trade(trade.trade_id, "TP1", pnl.quantize(_Decimal("0.01")), now.isoformat(timespec="seconds"))
+                    updated_ids.append(trade.trade_id)
+                elif current_price <= trade.stop_loss:
+                    pnl = (trade.stop_loss - trade.entry) / trade.entry * _Decimal("100")
+                    repository.update_trade(trade.trade_id, "STOP", pnl.quantize(_Decimal("0.01")), now.isoformat(timespec="seconds"))
+                    updated_ids.append(trade.trade_id)
+            else:
+                if current_price <= trade.tp2:
+                    pnl = (trade.entry - trade.tp2) / trade.entry * _Decimal("100")
+                    repository.update_trade(trade.trade_id, "TP2", pnl.quantize(_Decimal("0.01")), now.isoformat(timespec="seconds"))
+                    updated_ids.append(trade.trade_id)
+                elif current_price <= trade.tp1:
+                    pnl = (trade.entry - trade.tp1) / trade.entry * _Decimal("100")
+                    repository.update_trade(trade.trade_id, "TP1", pnl.quantize(_Decimal("0.01")), now.isoformat(timespec="seconds"))
+                    updated_ids.append(trade.trade_id)
+                elif current_price >= trade.stop_loss:
+                    pnl = (trade.entry - trade.stop_loss) / trade.entry * _Decimal("100")
+                    repository.update_trade(trade.trade_id, "STOP", pnl.quantize(_Decimal("0.01")), now.isoformat(timespec="seconds"))
+                    updated_ids.append(trade.trade_id)
+
+        current_prices = {}
+        for trade in open_trades:
+            klines = client.klines(trade.symbol, "15m", limit=2)
+            if klines:
+                current_prices[trade.symbol] = klines[-1].close
+
+        telegram_status: dict[str, str] = {}
+        if getattr(args, "send_telegram", False):
+            notifier = _telegram_notifier(args)
+            if notifier:
+                msg = format_ai_macro_review_message(
+                    open_trades,
+                    current_prices,
+                    now.isoformat(timespec="seconds"),
+                )
+                notifier.send(msg)
+                telegram_status = {"telegram": "SENT"}
+            else:
+                telegram_status = {"telegram": "SKIPPED"}
+
+        print(json.dumps(
+            {
+                "reviewed_at": now.isoformat(timespec="seconds"),
+                "open_trades": len(open_trades),
+                "updated": updated_ids,
+                **telegram_status,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ))
+        return 0
+    finally:
+        repository.close()
+
+
+def _ai_macro_settle(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal as _Decimal
+
+    from binance_ai_trader.ai_macro import (
+        AIMacroRepository,
+        AIMacroTrade,
+        format_ai_macro_settle_message,
+    )
+
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    repository = AIMacroRepository(args.database)
+    now = datetime.now(UTC).astimezone(UTC)
+    expiry_cutoff = now - timedelta(hours=48)
+
+    try:
+        open_trades = list(repository.open_trades())
+        expired: list[AIMacroTrade] = []
+
+        for trade in open_trades:
+            try:
+                created = datetime.fromisoformat(trade.created_at)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+            except ValueError:
+                continue
+            if created > expiry_cutoff:
+                continue
+
+            klines = client.klines(trade.symbol, "15m", limit=2)
+            if klines:
+                current_price = klines[-1].close
+            else:
+                current_price = trade.entry
+
+            if trade.direction == "LONG":
+                pnl = (current_price - trade.entry) / trade.entry * _Decimal("100")
+            else:
+                pnl = (trade.entry - current_price) / trade.entry * _Decimal("100")
+
+            pnl = pnl.quantize(_Decimal("0.01"))
+            repository.update_trade(
+                trade.trade_id, "EXPIRED", pnl, now.isoformat(timespec="seconds")
+            )
+            from dataclasses import replace as _replace
+            closed_trade = AIMacroTrade(
+                trade_id=trade.trade_id,
+                created_at=trade.created_at,
+                symbol=trade.symbol,
+                direction=trade.direction,
+                entry=trade.entry,
+                stop_loss=trade.stop_loss,
+                tp1=trade.tp1,
+                tp2=trade.tp2,
+                score=trade.score,
+                market_state=trade.market_state,
+                risk_grade=trade.risk_grade,
+                reason=trade.reason,
+                status="EXPIRED",
+                pnl_pct=pnl,
+                closed_at=now.isoformat(timespec="seconds"),
+            )
+            expired.append(closed_trade)
+
+        telegram_status: dict[str, str] = {}
+        if getattr(args, "send_telegram", False) and expired:
+            notifier = _telegram_notifier(args)
+            if notifier:
+                notifier.send(format_ai_macro_settle_message(expired))
+                telegram_status = {"telegram": "SENT"}
+            else:
+                telegram_status = {"telegram": "SKIPPED"}
+
+        print(json.dumps(
+            {
+                "settled_at": now.isoformat(timespec="seconds"),
+                "expired_count": len(expired),
+                "expired": [
+                    {
+                        "trade_id": t.trade_id,
+                        "symbol": t.symbol,
+                        "direction": t.direction,
+                        "pnl_pct": str(t.pnl_pct),
+                    }
+                    for t in expired
+                ],
+                **telegram_status,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ))
+        return 0
+    finally:
+        repository.close()
+
+
+def _ai_macro_performance(args: argparse.Namespace) -> int:
+    from binance_ai_trader.ai_macro import (
+        AIMacroRepository,
+        calculate_performance,
+        format_ai_macro_performance_message,
+        render_ai_macro_performance,
+    )
+
+    repository = AIMacroRepository(args.database)
+    try:
+        all_trades = repository.all_trades()
+        perf = calculate_performance(all_trades)
+
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(render_ai_macro_performance(perf), encoding="utf-8")
+
+        telegram_status: dict[str, str] = {}
+        if getattr(args, "send_telegram", False):
+            notifier = _telegram_notifier(args)
+            if notifier:
+                notifier.send(format_ai_macro_performance_message(perf))
+                telegram_status = {"telegram": "SENT"}
+            else:
+                telegram_status = {"telegram": "SKIPPED"}
+
+        print(json.dumps(
+            {
+                "total_trades": perf.total_trades,
+                "open_trades": perf.open_trades,
+                "closed_trades": perf.closed_trades,
+                "win_count": perf.win_count,
+                "tp1_count": perf.tp1_count,
+                "tp2_count": perf.tp2_count,
+                "stop_count": perf.stop_count,
+                "expired_count": perf.expired_count,
+                "win_rate": str(perf.win_rate),
+                "tp1_rate": str(perf.tp1_rate),
+                "tp2_rate": str(perf.tp2_rate),
+                "avg_pnl_pct": str(perf.avg_pnl_pct),
+                "virtual_balance": str(perf.virtual_balance),
+                "report": str(args.report),
+                **telegram_status,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ))
+        return 0
+    finally:
+        repository.close()
 
 
 if __name__ == "__main__":
