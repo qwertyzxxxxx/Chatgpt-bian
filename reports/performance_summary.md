@@ -1,10 +1,10 @@
 # Strategy Performance Summary
 
-_Generated: 2026-06-16 13:34 UTC_
+_Generated: 2026-06-16 13:46 UTC_
 
 ### Hotlist
-- Trades: 10
-- Open: 10
+- Trades: 0
+- Open: 0
 - TP1: 0 | TP2: 0 | SL: 0 | Timeout: 0
 - Win Rate: 0.0%
 - Avg RR: 0.0

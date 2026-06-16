@@ -22,12 +22,13 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PYTHONPATH=src python -m binance_ai_trader --help"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python run_server.py"
+waitForPort = 8080
 
 [deployment]
 deploymentTarget = "vm"
@@ -36,3 +37,7 @@ run = ["python", "run_server.py"]
 [userenv]
 
 [userenv.shared]
+
+[[ports]]
+localPort = 8080
+externalPort = 8080

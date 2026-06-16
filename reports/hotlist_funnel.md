@@ -1,6 +1,6 @@
 # Hotlist Funnel Diagnostic
 
-- **Generated at (UTC):** 2026-06-16T13:33:23+00:00
+- **Generated at (UTC):** 2026-06-16T13:44:24+00:00
 - **Research only:** True
 
 ## Parameters
@@ -19,11 +19,11 @@
 | 1 | `universe_total` | **792** | 0 | 0.0% |
 | 2 | `usdt_perpetual` | **527** | 265 | 33.5% |
 | 3 | `after_exclusions` | **523** | 4 | 0.8% |
-| 4 | `move_ge_min_move` | **21** | 502 | 96.0% |
-| 5 | `volume_ge_min_quote_volume` | **21** | 0 | 0.0% |
-| 6 | `gainers` | **13** | 8 | 38.1% |
-| 7 | `losers` | **8** | 13 | 61.9% |
-| 8 | `watchlist_active` | **13** | 8 | 38.1% |
+| 4 | `move_ge_min_move` | **18** | 505 | 96.6% |
+| 5 | `volume_ge_min_quote_volume` | **18** | 0 | 0.0% |
+| 6 | `gainers` | **10** | 8 | 44.4% |
+| 7 | `losers` | **8** | 10 | 55.6% |
+| 8 | `watchlist_active` | **13** | 5 | 27.8% |
 | 9 | `review_candidates` | **13** | 0 | 0.0% |
 | 10 | `rr_pass` | **13** | 0 | 0.0% |
 | 11 | `stop_pass` | **7** | 6 | 46.2% |
@@ -46,10 +46,10 @@
 | `COAIUSDT` | `stop_too_wide` | stop_pct=8.0% > 5% |
 | `HUSDT` | `stop_too_wide` | stop_pct=13.6% > 5% |
 | `SIRENUSDT` | `stop_too_wide` | stop_pct=13.8% > 5% |
-| `0GUSDT` | `low_move` | change=-5.3% < 15% |
-| `1000000BOBUSDT` | `low_move` | change=-3.9% < 15% |
-| `1000000MOGUSDT` | `low_move` | change=-1.1% < 15% |
-| `1000BONKUSDT` | `low_move` | change=-6.7% < 15% |
+| `0GUSDT` | `low_move` | change=-5.2% < 15% |
+| `1000000BOBUSDT` | `low_move` | change=-3.3% < 15% |
+| `1000000MOGUSDT` | `low_move` | change=-0.6% < 15% |
+| `1000BONKUSDT` | `low_move` | change=-5.0% < 15% |
 
 ## Final Opportunities
 
