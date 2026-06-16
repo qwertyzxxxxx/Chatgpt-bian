@@ -470,6 +470,27 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--database", type=Path, default=Path("data/market_data.db"))
     evaluate.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+    gemini_committee = subparsers.add_parser(
+        "gemini-committee", help="Gemini Committee V1 — AI final-selection from strategy candidates"
+    )
+    gemini_committee_cmds = gemini_committee.add_subparsers(dest="gc_command", required=True)
+    _gc_review_p = gemini_committee_cmds.add_parser(
+        "review", help="run Gemini committee review and pick the best opportunity"
+    )
+    _gc_review_p.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    _gc_review_p.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
+    _gc_review_p.add_argument("--max-candidates", type=int, default=4)
+    _gc_review_p.add_argument("--cooldown-hours", type=float, default=4.0)
+    _gc_review_p.add_argument("--gemini-model", default="gemini-2.5-flash")
+    _gc_review_p.add_argument("--base-url", default="https://fapi.binance.com")
+    _gc_review_p.add_argument("--gemini-timeout", type=float, default=60.0)
+    _gc_review_p.add_argument("--gemini-retries", type=int, default=2)
+    _gc_review_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_gc_review_p)
+    _gc_review_p.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
     ai_macro = subparsers.add_parser(
         "ai-macro", help="AI Macro Trader V1 — research-only macro analysis and virtual trade tracking"
     )
@@ -534,7 +555,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "gemini-committee", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -580,6 +601,8 @@ def main(argv: list[str] | None = None) -> int:
         return _sectors(args.database, args.config)
     if args.command == "ai-macro":
         return _ai_macro(args)
+    if args.command == "gemini-committee":
+        return _gemini_committee(args)
     return _scan(args)
 
 
@@ -1991,6 +2014,39 @@ def _ai_macro_performance(args: argparse.Namespace) -> int:
         return 0
     finally:
         repository.close()
+
+
+def _gemini_committee(args: argparse.Namespace) -> int:
+    import json
+    import os
+
+    from binance_ai_trader.gemini_committee.committee import GeminiCommittee
+
+    bot_token = getattr(args, "telegram_bot_token", None) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(args, "telegram_chat_id", None) or os.environ.get("TELEGRAM_CHAT_ID", "")
+
+    gc = GeminiCommittee(
+        db_path=str(args.database),
+        ai_macro_db_path=str(args.ai_macro_database),
+        model=args.gemini_model,
+        max_candidates=args.max_candidates,
+        cooldown_hours=args.cooldown_hours,
+        base_url=args.base_url,
+        gemini_timeout=args.gemini_timeout,
+        gemini_retries=args.gemini_retries,
+    )
+    try:
+        result = gc.review(
+            send_telegram=args.send_telegram,
+            telegram_bot_token=bot_token,
+            telegram_chat_id=chat_id,
+            telegram_timeout=getattr(args, "telegram_timeout", 10.0),
+        )
+    finally:
+        gc.close()
+
+    print(json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":
