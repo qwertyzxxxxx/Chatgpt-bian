@@ -1,0 +1,248 @@
+任务：生产运营模式（PR #26 后）
+
+当前状态：
+
+PR #26 已合并。
+
+禁止：
+
+* 修改源码
+* 创建 PR
+* Merge
+* Pull 新代码
+* Git 操作
+* 开发新功能
+
+只做运营监控。
+
+━━━━━━━━━━━━━━━━━━
+
+每天执行
+
+检查系统状态
+
+PYTHONPATH=src python -m binance_ai_trader ops status
+
+━━━━━━━━━━━━━━━━━━
+
+检查 Hotlist
+
+PYTHONPATH=src python -m binance_ai_trader hotlist funnel
+
+记录：
+
+* universe
+* candidates
+* final_opportunities
+
+━━━━━━━━━━━━━━━━━━
+
+检查 Gemini Committee
+
+PYTHONPATH=src python -m binance_ai_trader gemini-committee review
+
+记录：
+
+* TRADE
+* NO_TRADE
+* SKIPPED
+
+原因：
+
+* cooldown_active
+* existing_open_recommendation
+* no_candidates
+* gemini_api_key_missing
+
+━━━━━━━━━━━━━━━━━━
+
+执行结算
+
+PYTHONPATH=src python -m binance_ai_trader performance-center settle
+
+━━━━━━━━━━━━━━━━━━
+
+生成统计
+
+PYTHONPATH=src python -m binance_ai_trader performance-center summary
+
+PYTHONPATH=src python -m binance_ai_trader performance-center leaderboard
+
+━━━━━━━━━━━━━━━━━━
+
+检查报告
+
+reports/performance_summary.md
+
+reports/performance_leaderboard.md
+
+reports/hotlist_funnel.md
+
+━━━━━━━━━━━━━━━━━━
+
+检查 Telegram
+
+确认：
+
+* Hotlist 推送正常
+* Gemini Committee 推送正常
+* Performance Summary 推送正常
+
+━━━━━━━━━━━━━━━━━━
+
+每天输出
+
+Daily Operations Report
+
+格式：
+
+日期：
+
+VM状态：
+
+Runner状态：
+
+━━━━━━━━━━━━━━━━━━
+
+Hotlist
+
+Universe:
+
+Candidates:
+
+Final Opportunities:
+
+━━━━━━━━━━━━━━━━━━
+
+Gemini Committee
+
+Decision:
+
+TRADE / NO_TRADE / SKIPPED
+
+Best Symbol:
+
+Rating:
+
+━━━━━━━━━━━━━━━━━━
+
+Performance Center
+
+Hotlist
+
+Trades:
+Open:
+TP1:
+TP2:
+SL:
+Win Rate:
+
+AI Macro
+
+Trades:
+Open:
+TP1:
+TP2:
+SL:
+Win Rate:
+
+Gemini Committee
+
+Trades:
+Open:
+TP1:
+TP2:
+SL:
+Win Rate:
+
+━━━━━━━━━━━━━━━━━━
+
+Leaderboard
+
+Rank #1
+
+Rank #2
+
+Rank #3
+
+━━━━━━━━━━━━━━━━━━
+
+异常
+
+数据库错误：
+
+Telegram错误：
+
+Runner错误：
+
+━━━━━━━━━━━━━━━━━━
+
+重要规则
+
+如果发现：
+
+No signals generated
+
+不要改代码。
+
+只记录：
+
+日期
+候选数
+最终机会数
+
+连续统计。
+
+━━━━━━━━━━━━━━━━━━
+
+如果发现：
+
+Gemini NO_TRADE
+
+不要改提示词。
+
+只记录：
+
+日期
+候选币
+NO_TRADE 原因
+
+连续统计。
+
+━━━━━━━━━━━━━━━━━━
+
+如果发现：
+
+Performance 胜率很低
+
+不要改策略。
+
+先累计：
+
+至少 30 笔交易
+
+再评估。
+
+━━━━━━━━━━━━━━━━━━
+
+禁止开发。
+
+禁止优化。
+
+禁止调参。
+
+只运营。
+
+连续运行 7 天。
+
+7 天后输出：
+
+Weekly Performance Report
+
+并给出：
+
+是否值得继续保留：
+
+* Hotlist
+* AI Macro
+* Gemini Committee

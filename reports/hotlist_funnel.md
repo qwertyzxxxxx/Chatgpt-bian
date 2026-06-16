@@ -1,6 +1,6 @@
 # Hotlist Funnel Diagnostic
 
-- **Generated at (UTC):** 2026-06-15T17:25:52+00:00
+- **Generated at (UTC):** 2026-06-16T13:27:17+00:00
 - **Research only:** True
 
 ## Parameters
@@ -19,71 +19,72 @@
 | 1 | `universe_total` | **792** | 0 | 0.0% |
 | 2 | `usdt_perpetual` | **527** | 265 | 33.5% |
 | 3 | `after_exclusions` | **523** | 4 | 0.8% |
-| 4 | `move_ge_min_move` | **32** | 491 | 93.9% |
-| 5 | `volume_ge_min_quote_volume` | **29** | 3 | 9.4% |
-| 6 | `gainers` | **22** | 7 | 24.1% |
-| 7 | `losers` | **7** | 22 | 75.9% |
-| 8 | `watchlist_active` | **13** | 16 | 55.2% |
+| 4 | `move_ge_min_move` | **20** | 503 | 96.2% |
+| 5 | `volume_ge_min_quote_volume` | **19** | 1 | 5.0% |
+| 6 | `gainers` | **12** | 7 | 36.8% |
+| 7 | `losers` | **7** | 12 | 63.2% |
+| 8 | `watchlist_active` | **13** | 6 | 31.6% |
 | 9 | `review_candidates` | **13** | 0 | 0.0% |
 | 10 | `rr_pass` | **13** | 0 | 0.0% |
-| 11 | `stop_pass` | **6** | 7 | 53.8% |
-| 12 | `final_opportunities` | **3** | 3 | 50.0% |
+| 11 | `stop_pass` | **7** | 6 | 46.2% |
+| 12 | `final_opportunities` | **3** | 4 | 57.1% |
 
 ## Top Rejection Reasons
 
 | Reason | Count |
 | --- | ---: |
-| `stop_too_wide` | 7 |
-| `low_volume` | 3 |
+| `stop_too_wide` | 6 |
+| `low_move` | 3 |
+| `low_volume` | 1 |
 
 ## Top 10 Rejected Symbols
 
 | Symbol | Reason | Detail |
 | --- | --- | --- |
-| `EVAAUSDT` | `stop_too_wide` | stop_pct=28.8% > 5% |
-| `BEATUSDT` | `stop_too_wide` | stop_pct=10.3% > 5% |
-| `UAIUSDT` | `stop_too_wide` | stop_pct=6.9% > 5% |
-| `HUSDT` | `stop_too_wide` | stop_pct=15.5% > 5% |
-| `CLOUSDT` | `stop_too_wide` | stop_pct=5.5% > 5% |
-| `GRASSUSDT` | `stop_too_wide` | stop_pct=5.9% > 5% |
-| `TSTUSDT` | `stop_too_wide` | stop_pct=5.0% > 5% |
-| `BROCCOLIF3BUSDT` | `low_volume` | vol=1,312,368 < 5,000,000 |
-| `PUMPBTCUSDT` | `low_volume` | vol=1,917,860 < 5,000,000 |
-| `VELODROMEUSDT` | `low_volume` | vol=2,139,968 < 5,000,000 |
+| `EVAAUSDT` | `stop_too_wide` | stop_pct=5.4% > 5% |
+| `VELVETUSDT` | `stop_too_wide` | stop_pct=16.7% > 5% |
+| `BEATUSDT` | `stop_too_wide` | stop_pct=17.3% > 5% |
+| `COAIUSDT` | `stop_too_wide` | stop_pct=7.6% > 5% |
+| `HUSDT` | `stop_too_wide` | stop_pct=14.0% > 5% |
+| `SIRENUSDT` | `stop_too_wide` | stop_pct=18.7% > 5% |
+| `QUSDT` | `low_volume` | vol=4,863,965 < 5,000,000 |
+| `0GUSDT` | `low_move` | change=-5.9% < 15% |
+| `1000000BOBUSDT` | `low_move` | change=-3.8% < 15% |
+| `1000000MOGUSDT` | `low_move` | change=-1.2% < 15% |
 
 ## Final Opportunities
 
-### `MAGMAUSDT`
+### `CLOUSDT`
 
 | Field | Value |
 | --- | --- |
 | Direction | LONG |
-| Entry | 0.38089 |
-| Stop Loss | 0.36263 |
-| TP1 | 0.39915 |
-| TP2 | 0.41741 |
+| Entry | 0.14776071 |
+| Stop Loss | 0.1438 |
+| TP1 | 0.15172143 |
+| TP2 | 0.15568214 |
 | RR | 2.00 |
 
-### `VELVETUSDT`
+### `UAIUSDT`
+
+| Field | Value |
+| --- | --- |
+| Direction | LONG |
+| Entry | 0.30335357 |
+| Stop Loss | 0.29316786 |
+| TP1 | 0.31353929 |
+| TP2 | 0.323725 |
+| RR | 2.00 |
+
+### `TSTUSDT`
 
 | Field | Value |
 | --- | --- |
 | Direction | SHORT |
-| Entry | 0.3276127 |
-| Stop Loss | 0.343 |
-| TP1 | 0.31222539 |
-| TP2 | 0.29683809 |
-| RR | 2.00 |
-
-### `COAIUSDT`
-
-| Field | Value |
-| --- | --- |
-| Direction | SHORT |
-| Entry | 0.33522321 |
-| Stop Loss | 0.34051607 |
-| TP1 | 0.32993036 |
-| TP2 | 0.3246375 |
+| Entry | 0.01170032 |
+| Stop Loss | 0.01212 |
+| TP1 | 0.01128065 |
+| TP2 | 0.01086097 |
 | RR | 2.00 |
 
 
