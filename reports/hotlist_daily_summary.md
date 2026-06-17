@@ -1,16 +1,16 @@
 # Hotlist Daily Summary
 
-- **Generated at:** 2026-06-15T10:43:04+00:00
-- **Symbols watched:** 13
+- **Generated at:** 2026-06-17T07:11:24+00:00
+- **Symbols watched:** 21
 - **Alerts generated:** 3
-- **Expired symbols:** 0
+- **Expired symbols:** 9
 
 ## Top Opportunities
 
 | Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Expiry |
 | --- | :--- | ---: | ---: | ---: | ---: | ---: | --- |
-| `VELVETUSDT` | SHORT | 0.34008019 | 0.3538 | 0.32636037 | 0.31264056 | 2.00 | 2026-06-15T11:43:04+00:00 |
-| `CLOUSDT` | LONG | 0.24379964 | 0.23295821 | 0.25464107 | 0.2654825 | 2.00 | 2026-06-15T11:43:04+00:00 |
-| `COAIUSDT` | SHORT | 0.33694286 | 0.3497 | 0.32418571 | 0.31142857 | 2.00 | 2026-06-15T11:43:04+00:00 |
+| `LABUSDT` | LONG | 13.54975 | 13.14875 | 13.95075 | 14.35175 | 2.00 | 2026-06-17T08:11:24+00:00 |
+| `SIRENUSDT` | SHORT | 0.04613527 | 0.0479 | 0.04437054 | 0.0426058 | 2.00 | 2026-06-17T08:11:24+00:00 |
+| `GWEIUSDT` | SHORT | 0.12109143 | 0.12396 | 0.11822286 | 0.11535429 | 2.00 | 2026-06-17T08:11:24+00:00 |
 
 > Research only. No live trading action is performed by this report.

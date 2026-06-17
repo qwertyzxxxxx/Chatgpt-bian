@@ -32,4 +32,9 @@ def _start_health_server(port: int = 8080) -> None:
 if __name__ == "__main__":
     _start_health_server()
     from binance_ai_trader.entrypoints.cli import main
-    sys.exit(main(["run-loop"] + sys.argv[1:]))
+    sys.exit(main([
+        "run-loop",
+        "--enable-hotlist-alerts",
+        "--enable-gemini-committee",
+        "--enable-performance-center",
+    ] + sys.argv[1:]))
