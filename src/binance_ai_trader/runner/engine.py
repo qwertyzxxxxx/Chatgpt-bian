@@ -8,8 +8,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time as datetime_time, timedelta
 from pathlib import Path
-from uuid import uuid4
 from typing import Union
+from uuid import uuid4
 
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 
@@ -175,6 +175,9 @@ def default_tasks(
     collect_history: TaskCallback,
     history_interval: timedelta = timedelta(hours=24),
     hotlist_alert: TaskCallback | None = None,
+    gemini_committee: TaskCallback | None = None,
+    performance_settle: TaskCallback | None = None,
+    performance_summary: TaskCallback | None = None,
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
     tasks = [
@@ -187,6 +190,12 @@ def default_tasks(
     ]
     if hotlist_alert is not None:
         tasks.append(RunnerTask("hotlist_alert", hotlist_alert, interval=quarter_hour))
+    if gemini_committee is not None:
+        tasks.append(RunnerTask("gemini_committee", gemini_committee, interval=timedelta(hours=4)))
+    if performance_settle is not None:
+        tasks.append(RunnerTask("performance_settle", performance_settle, interval=timedelta(hours=1)))
+    if performance_summary is not None:
+        tasks.append(RunnerTask("performance_summary", performance_summary, daily_at=datetime_time(0, 10)))
     return tuple(tasks)
 
 
