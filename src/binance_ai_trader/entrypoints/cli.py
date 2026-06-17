@@ -432,6 +432,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--lock-file", type=Path)
     run_loop.add_argument("--once", action="store_true")
     run_loop.add_argument("--enable-hotlist-alerts", action="store_true")
+    run_loop.add_argument("--enable-gemini-committee", action="store_true")
+    run_loop.add_argument("--enable-performance-center", action="store_true")
+    run_loop.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
     run_loop.add_argument("--history-days", type=int, default=180)
     run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
     run_loop.add_argument("--history-request-pause", type=float, default=0.05)
@@ -1414,6 +1417,18 @@ def _run_loop(args: argparse.Namespace) -> int:
             (lambda: _run_hotlist_alert_task(args, notifier))
             if args.enable_hotlist_alerts else None
         ),
+        gemini_committee=(
+            (lambda: _run_gemini_committee_task(args))
+            if getattr(args, "enable_gemini_committee", False) else None
+        ),
+        performance_settle=(
+            (lambda: _run_performance_settle_task(args))
+            if getattr(args, "enable_performance_center", False) else None
+        ),
+        performance_summary=(
+            (lambda: _run_performance_summary_task(args, notifier))
+            if getattr(args, "enable_performance_center", False) else None
+        ),
         history_interval=timedelta(hours=args.history_interval_hours),
     )
     repository = MarketDataRepository(database)
@@ -2080,6 +2095,56 @@ def _gemini_committee(args: argparse.Namespace) -> int:
         gc.close()
 
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _run_gemini_committee_task(args: argparse.Namespace) -> int:
+    import os as _os
+    from binance_ai_trader.gemini_committee.committee import GeminiCommittee
+
+    bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+    gc = GeminiCommittee(
+        db_path=str(args.database),
+        ai_macro_db_path=str(getattr(args, "ai_macro_database", "data/ai_macro.db")),
+    )
+    try:
+        gc.review(
+            send_telegram=bool(bot_token and chat_id),
+            telegram_bot_token=bot_token,
+            telegram_chat_id=chat_id,
+        )
+    finally:
+        gc.close()
+    return 0
+
+
+def _run_performance_settle_task(args: argparse.Namespace) -> int:
+    from binance_ai_trader.performance_center.center import PerformanceCenter
+
+    pc = PerformanceCenter(
+        market_db=str(args.database),
+        ai_macro_db=str(getattr(args, "ai_macro_database", "data/ai_macro.db")),
+    )
+    pc.settle()
+    return 0
+
+
+def _run_performance_summary_task(args: argparse.Namespace, notifier: object) -> int:
+    import os as _os
+    from binance_ai_trader.performance_center.center import PerformanceCenter
+
+    bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+    pc = PerformanceCenter(
+        market_db=str(args.database),
+        ai_macro_db=str(getattr(args, "ai_macro_database", "data/ai_macro.db")),
+    )
+    pc.summary(
+        send_telegram=bool(bot_token and chat_id),
+        bot_token=bot_token,
+        chat_id=chat_id,
+    )
     return 0
 
 
