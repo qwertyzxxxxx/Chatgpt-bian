@@ -35,6 +35,7 @@ if __name__ == "__main__":
     sys.exit(main([
         "run-loop",
         "--enable-hotlist-alerts",
+        "--enable-hotlist-performance",
         "--enable-gemini-committee",
         "--enable-performance-center",
     ] + sys.argv[1:]))
