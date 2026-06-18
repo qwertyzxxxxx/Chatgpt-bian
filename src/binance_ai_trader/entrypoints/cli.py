@@ -432,6 +432,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--lock-file", type=Path)
     run_loop.add_argument("--once", action="store_true")
     run_loop.add_argument("--enable-hotlist-alerts", action="store_true")
+    run_loop.add_argument("--enable-hotlist-performance", action="store_true")
     run_loop.add_argument("--enable-gemini-committee", action="store_true")
     run_loop.add_argument("--enable-performance-center", action="store_true")
     run_loop.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
@@ -1429,6 +1430,10 @@ def _run_loop(args: argparse.Namespace) -> int:
             (lambda: _run_performance_summary_task(args, notifier))
             if getattr(args, "enable_performance_center", False) else None
         ),
+        hotlist_performance=(
+            (lambda: _run_hotlist_performance_task(args))
+            if getattr(args, "enable_hotlist_performance", False) else None
+        ),
         history_interval=timedelta(hours=args.history_interval_hours),
     )
     repository = MarketDataRepository(database)
@@ -2096,6 +2101,41 @@ def _gemini_committee(args: argparse.Namespace) -> int:
 
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
     return 0
+
+
+def _run_hotlist_performance_task(args: argparse.Namespace) -> RunnerTaskResult:
+    now = datetime.now(UTC)
+    client = BinancePublicClient(
+        args.base_url,
+        timeout_seconds=args.timeout,
+        max_retries=args.max_retries,
+    )
+    plans = HotlistWatcher(
+        client,
+        UniverseConfig.load(args.config),
+        HotlistWatcherPolicy(
+            limit=5,
+            min_move_pct=Decimal("15"),
+            min_quote_volume=Decimal("5000000"),
+            expiry_minutes=60,
+        ),
+    ).watch(now)
+    reviews = review_hotlist_opportunities(plans)
+    repository = HotlistPerformanceRepository(args.database)
+    try:
+        tracker = HotlistPerformanceTracker(client, repository)
+        tracked = tracker.track(reviews, now)
+        tracker.evaluate(now)
+        statistics = tracker.statistics()
+    finally:
+        repository.close()
+    return RunnerTaskResult(
+        details={
+            "opportunities_tracked": len(tracked),
+            "total_opportunities": statistics.total_opportunities,
+            "win_rate": str(statistics.win_rate),
+        }
+    )
 
 
 def _run_gemini_committee_task(args: argparse.Namespace) -> int:

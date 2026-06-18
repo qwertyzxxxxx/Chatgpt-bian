@@ -178,6 +178,7 @@ def default_tasks(
     gemini_committee: TaskCallback | None = None,
     performance_settle: TaskCallback | None = None,
     performance_summary: TaskCallback | None = None,
+    hotlist_performance: TaskCallback | None = None,
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
     tasks = [
@@ -196,6 +197,8 @@ def default_tasks(
         tasks.append(RunnerTask("performance_settle", performance_settle, interval=timedelta(hours=1)))
     if performance_summary is not None:
         tasks.append(RunnerTask("performance_summary", performance_summary, daily_at=datetime_time(0, 10)))
+    if hotlist_performance is not None:
+        tasks.append(RunnerTask("hotlist_performance", hotlist_performance, interval=quarter_hour))
     return tuple(tasks)
 
 
