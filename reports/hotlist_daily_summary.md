@@ -1,16 +1,16 @@
 # Hotlist Daily Summary
 
-- **Generated at:** 2026-06-17T07:26:32+00:00
-- **Symbols watched:** 21
+- **Generated at:** 2026-06-18T11:28:12+00:00
+- **Symbols watched:** 32
 - **Alerts generated:** 3
-- **Expired symbols:** 8
+- **Expired symbols:** 20
 
 ## Top Opportunities
 
 | Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Expiry |
 | --- | :--- | ---: | ---: | ---: | ---: | ---: | --- |
-| `LABUSDT` | LONG | 13.7452873 | 13.309 | 14.18157461 | 14.61786191 | 2.00 | 2026-06-17T08:26:32+00:00 |
-| `SIRENUSDT` | SHORT | 0.04605011 | 0.0479 | 0.04420021 | 0.04235032 | 2.00 | 2026-06-17T08:26:32+00:00 |
-| `GWEIUSDT` | SHORT | 0.12102821 | 0.12396 | 0.11809643 | 0.11516464 | 2.00 | 2026-06-17T08:26:32+00:00 |
+| `龙虾USDT` | SHORT | 0.01040296 | 0.01069882 | 0.01010711 | 0.00981125 | 2.00 | 2026-06-18T12:28:12+00:00 |
+| `AIOTUSDT` | SHORT | 0.07948036 | 0.08084179 | 0.07811893 | 0.0767575 | 2.00 | 2026-06-18T12:28:12+00:00 |
+| `AKTUSDT` | SHORT | 0.74112338 | 0.7548 | 0.72744676 | 0.71377014 | 2.00 | 2026-06-18T12:28:12+00:00 |
 
 > Research only. No live trading action is performed by this report.
