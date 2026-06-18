@@ -1,4 +1,4 @@
-"""Tests for Runner integration: Gemini Committee + Performance Center scheduling."""
+"""Tests for Runner integration: Gemini Committee + Performance Center + Hotlist Performance scheduling."""
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 import tempfile
@@ -87,6 +87,38 @@ class TestDefaultTasksSchedule(unittest.TestCase):
         self.assertEqual(timedelta(minutes=15), schedules["evaluate"].interval)
         self.assertEqual(timedelta(minutes=15), schedules["paper_simulate"].interval)
         self.assertEqual(time(0, 5), schedules["daily_report"].daily_at)
+
+    def test_hotlist_performance_not_in_default(self):
+        tasks = default_tasks(self._cb, self._cb, self._cb, self._cb, self._cb, self._cb)
+        names = {t.event_type for t in tasks}
+        self.assertNotIn("hotlist_performance", names)
+
+    def test_hotlist_performance_enabled_with_15min_interval(self):
+        tasks = default_tasks(
+            self._cb, self._cb, self._cb, self._cb, self._cb, self._cb,
+            hotlist_performance=self._cb,
+        )
+        schedules = {t.event_type: t for t in tasks}
+        self.assertIn("hotlist_performance", schedules)
+        self.assertEqual(timedelta(minutes=15), schedules["hotlist_performance"].interval)
+
+    def test_hotlist_performance_and_hotlist_alert_independent(self):
+        tasks = default_tasks(
+            self._cb, self._cb, self._cb, self._cb, self._cb, self._cb,
+            hotlist_alert=self._cb,
+        )
+        names = {t.event_type for t in tasks}
+        self.assertIn("hotlist_alert", names)
+        self.assertNotIn("hotlist_performance", names)
+
+    def test_hotlist_performance_without_hotlist_alert(self):
+        tasks = default_tasks(
+            self._cb, self._cb, self._cb, self._cb, self._cb, self._cb,
+            hotlist_performance=self._cb,
+        )
+        names = {t.event_type for t in tasks}
+        self.assertIn("hotlist_performance", names)
+        self.assertNotIn("hotlist_alert", names)
 
     def test_backward_compatible_without_new_args(self):
         tasks = default_tasks(self._cb, self._cb, self._cb, self._cb, self._cb, self._cb)
@@ -188,6 +220,43 @@ class TestRunnerExecution(unittest.TestCase):
         )
         runner2.tick(later)
         self.assertEqual(2, calls.count("settle"))
+
+    def test_hotlist_performance_executes_on_schedule(self):
+        calls = []
+        tasks = default_tasks(
+            lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0,
+            hotlist_performance=lambda: calls.append("hp") or 0,
+        )
+        runner = self._runner(tasks)
+        runner.tick(NOW)
+        self.assertIn("hp", calls)
+
+    def test_hotlist_performance_not_re_executed_within_15min(self):
+        calls = []
+        tasks = default_tasks(
+            lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0,
+            hotlist_performance=lambda: calls.append("hp") or 0,
+        )
+        runner = self._runner(tasks)
+        runner.tick(NOW)
+        early = datetime(2026, 6, 6, 0, 20, tzinfo=UTC)
+        runner.tick(early)
+        self.assertEqual(1, calls.count("hp"))
+
+    def test_hotlist_performance_re_executed_after_15min(self):
+        calls = []
+        tasks = default_tasks(
+            lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0,
+            hotlist_performance=lambda: calls.append("hp") or 0,
+        )
+        runner = self._runner(tasks)
+        runner.tick(NOW)
+        later = datetime(2026, 6, 6, 0, 25, tzinfo=UTC)
+        runner2 = ProductionRunner(
+            self.repository, tasks, self.lock, clock=lambda: later
+        )
+        runner2.tick(later)
+        self.assertEqual(2, calls.count("hp"))
 
 
 class TestFaultIsolation(unittest.TestCase):
@@ -321,6 +390,76 @@ class TestFaultIsolation(unittest.TestCase):
         self.assertIn("scan", calls)
         self.assertIn("evaluate", calls)
         self.assertIn("paper", calls)
+
+    def test_hotlist_performance_failure_does_not_stop_scan(self):
+        calls = []
+
+        def failing_hp():
+            raise RuntimeError("public API timeout")
+
+        tasks = default_tasks(
+            lambda: calls.append("scan") or 0,
+            lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0,
+            hotlist_performance=failing_hp,
+        )
+        runner = self._runner(tasks)
+        runner.tick(NOW)
+        self.assertIn("scan", calls)
+
+    def test_hotlist_performance_failure_does_not_stop_evaluate(self):
+        calls = []
+
+        def failing_hp():
+            raise RuntimeError("public API timeout")
+
+        tasks = default_tasks(
+            lambda: 0,
+            lambda: calls.append("evaluate") or 0,
+            lambda: 0, lambda: 0, lambda: 0, lambda: 0,
+            hotlist_performance=failing_hp,
+        )
+        runner = self._runner(tasks)
+        runner.tick(NOW)
+        self.assertIn("evaluate", calls)
+
+    def test_hotlist_performance_failure_persisted_as_failed(self):
+        def failing_hp():
+            raise RuntimeError("binance_hp_error")
+
+        tasks = default_tasks(
+            lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0, lambda: 0,
+            hotlist_performance=failing_hp,
+        )
+        runner = self._runner(tasks)
+        runner.tick(NOW)
+        row = self.repository._connection.execute(
+            "SELECT status, error_message FROM runner_events WHERE event_type='hotlist_performance'"
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual("FAILED", row[0])
+        self.assertIn("binance_hp_error", row[1])
+
+    def test_all_pipeline_tasks_execute_despite_hotlist_performance_failure(self):
+        calls = []
+
+        def fail():
+            raise RuntimeError("hp failure")
+
+        tasks = default_tasks(
+            lambda: calls.append("scan") or 0,
+            lambda: calls.append("evaluate") or 0,
+            lambda: calls.append("paper") or 0,
+            lambda: calls.append("daily") or 0,
+            lambda: 0, lambda: 0,
+            hotlist_alert=lambda: calls.append("alert") or 0,
+            hotlist_performance=fail,
+        )
+        runner = self._runner(tasks)
+        runner.tick(NOW)
+        self.assertIn("scan", calls)
+        self.assertIn("evaluate", calls)
+        self.assertIn("paper", calls)
+        self.assertIn("alert", calls)
 
 
 if __name__ == "__main__":
