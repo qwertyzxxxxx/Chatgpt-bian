@@ -38,12 +38,12 @@ waitForPort = 8080
 name = "us-stock-hunter"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd /home/runner/us-stock-hunter && python3 main.py schedule"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "test -f /home/runner/us-stock-hunter/main.py && cd /home/runner/us-stock-hunter && python3 main.py schedule || echo '[us-stock-hunter] main.py not found — awaiting redeploy'"
 
 [deployment]
 deploymentTarget = "vm"

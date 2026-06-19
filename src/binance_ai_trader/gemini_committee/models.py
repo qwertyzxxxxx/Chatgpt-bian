@@ -42,6 +42,7 @@ class Candidate:
     active_duration_minutes: str = "UNKNOWN"
     appearance_count_24h: str = "UNKNOWN"
     appearance_count_7d: str = "UNKNOWN"
+    data_quality: str = "FULL"
     m15: TimeframeIndicators = field(default_factory=TimeframeIndicators)
     h1: TimeframeIndicators = field(default_factory=TimeframeIndicators)
     h4: TimeframeIndicators = field(default_factory=TimeframeIndicators)
@@ -61,6 +62,7 @@ class Candidate:
             "tp2": self.tp2,
             "rr": self.rr,
             "stop_pct": self.stop_pct,
+            "data_quality": self.data_quality,
             "m15": self.m15.to_dict(),
             "h1": self.h1.to_dict(),
             "h4": self.h4.to_dict(),

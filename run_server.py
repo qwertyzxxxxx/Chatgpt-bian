@@ -33,7 +33,8 @@ def _start_health_server(port: int = 8080) -> None:
 
 
 def _start_stock_hunter() -> None:
-    if not _US_STOCK_HUNTER_DIR.exists():
+    main_py = _US_STOCK_HUNTER_DIR / "main.py"
+    if not main_py.exists():
         return
     subprocess.Popen(
         [sys.executable, "main.py", "schedule"],
