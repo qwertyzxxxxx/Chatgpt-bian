@@ -130,17 +130,17 @@ class HotlistAlertEngineTest(unittest.TestCase):
         message = format_hotlist_alert_message(alerts[0])
 
         for expected in (
-            "HOTLIST ALERT",
+            "🔔 Hotlist 警报",
             opportunity.symbol,
             opportunity.direction,
-            "entry:",
-            "SL:",
+            "买入:",
+            "止损:",
             "TP1:",
             "TP2:",
             "RR:",
-            "expiry:",
-            "reason:",
-            "Research only",
+            "到期:",
+            "理由:",
+            "仅供研究",
         ):
             self.assertIn(expected, message)
 
@@ -221,7 +221,7 @@ class HotlistAlertEngineTest(unittest.TestCase):
         self.assertEqual(1, result.details["alerts_generated"])
         self.assertEqual(1, result.details["alerts_sent"])
         self.assertEqual(1, len(notifier.messages))
-        self.assertIn("Research only", notifier.messages[0])
+        self.assertIn("仅供研究", notifier.messages[0])
 
         notifier = FakeNotifier()
         with (
