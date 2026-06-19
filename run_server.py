@@ -75,4 +75,5 @@ if __name__ == "__main__":
         "--enable-hotlist-performance",
         "--enable-gemini-committee",
         "--enable-performance-center",
+        "--enable-leaderboard-watch",
     ] + sys.argv[1:]))
