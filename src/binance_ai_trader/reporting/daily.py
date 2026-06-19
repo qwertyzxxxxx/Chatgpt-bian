@@ -33,21 +33,21 @@ class DailyReportService:
             "top_capital_short": self._repository.load_top_capital_signals(start, end, "SHORT"),
             "top_candidates": self._repository.load_top_candidate_report(5),
             "aggressive_allowed": account.aggressive_allowed,
-            "disclaimer": "Paper research only; no profit is guaranteed and no orders are placed.",
+            "disclaimer": "仅供研究，不下单，不保证盈利。",
         }
 
 
 def format_top3_message(report: dict[str, object]) -> str:
-    lines = [f"Daily Top3 report — {report['date']}"]
+    lines = [f"每日 Top3 报告 — {report['date']}"]
     top3 = report.get("top3", [])
     if not top3:
-        lines.append("No signals generated.")
+        lines.append("暂无信号。")
     else:
         for index, item in enumerate(top3, start=1):
             lines.append(
                 f"{index}. {item['symbol']} {item['direction']} | "
-                f"score {item['score']} | entry {item['entry']} | "
+                f"分数 {item['score']} | 买入 {item['entry']} | "
                 f"SL {item['sl']} | TP1 {item['tp1']} | TP2 {item['tp2']} | RR {item['rr']}"
             )
-    lines.append("Paper research only; no orders are placed.")
+    lines.append("仅供研究，不下单。")
     return "\n".join(lines)

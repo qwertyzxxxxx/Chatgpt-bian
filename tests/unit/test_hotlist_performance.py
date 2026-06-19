@@ -207,8 +207,8 @@ class HotlistPerformanceTrackerTest(unittest.TestCase):
             "Research only",
         ):
             self.assertIn(expected, report)
-        self.assertIn("Win rate: 50.00%", message)
-        self.assertIn("Research only", message)
+        self.assertIn("胜率: 50.00%", message)
+        self.assertIn("仅供研究", message)
 
     def test_cli_defaults_and_public_data_only_configuration(self) -> None:
         args = build_parser().parse_args(["hotlist-performance"])

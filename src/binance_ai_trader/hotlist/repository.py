@@ -146,6 +146,49 @@ class HotlistWatchlistRepository:
                 ),
             )
 
+    def has_recent_alert_cooldown(self, symbol: str, cutoff_iso: str) -> bool:
+        """Rule 2/4: symbol-only cooldown — any direction or entry."""
+        row = self._connection.execute(
+            """
+            SELECT 1 FROM hotlist_alerts
+            WHERE symbol=? AND created_at>?
+            LIMIT 1
+            """,
+            (symbol, cutoff_iso),
+        ).fetchone()
+        return row is not None
+
+    def has_open_opportunity(self, symbol: str, now_iso: str) -> bool:
+        """Rule 1: non-expired entry in hotlist_opportunities (table may not exist)."""
+        try:
+            row = self._connection.execute(
+                """
+                SELECT 1 FROM hotlist_opportunities
+                WHERE symbol=? AND expiry>?
+                LIMIT 1
+                """,
+                (symbol, now_iso),
+            ).fetchone()
+            return row is not None
+        except sqlite3.OperationalError:
+            return False
+
+    def open_opportunity_direction(self, symbol: str, now_iso: str) -> str | None:
+        """Rule 3: direction of most-recent non-expired opportunity, or None."""
+        try:
+            row = self._connection.execute(
+                """
+                SELECT direction FROM hotlist_opportunities
+                WHERE symbol=? AND expiry>?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (symbol, now_iso),
+            ).fetchone()
+            return str(row[0]) if row is not None else None
+        except sqlite3.OperationalError:
+            return None
+
     def alert_count(self) -> int:
         row = self._connection.execute(
             "SELECT COUNT(*) FROM hotlist_alerts"

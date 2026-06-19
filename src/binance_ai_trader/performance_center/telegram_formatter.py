@@ -11,9 +11,9 @@ from .models import StrategyStats, Leaderboard
 log = logging.getLogger(__name__)
 
 _STRATEGY_LABELS = {
-    "hotlist": "Hotlist",
-    "ai_macro": "AI Macro",
-    "gemini_committee": "Gemini Committee",
+    "hotlist": "热门榜单",
+    "ai_macro": "AI宏观",
+    "gemini_committee": "Gemini委员会",
 }
 _MAX_CHARS = 4096
 
@@ -23,14 +23,14 @@ def _label(strategy: str) -> str:
 
 
 def format_summary(stats: List[StrategyStats], leaderboard: Leaderboard) -> str:
-    lines = ["📊 Strategy Performance\n"]
+    lines = ["📊 策略绩效\n"]
     for s in stats:
         lines += [
             f"─── {_label(s.strategy)} ───",
-            f"Trades: {s.total} | Open: {s.open_count}",
+            f"交易数: {s.total} | 持仓中: {s.open_count}",
             f"TP1: {s.tp1} | TP2: {s.tp2} | SL: {s.sl}",
-            f"Win Rate: {s.win_rate}%",
-            f"Avg RR: {s.avg_rr}",
+            f"胜率: {s.win_rate}%",
+            f"平均RR: {s.avg_rr}",
             "",
         ]
     if leaderboard.entries:
@@ -38,23 +38,23 @@ def format_summary(stats: List[StrategyStats], leaderboard: Leaderboard) -> str:
         lines += [
             f"🏆 当前第一名：",
             f"{_label(top.strategy)}",
-            f"Win Rate {top.win_rate}% | Trades {top.total}",
+            f"胜率 {top.win_rate}% | 交易数 {top.total}",
         ]
-    lines.append("\nResearch Only | No live trading")
+    lines.append("\n仅供研究 | 不进行实盘交易")
     return "\n".join(lines)
 
 
 def format_leaderboard(leaderboard: Leaderboard) -> str:
-    lines = ["🏆 Strategy Leaderboard\n"]
+    lines = ["🏆 策略排行榜\n"]
     for i, s in enumerate(leaderboard.entries, 1):
         lines += [
             f"{i}. {_label(s.strategy)}",
-            f"   Win Rate {s.win_rate}%  |  Trades {s.total}  |  Avg RR {s.avg_rr}",
+            f"   胜率 {s.win_rate}%  |  交易数 {s.total}  |  平均RR {s.avg_rr}",
             "",
         ]
     if not leaderboard.entries:
-        lines.append("No data yet.")
-    lines.append("Research Only | No live trading")
+        lines.append("暂无数据。")
+    lines.append("仅供研究 | 不进行实盘交易")
     return "\n".join(lines)
 
 

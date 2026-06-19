@@ -24,7 +24,7 @@ def format_trade(decision: CommitteeDecision) -> list[str]:
         )
         for r in decision.reasons:
             body += f"• {r}\n"
-        body += "\nResearch Only | No live trading"
+        body += "\n仅供研究 | 不进行实盘交易"
         return _chunks(body)
 
     body = (
@@ -50,10 +50,10 @@ def format_trade(decision: CommitteeDecision) -> list[str]:
             body += f"• {rj.get('symbol', '?')} — {rj.get('reason', '?')}\n"
 
     body += f"\n数据质量：{decision.data_quality}\n"
-    body += "\nResearch Only | No live trading"
+    body += "\n仅供研究 | 不进行实盘交易"
     return _chunks(body)
 
 
 def format_skipped(result: SkipResult) -> list[str]:
-    body = f"🤖 Gemini Committee SKIPPED\nreason: {result.reason}"
+    body = f"🤖 Gemini 委员会 已跳过\n原因: {result.reason}"
     return _chunks(body)

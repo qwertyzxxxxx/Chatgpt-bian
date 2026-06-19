@@ -37,6 +37,7 @@ from binance_ai_trader.hotlist import (
     HotlistWatchlistPolicy,
     HotlistWatchlistRepository,
     format_hotlist_ai_review_message,
+    format_hotlist_alert_batch_message,
     format_hotlist_alert_message,
     format_hotlist_funnel_message,
     format_hotlist_performance_summary,
@@ -306,6 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     hotlist_alert.add_argument(
         "--report", type=Path, default=Path("reports/hotlist_daily_summary.md")
     )
+    hotlist_alert.add_argument("--hotlist-alert-cooldown-hours", type=int, default=4)
     hotlist_alert.add_argument(
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
@@ -432,6 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--lock-file", type=Path)
     run_loop.add_argument("--once", action="store_true")
     run_loop.add_argument("--enable-hotlist-alerts", action="store_true")
+    run_loop.add_argument("--hotlist-alert-cooldown-hours", type=int, default=4)
     run_loop.add_argument("--enable-hotlist-performance", action="store_true")
     run_loop.add_argument("--enable-gemini-committee", action="store_true")
     run_loop.add_argument("--enable-performance-center", action="store_true")
@@ -1136,7 +1139,11 @@ def _hotlist_alert(args: argparse.Namespace) -> int:
                 min_quote_volume=Decimal("5000000"),
             ),
         )
-        alerts, summary = HotlistAlertEngine(review, repository).generate()
+        alerts, skipped, summary = HotlistAlertEngine(
+            review,
+            repository,
+            cooldown_hours=args.hotlist_alert_cooldown_hours,
+        ).generate()
     finally:
         repository.close()
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -1151,6 +1158,18 @@ def _hotlist_alert(args: argparse.Namespace) -> int:
                     "created_at": alert.created_at,
                     "level": alert.level,
                     "message": format_hotlist_alert_message(alert),
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+    for skip in skipped:
+        print(
+            json.dumps(
+                {
+                    "skipped_symbol": skip.symbol,
+                    "skipped_direction": skip.direction,
+                    "skipped_reason": skip.reason,
                 },
                 separators=(",", ":"),
                 sort_keys=True,
@@ -1292,18 +1311,36 @@ def _run_hotlist_alert_task(
             UniverseConfig.load(args.config),
             HotlistWatchlistPolicy(),
         )
-        alerts, summary = HotlistAlertEngine(review, repository).generate()
+        alerts, skipped, summary = HotlistAlertEngine(
+            review,
+            repository,
+            cooldown_hours=getattr(args, "hotlist_alert_cooldown_hours", 4),
+        ).generate()
     finally:
         repository.close()
     report = Path("reports/hotlist_daily_summary.md")
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(render_hotlist_daily_summary(summary), encoding="utf-8")
-    for alert in alerts:
-        notifier.send(format_hotlist_alert_message(alert))
+    messages_sent = 0
+    if alerts:
+        batch_msg = format_hotlist_alert_batch_message(alerts)
+        notifier.send(batch_msg)
+        messages_sent = 1
+    if skipped:
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+        for skip in skipped:
+            _log.info(
+                "hotlist_alert_skipped symbol=%s direction=%s reason=%s",
+                skip.symbol,
+                skip.direction,
+                skip.reason,
+            )
     return RunnerTaskResult(
         details={
             "alerts_generated": len(alerts),
-            "alerts_sent": len(alerts),
+            "alerts_sent": messages_sent,
+            "skipped_count": len(skipped),
             "skipped_reason": None,
         }
     )

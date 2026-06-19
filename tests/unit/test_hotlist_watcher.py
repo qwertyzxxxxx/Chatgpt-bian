@@ -173,7 +173,7 @@ class HotlistWatcherTest(unittest.TestCase):
 
         self.assertEqual(5, len(plans))
         self.assertTrue(all(item.expires_at == "2026-06-14T13:00:00+00:00" for item in plans))
-        self.assertIn("RESEARCH ONLY", format_hotlist_message(plans))
+        self.assertIn("仅供研究", format_hotlist_message(plans))
 
     @staticmethod
     def _single_plan(
