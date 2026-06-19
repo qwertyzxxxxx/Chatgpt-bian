@@ -44,12 +44,21 @@ def _fetch_klines(symbol: str, start_ms: int) -> List[list]:
 
 
 def _parse_opened_at(opened_at: str) -> Optional[datetime]:
+    try:
+        normalized = opened_at.strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (ValueError, AttributeError):
+        pass
     for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
         try:
             dt = datetime.strptime(opened_at, fmt)
             return dt.replace(tzinfo=timezone.utc)
         except ValueError:
             continue
+    log.warning("Cannot parse opened_at: %r", opened_at)
     return None
 
 

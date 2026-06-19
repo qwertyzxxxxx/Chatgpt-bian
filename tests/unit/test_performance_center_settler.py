@@ -152,5 +152,71 @@ class TestSettleAll(unittest.TestCase):
             self.assertEqual(r.result, RESULT_TP1)
 
 
+class TestParseOpenedAt(unittest.TestCase):
+    """opened_at timezone format coverage."""
+
+    from binance_ai_trader.performance_center.settler import _parse_opened_at as _p
+
+    def _p(self, s: str):
+        from binance_ai_trader.performance_center.settler import _parse_opened_at
+        return _parse_opened_at(s)
+
+    def test_plain_iso_no_tz(self):
+        dt = self._p("2026-06-15T09:18:06")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.year, 2026)
+        self.assertEqual(dt.hour, 9)
+
+    def test_plus_zero_offset(self):
+        dt = self._p("2026-06-15T09:18:06+00:00")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.hour, 9)
+
+    def test_z_suffix(self):
+        dt = self._p("2026-06-15T09:18:06Z")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.tzinfo, timezone.utc)
+        self.assertEqual(dt.hour, 9)
+
+    def test_microseconds_with_offset(self):
+        dt = self._p("2026-06-15T09:18:06.123456+00:00")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.microsecond, 123456)
+
+    def test_microseconds_z(self):
+        dt = self._p("2026-06-15T09:18:06.000000Z")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.tzinfo, timezone.utc)
+
+    def test_space_separator(self):
+        dt = self._p("2026-06-15 09:18:06")
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.hour, 9)
+
+    def test_garbage_returns_none(self):
+        dt = self._p("not-a-date")
+        self.assertIsNone(dt)
+
+    def test_empty_returns_none(self):
+        dt = self._p("")
+        self.assertIsNone(dt)
+
+    def test_settle_one_with_plus_offset_doesnt_skip(self):
+        sr = _make_sr(opened_at="2024-01-01T00:00:00+00:00")
+        with patch("binance_ai_trader.performance_center.settler._fetch_klines",
+                   return_value=[_kline(high=52100, low=49000)]):
+            result = settle_one(sr, now=_NOW)
+        self.assertEqual(result.result, RESULT_TP1)
+
+    def test_settle_one_with_z_suffix_doesnt_skip(self):
+        sr = _make_sr(opened_at="2024-01-01T00:00:00Z")
+        with patch("binance_ai_trader.performance_center.settler._fetch_klines",
+                   return_value=[_kline(high=52100, low=49000)]):
+            result = settle_one(sr, now=_NOW)
+        self.assertEqual(result.result, RESULT_TP1)
+
+
 if __name__ == "__main__":
     unittest.main()
