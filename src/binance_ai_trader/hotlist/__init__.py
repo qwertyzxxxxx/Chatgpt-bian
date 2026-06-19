@@ -23,6 +23,7 @@ from binance_ai_trader.hotlist.models import (
     HotlistPerformanceSlice,
     HotlistPerformanceStatistics,
     HotlistWatchlistItem,
+    SkippedAlert,
     TrackedHotlistOpportunity,
 )
 from binance_ai_trader.hotlist.performance import (
@@ -41,6 +42,7 @@ from binance_ai_trader.hotlist.reporting import (
 )
 from binance_ai_trader.hotlist.service import HotlistWatcher, HotlistWatcherPolicy
 from binance_ai_trader.hotlist.telegram import (
+    format_hotlist_alert_batch_message,
     format_hotlist_alert_message,
     format_hotlist_ai_review_message,
     format_hotlist_funnel_message,
@@ -77,11 +79,13 @@ __all__ = [
     "TrackedHotlistOpportunity",
     "alert_level",
     "build_ai_hotlist_review_prompt",
+    "format_hotlist_alert_batch_message",
     "format_hotlist_alert_message",
     "format_hotlist_ai_review_message",
     "format_hotlist_funnel_message",
     "format_hotlist_message",
     "format_hotlist_performance_summary",
+    "SkippedAlert",
     "parse_ai_hotlist_review_response",
     "render_hotlist_funnel",
     "render_hotlist_top5_review",

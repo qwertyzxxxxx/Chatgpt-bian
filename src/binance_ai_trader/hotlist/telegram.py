@@ -32,6 +32,29 @@ def format_hotlist_message(plans: Sequence[HotlistEntryPlan]) -> str:
     return "\n".join(lines)
 
 
+def format_hotlist_alert_batch_message(
+    alerts: Sequence[HotlistAlert], max_n: int = 3
+) -> str:
+    """Merge up to max_n alerts into one Telegram message (Rule 5)."""
+    top = list(alerts[:max_n])
+    if not top:
+        return ""
+    lines = [f"🔥 Hotlist Alert Top{len(top)}", ""]
+    for i, alert in enumerate(top, 1):
+        plan = alert.plan
+        lines += [
+            f"{i}. {alert.symbol} {alert.direction}",
+            f"   买入: {plan.suggested_limit_entry}",
+            f"   止损: {plan.stop_loss}",
+            f"   TP1: {plan.tp1}",
+            f"   TP2: {plan.tp2}",
+            f"   RR: {plan.rr}",
+            "",
+        ]
+    lines.append("仅供研究")
+    return "\n".join(lines)
+
+
 def format_hotlist_alert_message(alert: HotlistAlert) -> str:
     plan = alert.plan
     return "\n".join(

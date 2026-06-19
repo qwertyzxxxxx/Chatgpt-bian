@@ -129,3 +129,10 @@ class HotlistDailySummary:
     alerts_generated: int
     expired_symbols: int
     top_opportunities: tuple[HotlistEntryPlan, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SkippedAlert:
+    symbol: str
+    direction: str
+    reason: str
