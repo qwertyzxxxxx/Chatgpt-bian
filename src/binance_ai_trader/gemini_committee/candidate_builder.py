@@ -6,7 +6,7 @@ import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .indicator_engine import compute_indicators
@@ -173,6 +173,51 @@ def load_hotlist_candidates(db_path: str, lookback_hours: int = _HOTLIST_LOOKBAC
     return candidates
 
 
+def load_hotlist_alert_candidates(db_path: str, lookback_hours: int = _HOTLIST_LOOKBACK_HOURS) -> list[Candidate]:
+    """Fallback: read from hotlist_alerts when hotlist_opportunities is empty.
+
+    Alerts only carry symbol / direction / entry; missing fields are set to
+    "UNKNOWN" and data_quality is marked "PARTIAL" so Gemini knows the plan
+    is incomplete.
+    """
+    candidates: list[Candidate] = []
+    try:
+        con = sqlite3.connect(db_path)
+        con.row_factory = sqlite3.Row
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
+        rows = con.execute(
+            """
+            SELECT symbol, direction, entry, created_at
+            FROM hotlist_alerts
+            WHERE created_at >= ?
+            ORDER BY created_at DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+        con.close()
+
+        seen: set[str] = set()
+        for row in rows:
+            sym = row["symbol"]
+            if sym in seen:
+                continue
+            seen.add(sym)
+            candidates.append(Candidate(
+                symbol=sym,
+                source="hotlist_alert",
+                direction=row["direction"],
+                entry=row["entry"],
+                stop_loss="UNKNOWN",
+                tp1="UNKNOWN",
+                tp2="UNKNOWN",
+                rr="UNKNOWN",
+                data_quality="PARTIAL",
+            ))
+    except Exception as exc:
+        logger.warning("load_hotlist_alert_candidates failed: %s", exc)
+    return candidates
+
+
 def load_ai_macro_candidates(db_path: str) -> list[Candidate]:
     candidates: list[Candidate] = []
     try:
@@ -224,6 +269,9 @@ def build_candidates(
     base_url: str = "https://fapi.binance.com",
 ) -> list[Candidate]:
     hotlist = load_hotlist_candidates(hotlist_db)
+    if not hotlist:
+        logger.info("hotlist_opportunities empty — falling back to hotlist_alerts")
+        hotlist = load_hotlist_alert_candidates(hotlist_db)
     ai_macro = load_ai_macro_candidates(ai_macro_db)
     candidates = merge_top_n(hotlist, ai_macro, max_candidates)
 
