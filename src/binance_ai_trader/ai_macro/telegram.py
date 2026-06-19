@@ -26,7 +26,7 @@ def format_ai_macro_scan_message(
     icon = _STATE_ICON.get(analysis.market_state, "")
     bias_cn = _BIAS_CN.get(analysis.trade_bias, analysis.trade_bias)
     lines = [
-        "🤖 AI Macro Report",
+        "🤖 AI 宏观报告",
         "",
         f"时间（UTC）: {analysis.generated_at}",
         f"市场状态: {analysis.market_state} {icon}",
@@ -42,7 +42,7 @@ def format_ai_macro_scan_message(
         lines += [
             "",
             "─" * 16,
-            f"Top Opportunity #{i}",
+            f"最优机会 #{i}",
             "",
             f"📊 {trade.symbol}",
             f"方向: {trade.direction}",
@@ -62,7 +62,7 @@ def format_ai_macro_review_message(
     current_prices: dict[str, Decimal],
     now_iso: str,
 ) -> str:
-    lines = ["📋 Open Trades Review", "", f"时间（UTC）: {now_iso}"]
+    lines = ["📋 持仓复盘", "", f"时间（UTC）: {now_iso}"]
     if not open_trades:
         lines += ["", "─── 无持仓 ───", "", "Research Only — 仅供研究"]
         return "\n".join(lines)
@@ -101,7 +101,7 @@ def format_ai_macro_review_message(
 
 
 def format_ai_macro_settle_message(settled_trades: list[AIMacroTrade]) -> str:
-    lines = ["⏰ Trade Settlement", ""]
+    lines = ["⏰ 交易结算", ""]
     if not settled_trades:
         lines += ["无到期交易", "", "Research Only — 仅供研究"]
         return "\n".join(lines)
@@ -121,7 +121,7 @@ def format_ai_macro_settle_message(settled_trades: list[AIMacroTrade]) -> str:
 
 def format_ai_macro_performance_message(perf: AIMacroPerformance) -> str:
     lines = [
-        "📊 AI Macro Performance",
+        "📊 AI 宏观绩效",
         "",
         f"总单数: {perf.total_trades}",
         f"持仓中: {perf.open_trades}",
