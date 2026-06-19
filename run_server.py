@@ -32,9 +32,32 @@ def _start_health_server(port: int = 8080) -> None:
     thread.start()
 
 
-def _start_stock_hunter() -> None:
+_US_STOCK_HUNTER_REPO = "https://github.com/qwertyzxxxxx/us-stock-hunter.git"
+
+
+def _ensure_stock_hunter() -> bool:
     main_py = _US_STOCK_HUNTER_DIR / "main.py"
-    if not main_py.exists():
+    if main_py.exists():
+        return True
+    try:
+        _US_STOCK_HUNTER_DIR.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "clone", "--depth=1", _US_STOCK_HUNTER_REPO,
+             str(_US_STOCK_HUNTER_DIR)],
+            check=True, timeout=120,
+        )
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r",
+             str(_US_STOCK_HUNTER_DIR / "requirements.txt"), "-q"],
+            check=True, timeout=120,
+        )
+        return main_py.exists()
+    except Exception:
+        return False
+
+
+def _start_stock_hunter() -> None:
+    if not _ensure_stock_hunter():
         return
     subprocess.Popen(
         [sys.executable, "main.py", "schedule"],
