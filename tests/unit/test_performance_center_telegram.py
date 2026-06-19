@@ -33,35 +33,35 @@ class TestTelegramFormatter(unittest.TestCase):
 
     def test_summary_contains_header(self):
         msg = format_summary(self.stats, self.lb)
-        self.assertIn("📊 Strategy Performance", msg)
+        self.assertIn("📊 策略绩效", msg)
 
     def test_summary_contains_all_strategies(self):
         msg = format_summary(self.stats, self.lb)
-        self.assertIn("Hotlist", msg)
-        self.assertIn("AI Macro", msg)
-        self.assertIn("Gemini Committee", msg)
+        self.assertIn("热门榜单", msg)
+        self.assertIn("AI宏观", msg)
+        self.assertIn("Gemini委员会", msg)
 
     def test_summary_contains_top_winner(self):
         msg = format_summary(self.stats, self.lb)
         self.assertIn("🏆", msg)
-        self.assertIn("Gemini Committee", msg)
+        self.assertIn("Gemini委员会", msg)
         self.assertIn("68.0%", msg)
 
     def test_summary_contains_win_rate(self):
         msg = format_summary(self.stats, self.lb)
-        self.assertIn("Win Rate:", msg)
+        self.assertIn("胜率:", msg)
 
     def test_summary_research_only_footer(self):
         msg = format_summary(self.stats, self.lb)
-        self.assertIn("Research Only", msg)
+        self.assertIn("仅供研究", msg)
 
     def test_leaderboard_contains_header(self):
         msg = format_leaderboard(self.lb)
-        self.assertIn("🏆 Strategy Leaderboard", msg)
+        self.assertIn("🏆 策略排行榜", msg)
 
     def test_leaderboard_empty(self):
         msg = format_leaderboard(Leaderboard())
-        self.assertIn("No data yet", msg)
+        self.assertIn("暂无数据", msg)
 
     def test_leaderboard_rank_numbering(self):
         lb = Leaderboard(entries=[
@@ -74,7 +74,7 @@ class TestTelegramFormatter(unittest.TestCase):
 
     def test_leaderboard_research_only_footer(self):
         msg = format_leaderboard(self.lb)
-        self.assertIn("Research Only", msg)
+        self.assertIn("仅供研究", msg)
 
     def test_send_summary_success(self):
         with patch("urllib.request.urlopen") as mock_open:

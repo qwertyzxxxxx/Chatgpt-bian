@@ -92,7 +92,7 @@ class HotlistAIReviewerTest(unittest.TestCase):
             self.assertIn(expected, report)
             self.assertIn(expected, message)
         self.assertIn("Research only", report)
-        self.assertIn("Research only", message)
+        self.assertIn("仅供研究", message)
 
     def test_command_defaults_to_top_five_markdown_report(self) -> None:
         args = build_parser().parse_args(["hotlist-ai-review"])

@@ -55,7 +55,7 @@ def _trade(
 class TestFormatAIMacroScanMessage(unittest.TestCase):
     def test_contains_header(self) -> None:
         msg = format_ai_macro_scan_message(_analysis(), [])
-        self.assertIn("AI Macro Report", msg)
+        self.assertIn("AI 宏观报告", msg)
 
     def test_no_trades_shows_no_opportunity(self) -> None:
         msg = format_ai_macro_scan_message(_analysis(), [])
@@ -64,13 +64,13 @@ class TestFormatAIMacroScanMessage(unittest.TestCase):
     def test_with_trades_shows_symbol(self) -> None:
         msg = format_ai_macro_scan_message(_analysis(), [_trade()])
         self.assertIn("BTCUSDT", msg)
-        self.assertIn("Top Opportunity #1", msg)
+        self.assertIn("最优机会 #1", msg)
 
     def test_multiple_trades_numbered(self) -> None:
         trades = [_trade("BTCUSDT"), _trade("ETHUSDT", score=82)]
         msg = format_ai_macro_scan_message(_analysis(), trades)
-        self.assertIn("Top Opportunity #1", msg)
-        self.assertIn("Top Opportunity #2", msg)
+        self.assertIn("最优机会 #1", msg)
+        self.assertIn("最优机会 #2", msg)
 
     def test_contains_score(self) -> None:
         msg = format_ai_macro_scan_message(_analysis(), [_trade()])
@@ -78,7 +78,7 @@ class TestFormatAIMacroScanMessage(unittest.TestCase):
 
     def test_research_only_disclaimer(self) -> None:
         msg = format_ai_macro_scan_message(_analysis(), [])
-        self.assertIn("Research Only", msg)
+        self.assertIn("仅供研究", msg)
 
     def test_btc_eth_change_shown(self) -> None:
         msg = format_ai_macro_scan_message(_analysis(), [])
@@ -119,11 +119,11 @@ class TestFormatAIMacroReviewMessage(unittest.TestCase):
     def test_no_price_still_renders(self) -> None:
         msg = format_ai_macro_review_message([_trade()], {}, "2026-01-01T12:00:00+00:00")
         self.assertIn("BTCUSDT", msg)
-        self.assertIn("Research Only", msg)
+        self.assertIn("仅供研究", msg)
 
     def test_research_only_disclaimer(self) -> None:
         msg = format_ai_macro_review_message([], {}, "2026-01-01T12:00:00+00:00")
-        self.assertIn("Research Only", msg)
+        self.assertIn("仅供研究", msg)
 
     def test_short_trade_pnl(self) -> None:
         msg = format_ai_macro_review_message(
@@ -152,7 +152,7 @@ class TestFormatAIMacroSettleMessage(unittest.TestCase):
 
     def test_research_only_disclaimer(self) -> None:
         msg = format_ai_macro_settle_message([])
-        self.assertIn("Research Only", msg)
+        self.assertIn("仅供研究", msg)
 
 
 class TestFormatAIMacroPerformanceMessage(unittest.TestCase):
@@ -166,11 +166,11 @@ class TestFormatAIMacroPerformanceMessage(unittest.TestCase):
             virtual_balance=Decimal("1036.00"),
         )
         msg = format_ai_macro_performance_message(perf)
-        self.assertIn("AI Macro Performance", msg)
+        self.assertIn("AI 宏观绩效", msg)
         self.assertIn("胜率", msg)
         self.assertIn("虚拟账户", msg)
         self.assertIn("1036.00", msg)
-        self.assertIn("Research Only", msg)
+        self.assertIn("仅供研究", msg)
 
     def test_zero_performance(self) -> None:
         perf = AIMacroPerformance(
