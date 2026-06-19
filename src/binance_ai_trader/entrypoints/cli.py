@@ -438,6 +438,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--enable-hotlist-performance", action="store_true")
     run_loop.add_argument("--enable-gemini-committee", action="store_true")
     run_loop.add_argument("--enable-performance-center", action="store_true")
+    run_loop.add_argument("--enable-leaderboard-watch", action="store_true")
+    run_loop.add_argument("--leaderboard-watch-database", type=Path, default=Path("data/leaderboard_watch.db"))
+    run_loop.add_argument("--leaderboard-watch-hours", type=int, default=24)
+    run_loop.add_argument("--leaderboard-watch-top-n", type=int, default=10)
     run_loop.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
     run_loop.add_argument("--history-days", type=int, default=180)
     run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
@@ -589,12 +593,54 @@ def build_parser() -> argparse.ArgumentParser:
     _pc_lb_p.add_argument("--leaderboard-report", type=Path, default=Path("reports/performance_leaderboard.md"))
     _pc_lb_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+    leaderboard_watch = subparsers.add_parser(
+        "leaderboard-watch", help="排行榜观察池 — Leaderboard Watch Pool V1"
+    )
+    lw_commands = leaderboard_watch.add_subparsers(dest="lw_command", required=True)
+
+    _lw_update_p = lw_commands.add_parser("update", help="扫描排行榜并更新观察池")
+    _lw_update_p.add_argument("--database", type=Path, default=Path("data/leaderboard_watch.db"))
+    _lw_update_p.add_argument("--watch-hours", type=int, default=24)
+    _lw_update_p.add_argument("--top-n", type=int, default=10)
+    _lw_update_p.add_argument("--base-url", default="https://fapi.binance.com")
+    _lw_update_p.add_argument("--timeout", type=float, default=10.0)
+    _lw_update_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    _lw_status_p = lw_commands.add_parser("status", help="显示观察池状态")
+    _lw_status_p.add_argument("--database", type=Path, default=Path("data/leaderboard_watch.db"))
+    _lw_status_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_lw_status_p)
+    _lw_status_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    _lw_gemini_p = lw_commands.add_parser("gemini-review", help="从ACTIVE池 Gemini 分析，选出最佳机会")
+    _lw_gemini_p.add_argument("--database", type=Path, default=Path("data/leaderboard_watch.db"))
+    _lw_gemini_p.add_argument("--max-candidates", type=int, default=20)
+    _lw_gemini_p.add_argument("--cooldown-hours", type=float, default=4.0)
+    _lw_gemini_p.add_argument("--gemini-model", default="gemini-2.5-flash")
+    _lw_gemini_p.add_argument("--base-url", default="https://fapi.binance.com")
+    _lw_gemini_p.add_argument("--gemini-timeout", type=float, default=60.0)
+    _lw_gemini_p.add_argument("--gemini-retries", type=int, default=2)
+    _lw_gemini_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_lw_gemini_p)
+    _lw_gemini_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    _lw_settle_p = lw_commands.add_parser("settle", help="结算 OPEN 推荐（超时处理）")
+    _lw_settle_p.add_argument("--database", type=Path, default=Path("data/leaderboard_watch.db"))
+    _lw_settle_p.add_argument("--timeout-hours", type=float, default=48.0)
+    _lw_settle_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    _lw_summary_p = lw_commands.add_parser("summary", help="显示观察池绩效统计")
+    _lw_summary_p.add_argument("--database", type=Path, default=Path("data/leaderboard_watch.db"))
+    _lw_summary_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_lw_summary_p)
+    _lw_summary_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "gemini-committee", "performance-center", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "gemini-committee", "performance-center", "leaderboard-watch", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -644,6 +690,8 @@ def main(argv: list[str] | None = None) -> int:
         return _gemini_committee(args)
     if args.command == "performance-center":
         return _performance_center(args)
+    if args.command == "leaderboard-watch":
+        return _leaderboard_watch(args)
     return _scan(args)
 
 
@@ -1471,6 +1519,14 @@ def _run_loop(args: argparse.Namespace) -> int:
             (lambda: _run_hotlist_performance_task(args))
             if getattr(args, "enable_hotlist_performance", False) else None
         ),
+        leaderboard_update=(
+            (lambda: _run_leaderboard_watch_update_task(args))
+            if getattr(args, "enable_leaderboard_watch", False) else None
+        ),
+        leaderboard_gemini=(
+            (lambda: _run_leaderboard_watch_gemini_task(args))
+            if getattr(args, "enable_leaderboard_watch", False) else None
+        ),
         history_interval=timedelta(hours=args.history_interval_hours),
     )
     repository = MarketDataRepository(database)
@@ -2222,6 +2278,131 @@ def _run_performance_summary_task(args: argparse.Namespace, notifier: object) ->
         bot_token=bot_token,
         chat_id=chat_id,
     )
+    return 0
+
+
+def _leaderboard_watch(args: argparse.Namespace) -> int:
+    import json as _json
+    import os as _os
+
+    from binance_ai_trader.leaderboard_watch.service import LeaderboardWatchService
+
+    bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+
+    db_path = str(args.database)
+
+    if args.lw_command == "update":
+        svc = LeaderboardWatchService(
+            db_path=db_path,
+            base_url=getattr(args, "base_url", "https://fapi.binance.com"),
+        )
+        try:
+            result = svc.update(
+                watch_hours=args.watch_hours,
+                top_n=args.top_n,
+                timeout=args.timeout,
+            )
+        finally:
+            svc.close()
+        print(_json.dumps(result, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    if args.lw_command == "status":
+        svc = LeaderboardWatchService(db_path=db_path)
+        try:
+            result = svc.status(
+                send_telegram=getattr(args, "send_telegram", False),
+                telegram_bot_token=bot_token,
+                telegram_chat_id=chat_id,
+            )
+        finally:
+            svc.close()
+        print(_json.dumps(result, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    if args.lw_command == "gemini-review":
+        svc = LeaderboardWatchService(
+            db_path=db_path,
+            model=getattr(args, "gemini_model", "gemini-2.5-flash"),
+            base_url=getattr(args, "base_url", "https://fapi.binance.com"),
+            gemini_timeout=getattr(args, "gemini_timeout", 60.0),
+            gemini_retries=getattr(args, "gemini_retries", 2),
+        )
+        try:
+            result = svc.gemini_review(
+                max_candidates=args.max_candidates,
+                cooldown_hours=args.cooldown_hours,
+                send_telegram=getattr(args, "send_telegram", False),
+                telegram_bot_token=bot_token,
+                telegram_chat_id=chat_id,
+            )
+        finally:
+            svc.close()
+        print(_json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    if args.lw_command == "settle":
+        svc = LeaderboardWatchService(db_path=db_path)
+        try:
+            result = svc.settle(timeout_hours=args.timeout_hours)
+        finally:
+            svc.close()
+        print(_json.dumps(result, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    if args.lw_command == "summary":
+        svc = LeaderboardWatchService(db_path=db_path)
+        try:
+            result = svc.summary(
+                send_telegram=getattr(args, "send_telegram", False),
+                telegram_bot_token=bot_token,
+                telegram_chat_id=chat_id,
+            )
+        finally:
+            svc.close()
+        print(_json.dumps(result, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    return 1
+
+
+def _run_leaderboard_watch_update_task(args: argparse.Namespace) -> int:
+    from binance_ai_trader.leaderboard_watch.service import LeaderboardWatchService
+
+    db_path = str(getattr(args, "leaderboard_watch_database", "data/leaderboard_watch.db"))
+    watch_hours = int(getattr(args, "leaderboard_watch_hours", 24))
+    top_n = int(getattr(args, "leaderboard_watch_top_n", 10))
+    svc = LeaderboardWatchService(
+        db_path=db_path,
+        base_url=getattr(args, "base_url", "https://fapi.binance.com"),
+    )
+    try:
+        svc.update(watch_hours=watch_hours, top_n=top_n)
+    finally:
+        svc.close()
+    return 0
+
+
+def _run_leaderboard_watch_gemini_task(args: argparse.Namespace) -> int:
+    import os as _os
+    from binance_ai_trader.leaderboard_watch.service import LeaderboardWatchService
+
+    db_path = str(getattr(args, "leaderboard_watch_database", "data/leaderboard_watch.db"))
+    bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+    svc = LeaderboardWatchService(
+        db_path=db_path,
+        base_url=getattr(args, "base_url", "https://fapi.binance.com"),
+    )
+    try:
+        svc.gemini_review(
+            send_telegram=bool(bot_token and chat_id),
+            telegram_bot_token=bot_token,
+            telegram_chat_id=chat_id,
+        )
+    finally:
+        svc.close()
     return 0
 
 
