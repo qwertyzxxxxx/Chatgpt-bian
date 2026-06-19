@@ -5,12 +5,15 @@ ready before marking it live. The run-loop is a background worker with no HTTP
 port, so without this wrapper the probe times out and the deployment fails the
 promote step.
 """
+import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+_US_STOCK_HUNTER_DIR = Path("/home/runner/us-stock-hunter")
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
@@ -29,8 +32,18 @@ def _start_health_server(port: int = 8080) -> None:
     thread.start()
 
 
+def _start_stock_hunter() -> None:
+    if not _US_STOCK_HUNTER_DIR.exists():
+        return
+    subprocess.Popen(
+        [sys.executable, "main.py", "schedule"],
+        cwd=str(_US_STOCK_HUNTER_DIR),
+    )
+
+
 if __name__ == "__main__":
     _start_health_server()
+    _start_stock_hunter()
     from binance_ai_trader.entrypoints.cli import main
     sys.exit(main([
         "run-loop",
