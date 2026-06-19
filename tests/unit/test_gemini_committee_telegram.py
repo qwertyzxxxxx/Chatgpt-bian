@@ -33,7 +33,7 @@ class FormatTradeTest(unittest.TestCase):
         self.assertIn("A+", combined)
         self.assertIn("50000", combined)
         self.assertIn("48000", combined)
-        self.assertIn("Research Only", combined)
+        self.assertIn("仅供研究", combined)
 
     def test_trade_message_contains_reject_reasons(self):
         msgs = format_trade(_trade_decision())
@@ -46,7 +46,7 @@ class FormatTradeTest(unittest.TestCase):
         combined = "".join(msgs)
         self.assertIn("NO_TRADE", combined)
         self.assertIn("NONE", combined)
-        self.assertIn("Research Only", combined)
+        self.assertIn("仅供研究", combined)
 
     def test_long_message_is_split(self):
         decision = CommitteeDecision(
@@ -66,7 +66,7 @@ class FormatSkippedTest(unittest.TestCase):
     def test_cooldown_format(self):
         msgs = format_skipped(SkipResult("cooldown_active"))
         combined = "".join(msgs)
-        self.assertIn("SKIPPED", combined)
+        self.assertIn("已跳过", combined)
         self.assertIn("cooldown_active", combined)
 
     def test_no_candidates_format(self):
