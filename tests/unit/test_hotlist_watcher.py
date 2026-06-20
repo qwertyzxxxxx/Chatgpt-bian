@@ -137,7 +137,7 @@ class HotlistWatcherTest(unittest.TestCase):
         self.assertEqual(risk, plan.tp1 - plan.suggested_limit_entry)
         self.assertEqual(risk * 2, plan.tp2 - plan.suggested_limit_entry)
         self.assertEqual(Decimal("2.00"), plan.rr)
-        self.assertIn("instead of chasing", plan.reason)
+        self.assertIn("EMA20", plan.reason)
 
     def test_short_entry_plan_waits_for_retest_and_has_two_r_target(self) -> None:
         plan = self._single_plan("SHORTUSDT", Decimal("-20"), "200", "-1")
@@ -148,7 +148,7 @@ class HotlistWatcherTest(unittest.TestCase):
         risk = plan.stop_loss - plan.suggested_limit_entry
         self.assertEqual(risk, plan.suggested_limit_entry - plan.tp1)
         self.assertEqual(risk * 2, plan.suggested_limit_entry - plan.tp2)
-        self.assertIn("instead of shorting the low", plan.reason)
+        self.assertIn("EMA20", plan.reason)
 
     def test_expiry_and_top_five_cap(self) -> None:
         symbols = tuple(f"S{index}USDT" for index in range(7))
