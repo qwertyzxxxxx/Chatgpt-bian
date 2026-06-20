@@ -54,14 +54,14 @@ class TestDefaultTasksSchedule(unittest.TestCase):
         self.assertIn("performance_settle", schedules)
         self.assertEqual(timedelta(hours=1), schedules["performance_settle"].interval)
 
-    def test_performance_summary_enabled_at_0010_utc(self):
+    def test_performance_summary_runs_every_six_hours(self):
         tasks = default_tasks(
             self._cb, self._cb, self._cb, self._cb, self._cb, self._cb,
             performance_summary=self._cb,
         )
         schedules = {t.event_type: t for t in tasks}
         self.assertIn("performance_summary", schedules)
-        self.assertEqual(time(0, 10), schedules["performance_summary"].daily_at)
+        self.assertEqual(timedelta(hours=6), schedules["performance_summary"].interval)
 
     def test_all_three_enabled_together(self):
         tasks = default_tasks(

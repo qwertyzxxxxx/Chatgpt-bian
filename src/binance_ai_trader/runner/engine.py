@@ -198,7 +198,7 @@ def default_tasks(
     if performance_settle is not None:
         tasks.append(RunnerTask("performance_settle", performance_settle, interval=timedelta(hours=1)))
     if performance_summary is not None:
-        tasks.append(RunnerTask("performance_summary", performance_summary, daily_at=datetime_time(0, 10)))
+        tasks.append(RunnerTask("performance_summary", performance_summary, interval=timedelta(hours=6)))
     if hotlist_performance is not None:
         tasks.append(RunnerTask("hotlist_performance", hotlist_performance, interval=quarter_hour))
     if leaderboard_update is not None:

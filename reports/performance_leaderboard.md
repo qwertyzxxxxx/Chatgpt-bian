@@ -1,7 +1,7 @@
 # Strategy Leaderboard
 
-_Generated: 2026-06-20 11:07 UTC_
+_Generated: 2026-06-20 16:24 UTC_
 
 | Rank | Strategy | Win Rate | Trades | Avg RR |
 |------|----------|----------|--------|--------|
-| 1 | Hotlist | 82.1% | 95 | 0.76 |
+| 1 | Hotlist | 84.0% | 110 | 0.8 |
