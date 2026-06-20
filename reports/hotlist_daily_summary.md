@@ -1,15 +1,16 @@
 # Hotlist Daily Summary
 
-- **Generated at:** 2026-06-19T15:06:54+00:00
-- **Symbols watched:** 44
-- **Alerts generated:** 2
-- **Expired symbols:** 32
+- **Generated at:** 2026-06-20T06:34:49+00:00
+- **Symbols watched:** 46
+- **Alerts generated:** 3
+- **Expired symbols:** 34
 
 ## Top Opportunities
 
 | Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Expiry |
 | --- | :--- | ---: | ---: | ---: | ---: | ---: | --- |
-| `GUAUSDT` | SHORT | 0.88563214 | 0.91416071 | 0.85710357 | 0.828575 | 2.00 | 2026-06-19T16:06:54+00:00 |
-| `FOLKSUSDT` | SHORT | 2.29963839 | 2.411 | 2.18827679 | 2.07691518 | 2.00 | 2026-06-19T16:06:54+00:00 |
+| `BLESSUSDT` | LONG | 0.0082291 | 0.007844 | 0.00861419 | 0.00899929 | 2.00 | 2026-06-20T07:34:49+00:00 |
+| `UBUSDT` | SHORT | 0.08502018 | 0.08698089 | 0.08305946 | 0.08109875 | 2.00 | 2026-06-20T07:34:49+00:00 |
+| `ESPORTSUSDT` | SHORT | 0.03239571 | 0.03301857 | 0.03177286 | 0.03115 | 2.00 | 2026-06-20T07:34:49+00:00 |
 
 > Research only. No live trading action is performed by this report.
