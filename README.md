@@ -339,6 +339,7 @@ export GEMINI_API_KEY="your-gemini-api-key"
 PYTHONPATH=src python -m binance_ai_trader run-loop \
   --database data/market_data.db \
   --enable-hotlist-alerts \
+  --enable-hotlist-performance \
   --enable-gemini-committee \
   --enable-performance-center \
   --enable-leaderboard-watch
