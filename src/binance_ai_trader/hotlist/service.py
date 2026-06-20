@@ -132,16 +132,21 @@ class HotlistWatcher:
         )
         hourly_ema = _ema(tuple(item.close for item in hourly), 20)
         buffer = atr14 * Decimal("0.25")
+        chg = candidate.change_24h_pct
+        chg_str = f"+{chg:.2f}%" if chg > 0 else f"{chg:.2f}%"
+        trend_str = "上方" if current >= hourly_ema else "下方"
         if candidate.direction == "LONG":
             entry = min(ema20, current - buffer)
             stop = min(swing_low, entry - atr14)
             risk = entry - stop
             tp1 = entry + risk
             tp2 = entry + risk * Decimal("2")
-            trend = "above" if current >= hourly_ema else "below"
+            long_desc = "动量续涨做多" if chg > 0 else "低位反弹做多"
             reason = (
-                f"24h gainer; wait for a 15m EMA20/retest pullback instead of chasing; "
-                f"15m volume is {_fmt(volume_ratio)}x its 20-period average; price is {trend} 1h EMA20."
+                f"24h涨跌{chg_str}，{long_desc}；"
+                f"等15m EMA20回踩入场；"
+                f"量比{_fmt(volume_ratio)}x；"
+                f"价格在1h EMA20{trend_str}。"
             )
         else:
             entry = max(ema20, current + buffer)
@@ -149,10 +154,12 @@ class HotlistWatcher:
             risk = stop - entry
             tp1 = entry - risk
             tp2 = entry - risk * Decimal("2")
-            trend = "below" if current <= hourly_ema else "above"
+            short_desc = "高位超买做空" if chg > 0 else "趋势延续做空"
             reason = (
-                f"24h loser; wait for a 15m EMA20/retest bounce instead of shorting the low; "
-                f"15m volume is {_fmt(volume_ratio)}x its 20-period average; price is {trend} 1h EMA20."
+                f"24h涨跌{chg_str}，{short_desc}；"
+                f"等15m EMA20反弹入场；"
+                f"量比{_fmt(volume_ratio)}x；"
+                f"价格在1h EMA20{trend_str}。"
             )
         return HotlistEntryPlan(
             symbol=candidate.symbol,
