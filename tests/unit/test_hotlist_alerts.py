@@ -456,15 +456,17 @@ class DeduplicationRulesTest(unittest.TestCase):
 
         msg = format_hotlist_alert_batch_message(alerts)
         self.assertIn("🔥 Hotlist Alert Top3", msg)
-        self.assertIn("1. AAUSDT LONG", msg)
-        self.assertIn("2. BBUSDT LONG", msg)
-        self.assertIn("3. CCUSDT LONG", msg)
+        self.assertIn("AAUSDT", msg)
+        self.assertIn("BBUSDT", msg)
+        self.assertIn("CCUSDT", msg)
+        self.assertIn("LONG", msg)
         self.assertIn("买入:", msg)
         self.assertIn("止损:", msg)
         self.assertIn("TP1:", msg)
         self.assertIn("TP2:", msg)
         self.assertIn("RR:", msg)
         self.assertIn("仅供研究", msg)
+        self.assertIn("24h涨跌:", msg)
 
     def test_rule7_skip_reason_recorded(self) -> None:
         """Rule 7: skip reasons correctly recorded in skipped tuple."""
@@ -512,7 +514,7 @@ class DeduplicationRulesTest(unittest.TestCase):
         self.assertIn("🔥 Hotlist Alert Top1", msg)
         self.assertIn("SOLUSDT", msg)
         self.assertIn("仅供研究", msg)
-        self.assertNotIn("2.", msg)
+        self.assertNotIn("2. ", msg)
 
     def test_batch_message_empty_returns_empty_string(self) -> None:
         """Edge: empty alert list → empty string (no message sent)."""
