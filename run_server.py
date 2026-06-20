@@ -46,14 +46,18 @@ def _ensure_stock_hunter() -> bool:
              str(_US_STOCK_HUNTER_DIR)],
             check=True, timeout=120,
         )
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r",
-             str(_US_STOCK_HUNTER_DIR / "requirements.txt"), "-q"],
-            check=True, timeout=120,
-        )
-        return main_py.exists()
     except Exception:
         return False
+    # pip install is best-effort: Nix managed-env may block it,
+    # but all required packages (yfinance, apscheduler, etc.) are
+    # already globally installed in this Replit environment.
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r",
+         str(_US_STOCK_HUNTER_DIR / "requirements.txt"), "-q",
+         "--break-system-packages"],
+        timeout=120,
+    )
+    return main_py.exists()
 
 
 def _start_stock_hunter() -> None:
