@@ -202,7 +202,7 @@ def default_tasks(
     if hotlist_performance is not None:
         tasks.append(RunnerTask("hotlist_performance", hotlist_performance, interval=quarter_hour))
     if leaderboard_update is not None:
-        tasks.append(RunnerTask("leaderboard_update", leaderboard_update, interval=timedelta(hours=1)))
+        tasks.append(RunnerTask("leaderboard_update", leaderboard_update, interval=quarter_hour))
     if leaderboard_gemini is not None:
         tasks.append(RunnerTask("leaderboard_gemini", leaderboard_gemini, interval=timedelta(hours=4)))
     return tuple(tasks)
