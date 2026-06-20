@@ -37,17 +37,32 @@ class DailyReportService:
         }
 
 
+_STRATEGY_LABELS: dict[str, str] = {
+    "baseline_v1": "综合基准",
+    "breakout_hunter_v1": "突破猎手",
+    "bear_short_space80_v1": "熊市空头",
+    "capital_60_80_space80_v1": "资金+空间",
+    "range_disabled_v1": "趋势优先",
+}
+
+
 def format_top3_message(report: dict[str, object]) -> str:
-    lines = [f"每日 Top3 报告 — {report['date']}"]
+    lines = [f"📊 主流程策略 Top3 — {report['date']}"]
     top3 = report.get("top3", [])
     if not top3:
         lines.append("暂无信号。")
     else:
         for index, item in enumerate(top3, start=1):
+            strategy_id = item.get("strategy_id", "baseline_v1")
+            strategy_label = _STRATEGY_LABELS.get(strategy_id, strategy_id)
+            direction_emoji = "📈" if item["direction"] == "LONG" else "📉"
             lines.append(
-                f"{index}. {item['symbol']} {item['direction']} | "
-                f"分数 {item['score']} | 买入 {item['entry']} | "
-                f"SL {item['sl']} | TP1 {item['tp1']} | TP2 {item['tp2']} | RR {item['rr']}"
+                f"{index}. {direction_emoji} {item['symbol']} {item['direction']}"
+                f"  [{strategy_label}]"
             )
-    lines.append("仅供研究，不下单。")
+            lines.append(
+                f"   分数 {item['score']} | 买入 {item['entry']}"
+                f" | SL {item['sl']} | TP1 {item['tp1']} | TP2 {item['tp2']} | RR {item['rr']}"
+            )
+    lines.append("\n仅供研究，不下单。")
     return "\n".join(lines)
