@@ -16,7 +16,8 @@ def _chunks(text: str) -> list[str]:
 def format_trade(decision: CommitteeDecision) -> list[str]:
     if decision.decision == "NO_TRADE":
         body = (
-            "🤖 Gemini 终极建议\n\n"
+            "🤖 Gemini 终极建议\n"
+            "策略来源：🤖 Gemini AI 委员会（Hotlist 动量候选池）\n\n"
             "结论：NO_TRADE\n"
             "最佳币：NONE\n"
             f"数据质量：{decision.data_quality}\n\n"
@@ -28,7 +29,8 @@ def format_trade(decision: CommitteeDecision) -> list[str]:
         return _chunks(body)
 
     body = (
-        "🏆 Gemini 终极建议\n\n"
+        "🏆 Gemini 终极建议\n"
+        "策略来源：🤖 Gemini AI 委员会（Hotlist 动量候选池）\n\n"
         f"结论：{decision.decision}\n"
         f"最佳币：{decision.best_symbol}\n"
         f"方向：{decision.direction}\n"
