@@ -179,6 +179,8 @@ def default_tasks(
     performance_settle: TaskCallback | None = None,
     performance_summary: TaskCallback | None = None,
     hotlist_performance: TaskCallback | None = None,
+    leaderboard_update: TaskCallback | None = None,
+    leaderboard_gemini: TaskCallback | None = None,
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
     tasks = [
@@ -196,9 +198,13 @@ def default_tasks(
     if performance_settle is not None:
         tasks.append(RunnerTask("performance_settle", performance_settle, interval=timedelta(hours=1)))
     if performance_summary is not None:
-        tasks.append(RunnerTask("performance_summary", performance_summary, daily_at=datetime_time(0, 10)))
+        tasks.append(RunnerTask("performance_summary", performance_summary, interval=timedelta(hours=6)))
     if hotlist_performance is not None:
         tasks.append(RunnerTask("hotlist_performance", hotlist_performance, interval=quarter_hour))
+    if leaderboard_update is not None:
+        tasks.append(RunnerTask("leaderboard_update", leaderboard_update, interval=quarter_hour))
+    if leaderboard_gemini is not None:
+        tasks.append(RunnerTask("leaderboard_gemini", leaderboard_gemini, interval=timedelta(hours=4)))
     return tuple(tasks)
 
 
