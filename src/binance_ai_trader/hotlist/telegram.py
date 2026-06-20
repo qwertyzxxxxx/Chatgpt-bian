@@ -39,7 +39,11 @@ def format_hotlist_alert_batch_message(
     top = list(alerts[:max_n])
     if not top:
         return ""
-    lines = [f"🔥 Hotlist Alert Top{len(top)}", ""]
+    lines = [
+        f"🔥 Hotlist Alert Top{len(top)}",
+        "策略来源：⚡ Hotlist 快速通道（动量扫描）",
+        "",
+    ]
     for i, alert in enumerate(top, 1):
         plan = alert.plan
         direction_emoji = "📈" if alert.direction == "LONG" else "📉"
