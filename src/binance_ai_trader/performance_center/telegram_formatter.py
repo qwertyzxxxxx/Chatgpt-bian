@@ -11,9 +11,14 @@ from .models import StrategyStats, Leaderboard
 log = logging.getLogger(__name__)
 
 _STRATEGY_LABELS = {
-    "hotlist": "热门榜单",
+    "baseline_v1": "综合基准",
+    "breakout_hunter_v1": "突破猎手",
+    "bear_short_space80_v1": "熊市空头",
+    "capital_60_80_space80_v1": "资金+空间",
+    "range_disabled_v1": "趋势优先",
+    "hotlist": "热门榜单（Hotlist）",
     "ai_macro": "AI宏观",
-    "gemini_committee": "Gemini委员会",
+    "gemini_committee": "Gemini AI委员会",
 }
 _MAX_CHARS = 4096
 
