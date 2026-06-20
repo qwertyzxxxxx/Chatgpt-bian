@@ -692,14 +692,16 @@ class MarketDataRepository:
         self, start: str, end: str, limit: int = 3
     ) -> list[dict[str, object]]:
         rows = self._connection.execute(
-            """SELECT symbol, direction, score, final_signal_score, combined_regime,
-                      sector, sector_rank, entry, stop_loss, tp1, tp2, rr_tp2, generated_at
-               FROM signals
-               WHERE run_id=(
+            """SELECT s.symbol, s.direction, s.score, s.final_signal_score, s.combined_regime,
+                      s.sector, s.sector_rank, s.entry, s.stop_loss, s.tp1, s.tp2, s.rr_tp2,
+                      s.generated_at, COALESCE(a.strategy_id, 'baseline_v1') AS strategy_id
+               FROM signals s
+               LEFT JOIN analysis_snapshots a ON a.snapshot_id = s.snapshot_id
+               WHERE s.run_id=(
                    SELECT run_id FROM signals WHERE generated_at BETWEEN ? AND ?
                    ORDER BY generated_at DESC, rank LIMIT 1
                )
-               ORDER BY rank LIMIT ?""",
+               ORDER BY s.rank LIMIT ?""",
             (start, end, limit),
         ).fetchall()
         return [
@@ -707,7 +709,7 @@ class MarketDataRepository:
              "final_signal_score": row[3], "combined_regime": row[4],
              "sector": row[5], "sector_rank": row[6], "entry": row[7],
              "sl": row[8], "tp1": row[9], "tp2": row[10], "rr": row[11],
-             "generated_at": row[12]}
+             "generated_at": row[12], "strategy_id": row[13]}
             for row in rows
         ]
 
