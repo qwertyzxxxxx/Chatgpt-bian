@@ -42,13 +42,19 @@ def format_hotlist_alert_batch_message(
     lines = [f"🔥 Hotlist Alert Top{len(top)}", ""]
     for i, alert in enumerate(top, 1):
         plan = alert.plan
+        direction_emoji = "📈" if alert.direction == "LONG" else "📉"
+        change_sign = "+" if plan.change_24h_pct > 0 else ""
         lines += [
-            f"{i}. {alert.symbol} {alert.direction}",
+            f"{i}. {direction_emoji} {alert.symbol}  {alert.direction}",
+            f"   24h涨跌: {change_sign}{plan.change_24h_pct:.2f}%",
+            f"   当前价: {plan.current_price}",
             f"   买入: {plan.suggested_limit_entry}",
-            f"   止损: {plan.stop_loss}",
-            f"   TP1: {plan.tp1}",
-            f"   TP2: {plan.tp2}",
-            f"   RR: {plan.rr}",
+            f"   止损: {plan.stop_loss}  ({((plan.suggested_limit_entry - plan.stop_loss) / plan.suggested_limit_entry * 100).__abs__():.2f}%)",
+            f"   TP1: {plan.tp1}  TP2: {plan.tp2}  RR: {plan.rr}",
+            f"   ATR14: {plan.atr14}  量比15m: {plan.volume_ratio_15m:.2f}x",
+            f"   EMA20: {plan.ema20_15m}  成交量: {int(plan.quote_volume / 1_000_000):.0f}M",
+            f"   到期: {plan.expires_at}",
+            f"   📋 {plan.reason}",
             "",
         ]
     lines.append("仅供研究")
