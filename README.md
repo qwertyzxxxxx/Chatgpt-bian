@@ -327,6 +327,42 @@ export TELEGRAM_BOT_TOKEN="your-bot-token"
 export TELEGRAM_CHAT_ID="your-chat-id"
 ```
 
+### Full-feature run-loop (recommended)
+
+To enable all subsystems — Hotlist Alerts, Gemini Committee, Performance Center, and Leaderboard Watch — start the loop with all flags:
+
+```bash
+export TELEGRAM_BOT_TOKEN="your-bot-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
+export GEMINI_API_KEY="your-gemini-api-key"
+
+PYTHONPATH=src python -m binance_ai_trader run-loop \
+  --database data/market_data.db \
+  --enable-hotlist-alerts \
+  --enable-gemini-committee \
+  --enable-performance-center \
+  --enable-leaderboard-watch
+```
+
+**Subsystem dependency order (important):**
+
+| Step | Subsystem | Flag | Feeds into |
+|------|-----------|------|-----------|
+| 1 | Hotlist scan | always runs | `hotlist_opportunities` table |
+| 2 | Hotlist Alerts | `--enable-hotlist-alerts` | Telegram batch message; `hotlist_alerts` table |
+| 3 | Gemini Committee | `--enable-gemini-committee` | reads `hotlist_opportunities` (needs Step 1 first) |
+| 4 | Performance Center | `--enable-performance-center` | settle + daily summary |
+| 5 | Leaderboard Watch | `--enable-leaderboard-watch` | top-trader signal tracking |
+
+> **Gemini Committee requires hotlist data.** If `hotlist_opportunities` is empty (first run or expired records), the committee logs `no_candidates` and skips. Run at least one hotlist scan cycle first, or wait for the built-in 15-minute scan interval to populate the table.
+
+**What each flag enables:**
+
+- `--enable-hotlist-alerts`: sends Telegram batch messages when high-momentum setups are detected; each alert includes 24h change %, current price, ATR, volume ratio, EMA, entry/SL/TP, and reason
+- `--enable-gemini-committee`: Gemini AI reviews top candidates from `hotlist_opportunities` and sends a single best-trade recommendation via Telegram; requires `GEMINI_API_KEY`
+- `--enable-performance-center`: runs hourly settle (marks open signals as WIN/LOSS) and daily summary at 00:10 UTC
+- `--enable-leaderboard-watch`: tracks top Binance Futures leaderboard traders and surfaces recurring setups
+
 Telegram receives failed runner task alerts and the successful daily Top3 report. The fault-isolated UTC scheduler runs scan/evaluate/paper simulation every 15 minutes, daily reporting at 00:05 UTC, the resumable `collect-history` job every 24 hours, and parameter-only auto research every six hours. Change only the history cadence with `--history-interval-hours`; `--history-days` controls the retained bootstrap window. Every attempt is audited in `runner_events`, and an OS file lock prevents two loops from using the same runner lock. Check current state with:
 
 ```bash
