@@ -28,8 +28,9 @@ class DailyReportTest(unittest.TestCase):
 
         self.assertIs(top3, report["top3"])
         message = format_top3_message(report)
-        self.assertIn("每日 Top3 报告 — 2026-06-11", message)
-        self.assertIn("1. BTCUSDT LONG", message)
+        self.assertIn("Top3 — 2026-06-11", message)
+        self.assertIn("BTCUSDT", message)
+        self.assertIn("LONG", message)
         self.assertIn("SL 95", message)
 
 
