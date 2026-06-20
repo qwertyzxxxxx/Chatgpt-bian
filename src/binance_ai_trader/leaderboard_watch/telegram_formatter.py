@@ -38,7 +38,8 @@ def format_status(status: PoolStatus) -> list[str]:
 def format_review(decision: WatchDecision) -> list[str]:
     if decision.decision == "NO_TRADE":
         body = (
-            "🤖 排行榜 Gemini 建议\n\n"
+            "🤖 排行榜 Gemini 建议\n"
+            "策略来源：🏆 排行榜观察池（Leaderboard Watch + Gemini AI）\n\n"
             "结论：NO_TRADE\n"
             "最佳币：NONE\n"
             f"数据质量：{decision.data_quality}\n\n"
@@ -50,7 +51,8 @@ def format_review(decision: WatchDecision) -> list[str]:
         return _chunks(body)
 
     body = (
-        "🏆 排行榜 Gemini 建议\n\n"
+        "🏆 排行榜 Gemini 建议\n"
+        "策略来源：🏆 排行榜观察池（Leaderboard Watch + Gemini AI）\n\n"
         f"结论：{decision.decision}\n"
         f"最佳币：{decision.best_symbol}\n"
         f"方向：{decision.direction}\n"
