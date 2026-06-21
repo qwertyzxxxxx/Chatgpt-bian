@@ -439,6 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--enable-gemini-committee", action="store_true")
     run_loop.add_argument("--enable-performance-center", action="store_true")
     run_loop.add_argument("--enable-leaderboard-watch", action="store_true")
+    run_loop.add_argument("--enable-strategy-health", action="store_true")
     run_loop.add_argument("--leaderboard-watch-database", type=Path, default=Path("data/leaderboard_watch.db"))
     run_loop.add_argument("--leaderboard-watch-hours", type=int, default=24)
     run_loop.add_argument("--leaderboard-watch-top-n", type=int, default=10)
@@ -1529,6 +1530,10 @@ def _run_loop(args: argparse.Namespace) -> int:
             (lambda: _run_leaderboard_watch_gemini_task(args))
             if getattr(args, "enable_leaderboard_watch", False) else None
         ),
+        strategy_health=(
+            (lambda: _run_strategy_health_task(args))
+            if getattr(args, "enable_strategy_health", False) else None
+        ),
         history_interval=timedelta(hours=args.history_interval_hours),
     )
     repository = MarketDataRepository(database)
@@ -2384,6 +2389,24 @@ def _run_leaderboard_watch_update_task(args: argparse.Namespace) -> int:
         svc.update(watch_hours=watch_hours, top_n=top_n)
     finally:
         svc.close()
+    return 0
+
+
+def _run_strategy_health_task(args: argparse.Namespace) -> int:
+    import os as _os
+    from binance_ai_trader.runner.strategy_health import send_strategy_health
+
+    bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not bot_token or not chat_id:
+        return 0
+    database = Path(getattr(args, "database", "data/market_data.db"))
+    from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
+    repo = MarketDataRepository(database)
+    try:
+        send_strategy_health(repo, bot_token, chat_id)
+    finally:
+        repo.close()
     return 0
 
 
