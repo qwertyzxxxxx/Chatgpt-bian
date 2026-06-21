@@ -447,6 +447,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--history-days", type=int, default=180)
     run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
     run_loop.add_argument("--history-request-pause", type=float, default=0.05)
+    run_loop.add_argument("--health-port", type=int, default=None,
+                          help="HTTP port for the Replit deployment healthcheck server "
+                               "(default: $PORT env var, then 8080)")
     _add_telegram_arguments(run_loop)
     run_loop.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
@@ -500,6 +503,17 @@ def build_parser() -> argparse.ArgumentParser:
     _gc_review_p.add_argument("--send-telegram", action="store_true", default=False)
     _add_telegram_arguments(_gc_review_p)
     _gc_review_p.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
+
+    _gc_diagnostic_p = gemini_committee_cmds.add_parser(
+        "diagnostic", help="Gemini委员会诊断报告 — 解释为何持续NO_TRADE"
+    )
+    _gc_diagnostic_p.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    _gc_diagnostic_p.add_argument("--limit", type=int, default=20, help="最近N次审查（默认20）")
+    _gc_diagnostic_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_gc_diagnostic_p)
+    _gc_diagnostic_p.add_argument(
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
 
@@ -637,6 +651,15 @@ def build_parser() -> argparse.ArgumentParser:
     _lw_summary_p.add_argument("--send-telegram", action="store_true", default=False)
     _add_telegram_arguments(_lw_summary_p)
     _lw_summary_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
+    _lw_diagnostic_p = lw_commands.add_parser("diagnostic", help="排行榜Gemini诊断报告 — 解释为何持续NO_TRADE")
+    _lw_diagnostic_p.add_argument("--database", type=Path, default=Path("data/leaderboard_watch.db"))
+    _lw_diagnostic_p.add_argument("--limit", type=int, default=20, help="最近N次审查（默认20）")
+    _lw_diagnostic_p.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_lw_diagnostic_p)
+    _lw_diagnostic_p.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
 
     return parser
 
@@ -1459,6 +1482,9 @@ def _space(database: Path) -> int:
 
 
 def _run_loop(args: argparse.Namespace) -> int:
+    from binance_ai_trader.runner.http_health_server import start_health_server
+    start_health_server(getattr(args, "health_port", None))
+
     database = args.database
     lock_path = args.lock_file or Path(f"{database}.runner.lock")
 
@@ -2174,6 +2200,9 @@ def _gemini_committee(args: argparse.Namespace) -> int:
     import json
     import os
 
+    if args.gc_command == "diagnostic":
+        return _gemini_committee_diagnostic(args)
+
     from binance_ai_trader.gemini_committee.committee import GeminiCommittee
 
     bot_token = getattr(args, "telegram_bot_token", None) or os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -2200,6 +2229,147 @@ def _gemini_committee(args: argparse.Namespace) -> int:
         gc.close()
 
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+    return 0
+
+
+def _gemini_committee_diagnostic(args: argparse.Namespace) -> int:
+    import json as _json
+    import os as _os
+
+    from binance_ai_trader.gemini_committee.repository import CommitteeRepository
+
+    db_path = str(getattr(args, "database", "data/market_data.db"))
+    limit = getattr(args, "limit", 20)
+
+    repo = CommitteeRepository(db_path)
+    try:
+        reviews = repo.recent_reviews(limit)
+        if not reviews:
+            print("暂无诊断数据。Gemini委员会尚未运行。")
+            return 0
+        review_ids = [r["review_id"] for r in reviews]
+        candidates = repo.candidates_for_reviews(review_ids)
+    finally:
+        repo.close()
+
+    n = len(reviews)
+    trade_count = sum(1 for r in reviews if r["decision"] == "TRADE")
+    no_trade_count = n - trade_count
+
+    dq_good = sum(1 for r in reviews if r.get("data_quality", "").upper() in ("GOOD", "FULL"))
+    dq_partial = sum(1 for r in reviews if r.get("data_quality", "").upper() == "PARTIAL")
+    dq_poor = n - dq_good - dq_partial
+
+    reason_cats: dict[str, int] = {
+        "缺失数据/UNKNOWN字段": 0, "风险回报太低": 0, "止损过宽": 0, "信号不足": 0, "其他": 0
+    }
+    raw_reasons_counter: dict[str, int] = {}
+
+    for r in reviews:
+        if r["decision"] != "NO_TRADE":
+            continue
+        reasons: list[str] = []
+        try:
+            reasons = _json.loads(r.get("reasons") or "[]")
+        except Exception:
+            pass
+        if not reasons:
+            try:
+                resp = _json.loads(r.get("raw_response") or "{}")
+                raw = resp.get("reasons", resp.get("no_trade_reason", []))
+                reasons = [raw] if isinstance(raw, str) else list(raw)
+            except Exception:
+                pass
+        if not reasons:
+            reasons = ["暂无合适机会"]
+        for reason in reasons:
+            raw_reasons_counter[reason] = raw_reasons_counter.get(reason, 0) + 1
+            rl = reason.lower()
+            if any(k in rl for k in ("unknown", "missing", "缺失", "不完整", "partial", "incomplete")):
+                reason_cats["缺失数据/UNKNOWN字段"] += 1
+            elif any(k in rl for k in ("rr", "reward", "risk", "回报", "太低", "收益")):
+                reason_cats["风险回报太低"] += 1
+            elif any(k in rl for k in ("stop", "wide", "止损", "过宽")):
+                reason_cats["止损过宽"] += 1
+            elif any(k in rl for k in ("confluence", "signal", "信号", "不足")):
+                reason_cats["信号不足"] += 1
+            else:
+                reason_cats["其他"] += 1
+
+    latest_review = reviews[0]
+    latest_cands = [c for c in candidates if c.get("review_id") == latest_review["review_id"]]
+    trade_fields = ("entry", "stop_loss", "tp1", "tp2", "rr")
+    unknown_counts = {f: 0 for f in trade_fields}
+    for c in candidates:
+        for f in trade_fields:
+            v = str(c.get(f, "")).strip().upper()
+            if v in ("UNKNOWN", "0", "", "N/A", "NONE", "0.00000000", "0E-8"):
+                unknown_counts[f] += 1
+    total_cands = max(len(candidates), 1)
+    top_reasons = sorted(raw_reasons_counter.items(), key=lambda x: -x[1])[:5]
+
+    pct = lambda x: f"{x / n * 100:.1f}%" if n > 0 else "N/A"
+    lines = [
+        "🔍 Gemini委员会 诊断报告",
+        f"最近 {n} 次 AI 审查\n",
+        "━━ 决策统计 ━━",
+        f"✅ TRADE:    {trade_count} 次 ({pct(trade_count)})",
+        f"❌ NO_TRADE: {no_trade_count} 次 ({pct(no_trade_count)})\n",
+        "━━ 数据质量分布 ━━",
+        f"🟢 GOOD:    {dq_good} 次 ({pct(dq_good)})",
+        f"🟡 PARTIAL: {dq_partial} 次 ({pct(dq_partial)})",
+        f"🔴 POOR:    {dq_poor} 次 ({pct(dq_poor)})\n",
+    ]
+
+    if no_trade_count > 0:
+        lines.append("━━ NO_TRADE 原因分类 ━━")
+        for cat, cnt in reason_cats.items():
+            if cnt > 0:
+                lines.append(f"  {cat}: {cnt} 次")
+        lines.append("")
+
+    if latest_cands:
+        lines += [
+            "━━ 最近一次候选摘要 ━━",
+            f"候选数: {len(latest_cands)} 个",
+            f"币种: {', '.join(c['symbol'] for c in latest_cands)}\n",
+        ]
+
+    if candidates:
+        lines.append("━━ UNKNOWN字段统计（全部历史候选）━━")
+        for f, cnt in unknown_counts.items():
+            lines.append(f"  {f}: {cnt}/{total_cands} ({cnt / total_cands * 100:.1f}%)")
+        lines.append("")
+
+    if top_reasons:
+        lines.append("━━ 最常拒绝原因 Top 5 ━━")
+        for i, (reason, cnt) in enumerate(top_reasons, 1):
+            lines.append(f"  {i}. {reason}（{cnt}次）")
+        lines.append("")
+
+    if dq_partial / max(n, 1) > 0.5:
+        lines.append("🔍 结论: 候选池数据质量 PARTIAL 占多数 → 是 NO_TRADE 的主要原因")
+        lines.append("   → 检查 hotlist_opportunities 是否有完整计划（entry/sl/tp1/tp2）")
+    elif no_trade_count / max(n, 1) > 0.8:
+        lines.append("🔍 结论: NO_TRADE 比例极高 → Gemini 条件过严或候选质量不足")
+    else:
+        lines.append("🔍 结论: 系统运行正常，有部分 TRADE 信号产生")
+    lines.append("\n仅供研究 | 不进行实盘交易")
+
+    output = "\n".join(lines)
+    print(output)
+
+    if getattr(args, "send_telegram", False):
+        bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+        if bot_token and chat_id:
+            import urllib.request as _req
+            payload = _json.dumps({"chat_id": chat_id, "text": output}).encode()
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            try:
+                _req.urlopen(_req.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST"), timeout=10)
+            except Exception:
+                pass
     return 0
 
 
@@ -2299,6 +2469,9 @@ def _leaderboard_watch(args: argparse.Namespace) -> int:
 
     db_path = str(args.database)
 
+    if args.lw_command == "diagnostic":
+        return _leaderboard_watch_diagnostic(args)
+
     if args.lw_command == "update":
         svc = LeaderboardWatchService(
             db_path=db_path,
@@ -2373,6 +2546,139 @@ def _leaderboard_watch(args: argparse.Namespace) -> int:
         return 0
 
     return 1
+
+
+def _leaderboard_watch_diagnostic(args: argparse.Namespace) -> int:
+    import json as _json
+    import os as _os
+
+    from binance_ai_trader.leaderboard_watch.repository import LeaderboardWatchRepository
+
+    db_path = str(getattr(args, "database", "data/leaderboard_watch.db"))
+    limit = getattr(args, "limit", 20)
+
+    repo = LeaderboardWatchRepository(db_path)
+    try:
+        reviews = repo.recent_reviews(limit)
+        if not reviews:
+            print("暂无诊断数据。排行榜Gemini审查尚未运行。")
+            return 0
+        review_ids = [r["review_id"] for r in reviews]
+        candidates = repo.candidates_for_reviews(review_ids)
+    finally:
+        repo.close()
+
+    n = len(reviews)
+    trade_count = sum(1 for r in reviews if r["decision"] == "TRADE")
+    no_trade_count = n - trade_count
+
+    dq_good = sum(1 for r in reviews if r.get("data_quality", "").upper() in ("GOOD", "FULL"))
+    dq_partial = sum(1 for r in reviews if r.get("data_quality", "").upper() == "PARTIAL")
+    dq_poor = n - dq_good - dq_partial
+
+    reason_cats: dict[str, int] = {
+        "缺失数据/数据不足": 0, "风险回报太低": 0, "止损过宽": 0, "信号不足": 0, "其他": 0
+    }
+    raw_reasons_counter: dict[str, int] = {}
+
+    for r in reviews:
+        if r["decision"] != "NO_TRADE":
+            continue
+        reasons: list[str] = []
+        try:
+            reasons = _json.loads(r.get("reasons") or "[]")
+        except Exception:
+            pass
+        if not reasons:
+            reasons = ["暂无合适机会"]
+        for reason in reasons:
+            raw_reasons_counter[reason] = raw_reasons_counter.get(reason, 0) + 1
+            rl = reason.lower()
+            if any(k in rl for k in ("unknown", "missing", "缺失", "不完整", "partial", "insufficient")):
+                reason_cats["缺失数据/数据不足"] += 1
+            elif any(k in rl for k in ("rr", "reward", "risk", "回报", "太低", "收益")):
+                reason_cats["风险回报太低"] += 1
+            elif any(k in rl for k in ("stop", "wide", "止损", "过宽")):
+                reason_cats["止损过宽"] += 1
+            elif any(k in rl for k in ("confluence", "signal", "信号", "不足")):
+                reason_cats["信号不足"] += 1
+            else:
+                reason_cats["其他"] += 1
+
+    latest_review = reviews[0]
+    latest_cands = [c for c in candidates if c.get("review_id") == latest_review["review_id"]]
+
+    cand_dq_good = sum(1 for c in candidates if c.get("data_quality", "").upper() in ("GOOD", "FULL"))
+    cand_dq_partial = len(candidates) - cand_dq_good
+    total_cands = max(len(candidates), 1)
+    top_reasons = sorted(raw_reasons_counter.items(), key=lambda x: -x[1])[:5]
+
+    pct = lambda x: f"{x / n * 100:.1f}%" if n > 0 else "N/A"
+    lines = [
+        "🔍 排行榜Gemini 诊断报告",
+        f"最近 {n} 次 AI 审查\n",
+        "━━ 决策统计 ━━",
+        f"✅ TRADE:    {trade_count} 次 ({pct(trade_count)})",
+        f"❌ NO_TRADE: {no_trade_count} 次 ({pct(no_trade_count)})\n",
+        "━━ 审查数据质量分布 ━━",
+        f"🟢 GOOD:    {dq_good} 次 ({pct(dq_good)})",
+        f"🟡 PARTIAL: {dq_partial} 次 ({pct(dq_partial)})",
+        f"🔴 POOR:    {dq_poor} 次 ({pct(dq_poor)})\n",
+    ]
+
+    if no_trade_count > 0:
+        lines.append("━━ NO_TRADE 原因分类 ━━")
+        for cat, cnt in reason_cats.items():
+            if cnt > 0:
+                lines.append(f"  {cat}: {cnt} 次")
+        lines.append("")
+
+    if latest_cands:
+        lines += [
+            "━━ 最近一次候选摘要 ━━",
+            f"候选数: {len(latest_cands)} 个",
+            f"币种: {', '.join(c['symbol'] for c in latest_cands)}",
+        ]
+        if latest_cands:
+            avg_change = sum(float(c.get("change_24h", 0)) for c in latest_cands) / len(latest_cands)
+            lines.append(f"平均24h涨跌: {avg_change:+.2f}%\n")
+
+    if candidates:
+        lines += [
+            "━━ 候选池数据质量（全部历史）━━",
+            f"🟢 GOOD:    {cand_dq_good}/{total_cands} ({cand_dq_good / total_cands * 100:.1f}%)",
+            f"🟡 PARTIAL: {cand_dq_partial}/{total_cands} ({cand_dq_partial / total_cands * 100:.1f}%)\n",
+        ]
+
+    if top_reasons:
+        lines.append("━━ 最常拒绝原因 Top 5 ━━")
+        for i, (reason, cnt) in enumerate(top_reasons, 1):
+            lines.append(f"  {i}. {reason}（{cnt}次）")
+        lines.append("")
+
+    if dq_partial / max(n, 1) > 0.5:
+        lines.append("🔍 结论: 审查数据质量 PARTIAL 占多数 → 候选池活跃时间不足或24h涨跌未达门槛")
+    elif no_trade_count / max(n, 1) > 0.8:
+        lines.append("🔍 结论: NO_TRADE 比例极高 → 建议降低最小涨跌门槛（--min-gemini-move-pct）")
+    else:
+        lines.append("🔍 结论: 系统运行正常，有部分 TRADE 信号产生")
+    lines.append("\n仅供研究 | 不进行实盘交易")
+
+    output = "\n".join(lines)
+    print(output)
+
+    if getattr(args, "send_telegram", False):
+        bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+        if bot_token and chat_id:
+            import urllib.request as _req
+            payload = _json.dumps({"chat_id": chat_id, "text": output}).encode()
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            try:
+                _req.urlopen(_req.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST"), timeout=10)
+            except Exception:
+                pass
+    return 0
 
 
 def _run_leaderboard_watch_update_task(args: argparse.Namespace) -> int:

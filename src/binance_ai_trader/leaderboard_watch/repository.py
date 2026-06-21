@@ -263,6 +263,23 @@ class LeaderboardWatchRepository:
         )
         self._con.commit()
 
+    def recent_reviews(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self._con.execute(
+            "SELECT * FROM leaderboard_watch_reviews ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def candidates_for_reviews(self, review_ids: list[str]) -> list[dict[str, Any]]:
+        if not review_ids:
+            return []
+        placeholders = ",".join("?" * len(review_ids))
+        rows = self._con.execute(
+            f"SELECT * FROM leaderboard_watch_candidates WHERE review_id IN ({placeholders}) ORDER BY review_id, rank_position",
+            review_ids,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def last_review_at(self) -> datetime | None:
         row = self._con.execute(
             "SELECT created_at FROM leaderboard_watch_reviews ORDER BY created_at DESC LIMIT 1"

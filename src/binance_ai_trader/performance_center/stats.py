@@ -11,6 +11,16 @@ from .models import (
 
 ALL_STRATEGIES = (STRATEGY_HOTLIST, STRATEGY_AI_MACRO, STRATEGY_GEMINI)
 
+_CORE_STRATEGIES = frozenset(ALL_STRATEGIES)
+
+_KNOWN_SIGNAL_STRATEGIES = (
+    "baseline_v1",
+    "breakout_hunter_v1",
+    "bear_short_space80_v1",
+    "capital_60_80_space80_v1",
+    "range_disabled_v1",
+)
+
 
 def _consecutive(results: List[str]) -> tuple:
     max_wins = max_losses = cur_wins = cur_losses = 0
@@ -58,9 +68,16 @@ def compute_all_stats(results: List[StrategyResult]) -> List[StrategyStats]:
 
 
 def build_leaderboard(results: List[StrategyResult]) -> Leaderboard:
-    stats = compute_all_stats(results)
+    core_stats = compute_all_stats(results)
+
+    seen_signal = {r.strategy for r in results if r.strategy not in _CORE_STRATEGIES}
+    signal_ids = [s for s in _KNOWN_SIGNAL_STRATEGIES if s in seen_signal]
+    signal_ids += sorted(seen_signal - set(_KNOWN_SIGNAL_STRATEGIES))
+    signal_stats = [compute_stats(results, s) for s in signal_ids]
+
+    all_stats = core_stats + signal_stats
     sorted_stats = sorted(
-        [s for s in stats if s.total > 0],
+        [s for s in all_stats if s.total > 0],
         key=lambda s: (s.win_rate, s.avg_rr),
         reverse=True,
     )

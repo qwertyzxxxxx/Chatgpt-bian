@@ -38,6 +38,7 @@ class RunnerTask:
     callback: TaskCallback
     interval: timedelta | None = None
     daily_at: datetime_time | None = None
+    startup_immediate: bool = False
 
     def __post_init__(self) -> None:
         if (self.interval is None) == (self.daily_at is None):
@@ -102,6 +103,7 @@ class ProductionRunner:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._sleeper = sleeper
         self._observer = observer
+        self._started_at: datetime = self._clock()
 
     def tick(self, now: datetime | None = None, force: bool = False) -> tuple[str, ...]:
         current = _utc(now or self._clock())
@@ -122,6 +124,10 @@ class ProductionRunner:
 
     def _is_due(self, task: RunnerTask, now: datetime) -> bool:
         last_started = self._repository.load_latest_runner_event_time(task.event_type)
+        if task.startup_immediate and (
+            last_started is None or _parse(last_started) < self._started_at
+        ):
+            return True
         if task.interval is not None:
             return last_started is None or now - _parse(last_started) >= task.interval
         assert task.daily_at is not None
@@ -185,7 +191,7 @@ def default_tasks(
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
     tasks = [
-        RunnerTask("scan", scan, interval=quarter_hour),
+        RunnerTask("scan", scan, interval=quarter_hour, startup_immediate=True),
         RunnerTask("evaluate", evaluate, interval=quarter_hour),
         RunnerTask("paper_simulate", paper_simulate, interval=quarter_hour),
         RunnerTask("daily_report", daily_report, daily_at=datetime_time(0, 5)),
@@ -193,17 +199,17 @@ def default_tasks(
         RunnerTask("auto_research", auto_research, interval=timedelta(hours=6)),
     ]
     if hotlist_alert is not None:
-        tasks.append(RunnerTask("hotlist_alert", hotlist_alert, interval=quarter_hour))
+        tasks.append(RunnerTask("hotlist_alert", hotlist_alert, interval=quarter_hour, startup_immediate=True))
     if gemini_committee is not None:
-        tasks.append(RunnerTask("gemini_committee", gemini_committee, interval=timedelta(hours=4)))
+        tasks.append(RunnerTask("gemini_committee", gemini_committee, interval=timedelta(hours=4), startup_immediate=True))
     if performance_settle is not None:
         tasks.append(RunnerTask("performance_settle", performance_settle, interval=timedelta(hours=1)))
     if performance_summary is not None:
         tasks.append(RunnerTask("performance_summary", performance_summary, interval=timedelta(hours=6)))
     if hotlist_performance is not None:
-        tasks.append(RunnerTask("hotlist_performance", hotlist_performance, interval=quarter_hour))
+        tasks.append(RunnerTask("hotlist_performance", hotlist_performance, interval=quarter_hour, startup_immediate=True))
     if leaderboard_update is not None:
-        tasks.append(RunnerTask("leaderboard_update", leaderboard_update, interval=quarter_hour))
+        tasks.append(RunnerTask("leaderboard_update", leaderboard_update, interval=quarter_hour, startup_immediate=True))
     if leaderboard_gemini is not None:
         tasks.append(RunnerTask("leaderboard_gemini", leaderboard_gemini, interval=timedelta(hours=4)))
     if strategy_health is not None:

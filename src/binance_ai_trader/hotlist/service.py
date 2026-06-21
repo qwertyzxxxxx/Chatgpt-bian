@@ -134,7 +134,9 @@ class HotlistWatcher:
         buffer = atr14 * Decimal("0.25")
         chg = candidate.change_24h_pct
         chg_str = f"+{chg:.2f}%" if chg > 0 else f"{chg:.2f}%"
-        trend_str = "上方" if current >= hourly_ema else "下方"
+        above_ema = current >= hourly_ema
+        trend_str = "上方" if above_ema else "下方"
+        sentiment = _sentiment(candidate.direction, chg, volume_ratio, above_ema)
         if candidate.direction == "LONG":
             entry = min(ema20, current - buffer)
             stop = min(swing_low, entry - atr14)
@@ -181,7 +183,27 @@ class HotlistWatcher:
                 timespec="seconds"
             ),
             reason=reason,
+            sentiment=sentiment,
         )
+
+
+def _sentiment(direction: str, chg: Decimal, volume_ratio: Decimal, above_ema: bool) -> str:
+    if volume_ratio < Decimal("0.5"):
+        return "🧊 低波整理"
+    if direction == "LONG":
+        if chg < Decimal("-10"):
+            return "🔄 超跌反弹"
+        if volume_ratio >= Decimal("1.5") and chg > 0:
+            return "🚀 加速突破"
+        if chg > 0 and above_ema:
+            return "🔥 主升浪延续"
+        if chg > 0 and not above_ema:
+            return "⚡ 二波回踩"
+        return "🔄 超跌反弹"
+    else:
+        if chg >= Decimal("10"):
+            return "💀 高位派发"
+        return "📉 趋势崩塌"
 
 
 def _ema(values: tuple[Decimal, ...], period: int) -> Decimal:
