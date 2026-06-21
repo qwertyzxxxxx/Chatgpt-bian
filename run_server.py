@@ -1,15 +1,20 @@
-"""Wrapper that launches the Binance AI Trader run-loop plus the us-stock-hunter
-scheduler.
+"""Wrapper that starts the HTTP healthcheck server FIRST, then launches
+the Binance AI Trader run-loop and the us-stock-hunter scheduler.
 
-The run-loop's CLI (cli.py) now owns the HTTP healthcheck server on port 8080
-via binance_ai_trader.runner.http_health_server, so this wrapper no longer
-starts its own server.
+The healthcheck must be listening before any blocking work (git clone, pip)
+so that Replit's deployment probe does not time out.
+
+The run-loop CLI (cli.py) also calls start_health_server(); the module-level
+lock in http_health_server.py makes that second call a safe no-op.
 """
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from binance_ai_trader.runner.http_health_server import start_health_server
+start_health_server()
 
 _US_STOCK_HUNTER_DIR = Path("/home/runner/us-stock-hunter")
 _US_STOCK_HUNTER_REPO = "https://github.com/qwertyzxxxxx/us-stock-hunter.git"
