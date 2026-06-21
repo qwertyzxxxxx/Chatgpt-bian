@@ -103,6 +103,23 @@ class MarketDataRepository:
             "completed_at": row[2], "error_message": row[3],
         }
 
+    def load_runner_task_summary(self, event_type: str) -> dict[str, object] | None:
+        """Return status, started_at, completed_at, error_message for the most recent event of a task."""
+        row = self._connection.execute(
+            """SELECT status, started_at, completed_at, error_message
+               FROM runner_events WHERE event_type=?
+               ORDER BY started_at DESC, event_id DESC LIMIT 1""",
+            (event_type,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "status": row[0],
+            "started_at": row[1],
+            "completed_at": row[2],
+            "error_message": row[3],
+        }
+
     def load_last_scan_time(self) -> str | None:
         row = self._connection.execute(
             "SELECT started_at FROM collection_runs ORDER BY started_at DESC, id DESC LIMIT 1"
