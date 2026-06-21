@@ -447,6 +447,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--history-days", type=int, default=180)
     run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
     run_loop.add_argument("--history-request-pause", type=float, default=0.05)
+    run_loop.add_argument("--health-port", type=int, default=None,
+                          help="HTTP port for the Replit deployment healthcheck server "
+                               "(default: $PORT env var, then 8080)")
     _add_telegram_arguments(run_loop)
     run_loop.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
@@ -1479,6 +1482,9 @@ def _space(database: Path) -> int:
 
 
 def _run_loop(args: argparse.Namespace) -> int:
+    from binance_ai_trader.runner.http_health_server import start_health_server
+    start_health_server(getattr(args, "health_port", None))
+
     database = args.database
     lock_path = args.lock_file or Path(f"{database}.runner.lock")
 
