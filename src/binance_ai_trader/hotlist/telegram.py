@@ -48,8 +48,9 @@ def format_hotlist_alert_batch_message(
         plan = alert.plan
         direction_emoji = "📈" if alert.direction == "LONG" else "📉"
         change_sign = "+" if plan.change_24h_pct > 0 else ""
+        sentiment_str = f"  {plan.sentiment}" if plan.sentiment else ""
         lines += [
-            f"{i}. {direction_emoji} {alert.symbol}  {alert.direction}",
+            f"{i}. {direction_emoji} {alert.symbol}  {alert.direction}{sentiment_str}",
             f"   24h涨跌: {change_sign}{plan.change_24h_pct:.2f}%",
             f"   当前价: {plan.current_price}",
             f"   买入: {plan.suggested_limit_entry}",
