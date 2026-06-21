@@ -80,4 +80,5 @@ if __name__ == "__main__":
         "--enable-gemini-committee",
         "--enable-performance-center",
         "--enable-leaderboard-watch",
+        "--enable-strategy-health",
     ] + sys.argv[1:]))
