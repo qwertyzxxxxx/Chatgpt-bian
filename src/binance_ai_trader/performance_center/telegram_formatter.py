@@ -71,9 +71,10 @@ def format_summary(stats: List[StrategyStats], leaderboard: Leaderboard) -> str:
 def format_leaderboard(leaderboard: Leaderboard) -> str:
     lines = ["🏆 策略排行榜\n"]
     for i, s in enumerate(leaderboard.entries, 1):
+        pnl_sign = "+" if s.avg_pnl_pct >= 0 else ""
         lines += [
             f"{i}. {_label(s.strategy)}",
-            f"   胜率 {s.win_rate}%  |  交易数 {s.total}  |  平均RR {s.avg_rr}",
+            f"   胜率 {s.win_rate}%  |  交易数 {s.total}  |  平均RR {s.avg_rr}  |  平均盈亏 {pnl_sign}{s.avg_pnl_pct:.2f}%",
             "",
         ]
     if not leaderboard.entries:
