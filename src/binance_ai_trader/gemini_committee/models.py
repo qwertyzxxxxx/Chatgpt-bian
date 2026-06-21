@@ -107,7 +107,7 @@ class CommitteeDecision:
             rr="UNKNOWN",
             risk_level="HIGH",
             should_trade=False,
-            reasons=["No suitable opportunity identified"],
+            reasons=["暂无合适机会"],
             reject_reasons=[],
             data_quality="PARTIAL",
             raw_response=raw_response,
