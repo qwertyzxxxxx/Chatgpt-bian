@@ -187,7 +187,8 @@ def load_hotlist_alert_candidates(db_path: str, lookback_hours: int = _HOTLIST_L
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
         rows = con.execute(
             """
-            SELECT symbol, direction, entry, created_at
+            SELECT symbol, direction, entry, created_at,
+                   stop_loss, tp1, tp2, rr, expires_at
             FROM hotlist_alerts
             WHERE created_at >= ?
             ORDER BY created_at DESC
@@ -202,16 +203,21 @@ def load_hotlist_alert_candidates(db_path: str, lookback_hours: int = _HOTLIST_L
             if sym in seen:
                 continue
             seen.add(sym)
+            sl = row["stop_loss"]
+            t1 = row["tp1"]
+            t2 = row["tp2"]
+            rv = row["rr"]
+            has_full = sl and sl != "UNKNOWN" and t1 and t2 and rv
             candidates.append(Candidate(
                 symbol=sym,
                 source="hotlist_alert",
                 direction=row["direction"],
                 entry=row["entry"],
-                stop_loss="UNKNOWN",
-                tp1="UNKNOWN",
-                tp2="UNKNOWN",
-                rr="UNKNOWN",
-                data_quality="PARTIAL",
+                stop_loss=sl if has_full else "UNKNOWN",
+                tp1=t1 if has_full else "UNKNOWN",
+                tp2=t2 if has_full else "UNKNOWN",
+                rr=rv if has_full else "UNKNOWN",
+                data_quality="GOOD" if has_full else "PARTIAL",
             ))
     except Exception as exc:
         logger.warning("load_hotlist_alert_candidates failed: %s", exc)
