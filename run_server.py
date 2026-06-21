@@ -4,11 +4,13 @@ the Binance AI Trader run-loop and the us-stock-hunter scheduler.
 The healthcheck must be listening before any blocking work (git clone, pip)
 so that Replit's deployment probe does not time out.
 
-The run-loop CLI (cli.py) also calls start_health_server(); the module-level
-lock in http_health_server.py makes that second call a safe no-op.
+On deployment restarts the old process may still hold the run-loop lock for a
+few seconds. We retry up to 10 times (2-second sleep between attempts) so the
+new process waits for the old one to release the lock instead of failing.
 """
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -18,6 +20,10 @@ start_health_server()
 
 _US_STOCK_HUNTER_DIR = Path("/home/runner/us-stock-hunter")
 _US_STOCK_HUNTER_REPO = "https://github.com/qwertyzxxxxx/us-stock-hunter.git"
+
+_LOCKED_EXIT_CODE = 3
+_LOCK_RETRY_WAIT = 2
+_LOCK_MAX_RETRIES = 10
 
 
 def _ensure_stock_hunter() -> bool:
@@ -54,7 +60,7 @@ def _start_stock_hunter() -> None:
 if __name__ == "__main__":
     _start_stock_hunter()
     from binance_ai_trader.entrypoints.cli import main
-    sys.exit(main([
+    _args = [
         "run-loop",
         "--enable-hotlist-alerts",
         "--enable-hotlist-performance",
@@ -62,4 +68,12 @@ if __name__ == "__main__":
         "--enable-performance-center",
         "--enable-leaderboard-watch",
         "--enable-strategy-health",
-    ] + sys.argv[1:]))
+    ] + sys.argv[1:]
+    for _attempt in range(_LOCK_MAX_RETRIES):
+        _rc = main(_args)
+        if _rc != _LOCKED_EXIT_CODE:
+            sys.exit(_rc)
+        print(f"run-loop lock held by previous process, retrying in {_LOCK_RETRY_WAIT}s "
+              f"(attempt {_attempt + 1}/{_LOCK_MAX_RETRIES})", flush=True)
+        time.sleep(_LOCK_RETRY_WAIT)
+    sys.exit(_LOCKED_EXIT_CODE)

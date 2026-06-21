@@ -16,6 +16,8 @@ from .telegram_formatter import format_skipped, format_trade
 
 logger = logging.getLogger(__name__)
 
+_SILENT_SKIP_REASONS: frozenset[str] = frozenset({"cooldown_active", "existing_open_recommendation"})
+
 
 def _send_telegram(messages: list[str], bot_token: str, chat_id: str, timeout: float = 10.0) -> dict[str, Any]:
     import json
@@ -96,7 +98,7 @@ class GeminiCommittee:
         skip = self._check_skips()
         if skip:
             result = skip.to_dict()
-            if send_telegram and telegram_bot_token and telegram_chat_id:
+            if send_telegram and telegram_bot_token and telegram_chat_id and skip.reason not in _SILENT_SKIP_REASONS:
                 msgs = format_skipped(skip)
                 result.update(_send_telegram(msgs, telegram_bot_token, telegram_chat_id, telegram_timeout))
             return result
@@ -111,7 +113,7 @@ class GeminiCommittee:
         skip = self._check_candidates(candidates)
         if skip:
             result = skip.to_dict()
-            if send_telegram and telegram_bot_token and telegram_chat_id:
+            if send_telegram and telegram_bot_token and telegram_chat_id and skip.reason not in _SILENT_SKIP_REASONS:
                 msgs = format_skipped(skip)
                 result.update(_send_telegram(msgs, telegram_bot_token, telegram_chat_id, telegram_timeout))
             return result
