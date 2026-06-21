@@ -3,15 +3,13 @@ the Binance AI Trader run-loop and the us-stock-hunter scheduler.
 
 Startup sequence
 ----------------
-1. Clear stale lock file (fcntl lock is released by OS when old process dies,
-   but the file itself lingers and confuses the next run).
-2. Start the healthcheck server with retry (old process may still hold port
-   8080 for a brief window; retry up to ~10 s).
+1. Clear stale lock file so a restarting process can always acquire it.
+2. Start the healthcheck server immediately (http_health_server handles port
+   conflicts with a warning and does not crash).
 3. Clone/start us-stock-hunter.
-4. Launch the run-loop.  If it exits LOCKED (race condition), retry a few more
-   times before giving up.
+4. Launch the run-loop.  If it exits LOCKED (race), delete the lock file and
+   retry up to 5 more times before giving up.
 """
-import socket
 import subprocess
 import sys
 import time
@@ -20,52 +18,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 _LOCK_FILE = Path("data/market_data.db.runner.lock")
-_HEALTH_PORT = 8080
 _LOCKED_EXIT_CODE = 3
 
 
 def _clear_stale_lock() -> None:
-    """Remove the on-disk lock file left by a previous process.
-
-    fcntl.flock releases automatically when the process exits, but the file
-    remains.  Deleting it lets SingleInstanceLock create a fresh one.
-    """
     try:
         _LOCK_FILE.unlink(missing_ok=True)
     except Exception:
         pass
 
 
-def _start_health_server_with_retry(port: int = _HEALTH_PORT, max_wait: int = 12) -> None:
-    """Start the health server, retrying if the port is still held by the
-    previous deployment process (up to *max_wait* seconds)."""
-    from binance_ai_trader.runner.http_health_server import _started_lock, _started
-
-    deadline = time.monotonic() + max_wait
-    while True:
-        # Check if port is free before attempting to start.
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                s.bind(("0.0.0.0", port))
-                port_free = True
-            except OSError:
-                port_free = False
-
-        if port_free:
-            from binance_ai_trader.runner.http_health_server import start_health_server
-            start_health_server(port)
-            return
-
-        if time.monotonic() >= deadline:
-            # Last resort: start anyway; http_health_server logs the warning.
-            from binance_ai_trader.runner.http_health_server import start_health_server
-            start_health_server(port)
-            return
-
-        print(f"Health port {port} busy, waiting for old process to exit…", flush=True)
-        time.sleep(1)
-
+# ── Start health server immediately ──────────────────────────────────────────
+_clear_stale_lock()
+from binance_ai_trader.runner.http_health_server import start_health_server
+start_health_server()
+# ─────────────────────────────────────────────────────────────────────────────
 
 _US_STOCK_HUNTER_DIR = Path("/home/runner/us-stock-hunter")
 _US_STOCK_HUNTER_REPO = "https://github.com/qwertyzxxxxx/us-stock-hunter.git"
@@ -103,8 +70,6 @@ def _start_stock_hunter() -> None:
 
 
 if __name__ == "__main__":
-    _clear_stale_lock()
-    _start_health_server_with_retry()
     _start_stock_hunter()
 
     from binance_ai_trader.entrypoints.cli import main
@@ -122,7 +87,7 @@ if __name__ == "__main__":
         _rc = main(_args)
         if _rc != _LOCKED_EXIT_CODE:
             sys.exit(_rc)
-        print(f"run-loop still locked, retry {_attempt + 1}/6 in 3s…", flush=True)
+        print(f"run-loop locked, clearing and retrying {_attempt + 1}/6…", flush=True)
         _clear_stale_lock()
         time.sleep(3)
 
