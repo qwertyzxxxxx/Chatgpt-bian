@@ -29,6 +29,8 @@ from .telegram_formatter import (
 
 logger = logging.getLogger(__name__)
 
+_SILENT_SKIP_REASONS: frozenset[str] = frozenset({"cooldown_active", "existing_open_recommendation"})
+
 
 def _send_telegram(
     messages: list[str],
@@ -184,7 +186,7 @@ class LeaderboardWatchService:
         if self._repo.has_open_review():
             skip = SkipResult("existing_open_recommendation")
             result = {**skip.to_dict(), "candidate_count": candidate_count}
-            if send_telegram and telegram_bot_token and telegram_chat_id:
+            if send_telegram and telegram_bot_token and telegram_chat_id and skip.reason not in _SILENT_SKIP_REASONS:
                 result.update(_send_telegram(
                     format_skipped(skip), telegram_bot_token, telegram_chat_id, telegram_timeout
                 ))
@@ -196,7 +198,7 @@ class LeaderboardWatchService:
             if elapsed < cooldown_hours:
                 skip = SkipResult("cooldown_active")
                 result = {**skip.to_dict(), "candidate_count": candidate_count}
-                if send_telegram and telegram_bot_token and telegram_chat_id:
+                if send_telegram and telegram_bot_token and telegram_chat_id and skip.reason not in _SILENT_SKIP_REASONS:
                     result.update(_send_telegram(
                         format_skipped(skip), telegram_bot_token, telegram_chat_id, telegram_timeout
                     ))
