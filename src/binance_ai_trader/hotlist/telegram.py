@@ -55,7 +55,7 @@ def format_hotlist_alert_batch_message(
             f"   买入: {plan.suggested_limit_entry}",
             f"   止损: {plan.stop_loss}  ({((plan.suggested_limit_entry - plan.stop_loss) / plan.suggested_limit_entry * 100).__abs__():.2f}%)",
             f"   TP1: {plan.tp1}  TP2: {plan.tp2}  RR: {plan.rr}",
-            f"   ATR14: {plan.atr14}  量比15m: {plan.volume_ratio_15m:.2f}x",
+            f"   ATR14: {plan.atr14}  量比15m: {plan.volume_ratio_15m:.2f}x{'  ⚠️ 低量' if plan.volume_ratio_15m < 0.5 else ''}",
             f"   EMA20: {plan.ema20_15m}  成交量: {int(plan.quote_volume / 1_000_000):.0f}M",
             f"   到期: {plan.expires_at}",
             f"   📋 {plan.reason}",
