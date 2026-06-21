@@ -342,7 +342,8 @@ PYTHONPATH=src python -m binance_ai_trader run-loop \
   --enable-hotlist-performance \
   --enable-gemini-committee \
   --enable-performance-center \
-  --enable-leaderboard-watch
+  --enable-leaderboard-watch \
+  --enable-strategy-health
 ```
 
 **Subsystem dependency order (important):**
