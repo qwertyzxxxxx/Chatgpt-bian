@@ -31,6 +31,7 @@ class HotlistEntryPlan:
     rr: Decimal
     expires_at: str
     reason: str
+    sentiment: str = ""
 
 
 @dataclass(frozen=True, slots=True)
