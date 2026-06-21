@@ -31,10 +31,22 @@ class HotlistWatchlistRepository:
                 symbol TEXT NOT NULL,
                 direction TEXT NOT NULL,
                 entry TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                stop_loss TEXT,
+                tp1 TEXT,
+                tp2 TEXT,
+                rr TEXT,
+                expires_at TEXT
             )
             """
         )
+        for _col in ("stop_loss", "tp1", "tp2", "rr", "expires_at"):
+            try:
+                self._connection.execute(
+                    f"ALTER TABLE hotlist_alerts ADD COLUMN {_col} TEXT"
+                )
+            except Exception:
+                pass
         self._connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_hotlist_alerts_dedup
@@ -135,14 +147,22 @@ class HotlistWatchlistRepository:
         with self._connection:
             self._connection.execute(
                 """
-                INSERT INTO hotlist_alerts(symbol, direction, entry, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO hotlist_alerts(
+                    symbol, direction, entry, created_at,
+                    stop_loss, tp1, tp2, rr, expires_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     alert.symbol,
                     alert.direction,
                     str(alert.entry),
                     alert.created_at,
+                    str(alert.plan.stop_loss),
+                    str(alert.plan.tp1),
+                    str(alert.plan.tp2),
+                    str(alert.plan.rr),
+                    alert.plan.expires_at,
                 ),
             )
 
