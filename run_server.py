@@ -1,37 +1,17 @@
-"""Wrapper that starts a health-check HTTP server before launching the run-loop.
+"""Wrapper that launches the Binance AI Trader run-loop plus the us-stock-hunter
+scheduler.
 
-Replit VM deployments send a startup probe (GET /) to verify the process is
-ready before marking it live. The run-loop is a background worker with no HTTP
-port, so without this wrapper the probe times out and the deployment fails the
-promote step.
+The run-loop's CLI (cli.py) now owns the HTTP healthcheck server on port 8080
+via binance_ai_trader.runner.http_health_server, so this wrapper no longer
+starts its own server.
 """
 import subprocess
 import sys
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 _US_STOCK_HUNTER_DIR = Path("/home/runner/us-stock-hunter")
-
-
-class _HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"ok")
-
-    def log_message(self, *_args):
-        pass
-
-
-def _start_health_server(port: int = 8080) -> None:
-    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-
-
 _US_STOCK_HUNTER_REPO = "https://github.com/qwertyzxxxxx/us-stock-hunter.git"
 
 
@@ -48,9 +28,6 @@ def _ensure_stock_hunter() -> bool:
         )
     except Exception:
         return False
-    # pip install is best-effort: Nix managed-env may block it,
-    # but all required packages (yfinance, apscheduler, etc.) are
-    # already globally installed in this Replit environment.
     subprocess.run(
         [sys.executable, "-m", "pip", "install", "-r",
          str(_US_STOCK_HUNTER_DIR / "requirements.txt"), "-q",
@@ -70,7 +47,6 @@ def _start_stock_hunter() -> None:
 
 
 if __name__ == "__main__":
-    _start_health_server()
     _start_stock_hunter()
     from binance_ai_trader.entrypoints.cli import main
     sys.exit(main([
