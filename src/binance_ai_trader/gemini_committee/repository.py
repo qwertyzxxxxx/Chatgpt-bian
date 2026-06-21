@@ -56,7 +56,13 @@ class CommitteeRepository:
             stmt = stmt.strip()
             if stmt:
                 self._con.execute(stmt)
-        self._con.commit()
+        try:
+            self._con.execute(
+                "ALTER TABLE gemini_committee_reviews ADD COLUMN reasons TEXT NOT NULL DEFAULT '[]'"
+            )
+            self._con.commit()
+        except Exception:
+            pass
 
     def close(self) -> None:
         self._con.close()
@@ -68,13 +74,14 @@ class CommitteeRepository:
         prompt_hash: str,
         model: str,
     ) -> None:
+        import json as _json
         self._con.execute(
             """
             INSERT OR REPLACE INTO gemini_committee_reviews
               (review_id, created_at, provider, decision, best_symbol, direction,
                entry, stop_loss, tp1, tp2, rr, rating, risk_level, should_trade,
-               data_quality, raw_prompt_hash, raw_response, status)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               data_quality, raw_prompt_hash, raw_response, status, reasons)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 review_id,
@@ -95,6 +102,7 @@ class CommitteeRepository:
                 prompt_hash,
                 decision.raw_response[:4000],
                 "OPEN",
+                _json.dumps(getattr(decision, "reasons", []), ensure_ascii=False),
             ),
         )
         self._con.commit()
@@ -146,5 +154,22 @@ class CommitteeRepository:
     def all_reviews(self) -> list[dict[str, Any]]:
         rows = self._con.execute(
             "SELECT * FROM gemini_committee_reviews ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def recent_reviews(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self._con.execute(
+            "SELECT * FROM gemini_committee_reviews ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def candidates_for_reviews(self, review_ids: list[str]) -> list[dict[str, Any]]:
+        if not review_ids:
+            return []
+        placeholders = ",".join("?" * len(review_ids))
+        rows = self._con.execute(
+            f"SELECT * FROM gemini_committee_candidates WHERE review_id IN ({placeholders}) ORDER BY review_id, rank_order",
+            review_ids,
         ).fetchall()
         return [dict(r) for r in rows]
