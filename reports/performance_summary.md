@@ -1,14 +1,14 @@
 # Strategy Performance Summary
 
-_Generated: 2026-06-21 20:28 UTC_
+_Generated: 2026-06-21 20:34 UTC_
 
 ### Hotlist
-- Trades: 200
-- Open: 40
-- TP1: 99 | TP2: 26 | SL: 35 | Timeout: 0
-- Win Rate: 78.1%
-- Avg RR: 0.72
-- Avg PnL%: 7.836%
+- Trades: 210
+- Open: 48
+- TP1: 101 | TP2: 26 | SL: 35 | Timeout: 0
+- Win Rate: 78.4%
+- Avg RR: 0.73
+- Avg PnL%: 7.8119%
 - Max Consec Wins: 30 | Max Consec Losses: 4
 
 ### AI Macro
