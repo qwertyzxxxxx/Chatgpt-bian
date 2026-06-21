@@ -73,7 +73,8 @@ def _make_db_with_alerts_only(db_path: str) -> None:
         CREATE TABLE IF NOT EXISTS hotlist_alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symbol TEXT NOT NULL, direction TEXT NOT NULL,
-            entry TEXT NOT NULL, created_at TEXT NOT NULL
+            entry TEXT NOT NULL, created_at TEXT NOT NULL,
+            stop_loss TEXT, tp1 TEXT, tp2 TEXT, rr TEXT, expires_at TEXT
         );
     """)
     from datetime import UTC, datetime, timedelta
@@ -202,14 +203,17 @@ class LoadHotlistAlertCandidatesTest(unittest.TestCase):
         con = sqlite3.connect(db_path)
         con.execute("""CREATE TABLE hotlist_alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT, direction TEXT, entry TEXT, created_at TEXT)""")
+            symbol TEXT, direction TEXT, entry TEXT, created_at TEXT,
+            stop_loss TEXT, tp1 TEXT, tp2 TEXT, rr TEXT, expires_at TEXT)""")
         from datetime import UTC, datetime, timedelta
         t1 = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         t2 = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
-        con.execute("INSERT INTO hotlist_alerts VALUES (?,?,?,?,?)",
-                    (None, "LABUSDT", "LONG", "0.05", t1))
-        con.execute("INSERT INTO hotlist_alerts VALUES (?,?,?,?,?)",
-                    (None, "LABUSDT", "LONG", "0.052", t2))
+        con.execute(
+            "INSERT INTO hotlist_alerts (symbol, direction, entry, created_at) VALUES (?,?,?,?)",
+            ("LABUSDT", "LONG", "0.05", t1))
+        con.execute(
+            "INSERT INTO hotlist_alerts (symbol, direction, entry, created_at) VALUES (?,?,?,?)",
+            ("LABUSDT", "LONG", "0.052", t2))
         con.commit()
         con.close()
         result = load_hotlist_alert_candidates(db_path)
