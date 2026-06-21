@@ -1,16 +1,16 @@
 # Hotlist Daily Summary
 
-- **Generated at:** 2026-06-21T10:48:35+00:00
-- **Symbols watched:** 61
-- **Alerts generated:** 2
-- **Expired symbols:** 49
+- **Generated at:** 2026-06-21T18:33:32+00:00
+- **Symbols watched:** 63
+- **Alerts generated:** 3
+- **Expired symbols:** 51
 
 ## Top Opportunities
 
 | Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Expiry |
 | --- | :--- | ---: | ---: | ---: | ---: | ---: | --- |
-| `BTRUSDT` | LONG | 0.02346214 | 0.02271071 | 0.02421357 | 0.024965 | 2.00 | 2026-06-21T11:48:35+00:00 |
-| `BTWUSDT` | SHORT | 0.10430125 | 0.10950625 | 0.09909625 | 0.09389125 | 2.00 | 2026-06-21T11:48:35+00:00 |
-| `ALICEUSDT` | LONG | 0.15129286 | 0.14646429 | 0.15612143 | 0.16095 | 2.00 | 2026-06-21T11:48:35+00:00 |
+| `TNSRUSDT` | LONG | 0.04362821 | 0.04150107 | 0.04575536 | 0.0478825 | 2.00 | 2026-06-21T19:33:32+00:00 |
+| `UAIUSDT` | LONG | 0.32523318 | 0.3102 | 0.34026636 | 0.35529953 | 2.00 | 2026-06-21T19:33:32+00:00 |
+| `HEIUSDT` | SHORT | 0.09410661 | 0.09541304 | 0.09280018 | 0.09149375 | 2.00 | 2026-06-21T19:33:32+00:00 |
 
 > Research only. No live trading action is performed by this report.
