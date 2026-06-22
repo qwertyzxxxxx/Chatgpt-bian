@@ -84,9 +84,25 @@ class MarketDataRepository:
         if cursor.rowcount != 1:
             raise ValueError(f"unknown runner event: {event_id}")
 
+    def cleanup_orphaned_runner_events(self) -> int:
+        """Mark all RUNNING runner_events as FAILED (called once on startup after lock acquired).
+
+        Returns the number of records updated.
+        """
+        with self._connection:
+            cursor = self._connection.execute(
+                """UPDATE runner_events
+                   SET status = 'FAILED',
+                       completed_at = started_at,
+                       error_message = 'Orphaned: process restarted'
+                   WHERE status = 'RUNNING'"""
+            )
+        return cursor.rowcount
+
     def load_latest_runner_event_time(self, event_type: str) -> str | None:
         row = self._connection.execute(
-            """SELECT started_at FROM runner_events WHERE event_type=?
+            """SELECT started_at FROM runner_events
+               WHERE event_type=? AND status != 'RUNNING'
                ORDER BY started_at DESC, event_id DESC LIMIT 1""",
             (event_type,),
         ).fetchone()

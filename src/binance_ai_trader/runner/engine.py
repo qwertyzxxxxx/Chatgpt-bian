@@ -116,6 +116,9 @@ class ProductionRunner:
 
     def run_forever(self, once: bool = False) -> None:
         with self._lock:
+            cleaned = self._repository.cleanup_orphaned_runner_events()
+            if cleaned:
+                LOGGER.info("Cleaned up %d orphaned RUNNING runner_events on startup", cleaned)
             while True:
                 self.tick(force=once)
                 if once:
