@@ -8,7 +8,8 @@ from typing import List
 from .models import (
     StrategyResult,
     STRATEGY_HOTLIST, STRATEGY_AI_MACRO, STRATEGY_GEMINI,
-    RESULT_OPEN, RESULT_TP1, RESULT_TP2, RESULT_SL, RESULT_TIMEOUT,
+    RESULT_OPEN, RESULT_TP1, RESULT_TP2, RESULT_SL, RESULT_TIMEOUT, RESULT_EXPIRED,
+    normalize_result,
 )
 
 log = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ _SIGNAL_RESULT_MAP: dict[str, str] = {
     "TP1_HIT": RESULT_TP1,
     "WIN_TP2": RESULT_TP2,
     "LOSS": RESULT_SL,
-    "EXPIRED": RESULT_TIMEOUT,
+    "EXPIRED": RESULT_EXPIRED,
 }
 
 
@@ -63,7 +64,8 @@ def load_ai_macro(db_path: str = "data/ai_macro.db") -> List[StrategyResult]:
     results = []
     for r in rows:
         source_id = str(r["trade_id"])
-        existing_result = _safe_str(r["status"]) if r["status"] else RESULT_OPEN
+        raw_status = _safe_str(r["status"]) if r["status"] else RESULT_OPEN
+        existing_result = normalize_result(raw_status)
         pnl = None
         if r["pnl_pct"] is not None:
             try:
@@ -96,7 +98,8 @@ def load_gemini_committee(db_path: str = "data/market_data.db") -> List[Strategy
     results = []
     for r in rows:
         source_id = str(r["review_id"])
-        existing_result = _safe_str(r["status"]) if r["status"] else RESULT_OPEN
+        raw_status = _safe_str(r["status"]) if r["status"] else RESULT_OPEN
+        existing_result = normalize_result(raw_status)
         results.append(StrategyResult(
             result_id=str(uuid.uuid5(uuid.NAMESPACE_DNS, source_id)),
             strategy=STRATEGY_GEMINI,
@@ -152,7 +155,8 @@ def load_paper_trades(db_path: str = "data/market_data.db") -> List[StrategyResu
     results = []
     for r in rows:
         source_id = f"paper_{r['signal_run_id']}_{r['symbol']}"
-        mapped = _SIGNAL_RESULT_MAP.get(_safe_str(r["eval_result"]), RESULT_OPEN)
+        raw_eval = _safe_str(r["eval_result"])
+        mapped = _SIGNAL_RESULT_MAP.get(raw_eval, normalize_result(raw_eval))
 
         rr: float | None = None
         pnl_pct: float | None = None
