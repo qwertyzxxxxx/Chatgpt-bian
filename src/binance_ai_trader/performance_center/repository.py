@@ -100,6 +100,23 @@ class PerformanceRepository:
             ).fetchone()
         return r is not None
 
+    def get_since(self, since_iso: str, strategy: str | None = None) -> List[StrategyResult]:
+        if strategy:
+            return self._fetch(
+                "SELECT * FROM strategy_results WHERE opened_at >= ? AND strategy = ? ORDER BY opened_at",
+                (since_iso, strategy),
+            )
+        return self._fetch(
+            "SELECT * FROM strategy_results WHERE opened_at >= ? ORDER BY opened_at",
+            (since_iso,),
+        )
+
+    def get_closed_since(self, since_iso: str) -> List[StrategyResult]:
+        return self._fetch(
+            "SELECT * FROM strategy_results WHERE closed_at >= ? AND result != 'OPEN' ORDER BY closed_at",
+            (since_iso,),
+        )
+
     def update_settled(self, sr: StrategyResult) -> None:
         sql = """
         UPDATE strategy_results
