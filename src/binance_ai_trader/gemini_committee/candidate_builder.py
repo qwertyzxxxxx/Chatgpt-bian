@@ -120,7 +120,7 @@ def load_hotlist_candidates(db_path: str, lookback_hours: int = _HOTLIST_LOOKBAC
     try:
         con = sqlite3.connect(db_path)
         con.row_factory = sqlite3.Row
-        cutoff = datetime.now(timezone.utc).isoformat()
+        cutoff = datetime.now(timezone.utc).isoformat(timespec="seconds")
         rows = con.execute(
             """
             SELECT o.symbol, o.direction, o.entry, o.sl AS stop_loss,
@@ -131,7 +131,7 @@ def load_hotlist_candidates(db_path: str, lookback_hours: int = _HOTLIST_LOOKBAC
             WHERE o.expiry >= ?
             ORDER BY o.created_at DESC
             """,
-            (cutoff[:10],),
+            (cutoff,),
         ).fetchall()
         con.close()
 

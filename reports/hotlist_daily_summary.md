@@ -1,16 +1,16 @@
 # Hotlist Daily Summary
 
-- **Generated at:** 2026-06-22T07:06:02+00:00
-- **Symbols watched:** 69
-- **Alerts generated:** 2
-- **Expired symbols:** 55
+- **Generated at:** 2026-06-22T11:11:08+00:00
+- **Symbols watched:** 70
+- **Alerts generated:** 0
+- **Expired symbols:** 58
 
 ## Top Opportunities
 
 | Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Expiry |
 | --- | :--- | ---: | ---: | ---: | ---: | ---: | --- |
-| `BULLAUSDT` | LONG | 0.00574893 | 0.005496 | 0.00600187 | 0.0062548 | 2.00 | 2026-06-22T08:06:02+00:00 |
-| `BELUSDT` | LONG | 0.17157518 | 0.16527589 | 0.17787446 | 0.18417375 | 2.00 | 2026-06-22T08:06:02+00:00 |
-| `ZESTUSDT` | LONG | 0.30595836 | 0.29695 | 0.31496672 | 0.32397508 | 2.00 | 2026-06-22T08:06:02+00:00 |
+| `IDUSDT` | LONG | 0.03625536 | 0.03511679 | 0.03739393 | 0.0385325 | 2.00 | 2026-06-22T12:11:08+00:00 |
+| `REUSDT` | SHORT | 0.81835632 | 0.8466 | 0.79011263 | 0.76186895 | 2.00 | 2026-06-22T12:11:08+00:00 |
+| `BICOUSDT` | SHORT | 0.04062661 | 0.04256 | 0.03869322 | 0.03675983 | 2.00 | 2026-06-22T12:11:08+00:00 |
 
 > Research only. No live trading action is performed by this report.
