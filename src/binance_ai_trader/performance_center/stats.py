@@ -67,6 +67,15 @@ def compute_all_stats(results: List[StrategyResult]) -> List[StrategyStats]:
     return [compute_stats(results, s) for s in ALL_STRATEGIES]
 
 
+def compute_all_stats_windowed(
+    results: List[StrategyResult],
+    all_strategies: List[str],
+    since_iso: str,
+) -> List[StrategyStats]:
+    windowed = [r for r in results if (r.opened_at or "") >= since_iso]
+    return [compute_stats(windowed, s) for s in all_strategies]
+
+
 def build_leaderboard(results: List[StrategyResult]) -> Leaderboard:
     core_stats = compute_all_stats(results)
 
