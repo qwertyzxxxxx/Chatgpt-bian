@@ -1,16 +1,16 @@
 # Hotlist Daily Summary
 
-- **Generated at:** 2026-06-22T03:39:05+00:00
-- **Symbols watched:** 67
-- **Alerts generated:** 0
-- **Expired symbols:** 52
+- **Generated at:** 2026-06-22T06:48:50+00:00
+- **Symbols watched:** 69
+- **Alerts generated:** 3
+- **Expired symbols:** 57
 
 ## Top Opportunities
 
 | Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Expiry |
 | --- | :--- | ---: | ---: | ---: | ---: | ---: | --- |
-| `BICOUSDT` | SHORT | 0.04416487 | 0.04582 | 0.04250974 | 0.04085461 | 2.00 | 2026-06-22T04:39:05+00:00 |
-| `NAORISUSDT` | LONG | 0.03963223 | 0.03816 | 0.04110446 | 0.04257669 | 2.00 | 2026-06-22T04:39:05+00:00 |
-| `ALICEUSDT` | SHORT | 0.1379646 | 0.1439 | 0.13202919 | 0.12609379 | 2.00 | 2026-06-22T04:39:05+00:00 |
+| `BULLAUSDT` | LONG | 0.00573971 | 0.005496 | 0.00598342 | 0.00622714 | 2.00 | 2026-06-22T07:48:50+00:00 |
+| `ACEUSDT` | SHORT | 0.08190262 | 0.08348 | 0.08032523 | 0.07874785 | 2.00 | 2026-06-22T07:48:50+00:00 |
+| `ZEREBROUSDT` | SHORT | 0.04020702 | 0.041658 | 0.03875605 | 0.03730507 | 2.00 | 2026-06-22T07:48:50+00:00 |
 
 > Research only. No live trading action is performed by this report.
