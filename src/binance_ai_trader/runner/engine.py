@@ -191,6 +191,8 @@ def default_tasks(
     leaderboard_update: TaskCallback | None = None,
     leaderboard_gemini: TaskCallback | None = None,
     strategy_health: TaskCallback | None = None,
+    ops_daily: TaskCallback | None = None,
+    hourly_settlement: TaskCallback | None = None,
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
     tasks = [
@@ -217,6 +219,10 @@ def default_tasks(
         tasks.append(RunnerTask("leaderboard_gemini", leaderboard_gemini, interval=timedelta(hours=4)))
     if strategy_health is not None:
         tasks.append(RunnerTask("strategy_health", strategy_health, interval=timedelta(hours=4)))
+    if ops_daily is not None:
+        tasks.append(RunnerTask("ops_daily", ops_daily, interval=timedelta(hours=6)))
+    if hourly_settlement is not None:
+        tasks.append(RunnerTask("hourly_settlement", hourly_settlement, interval=timedelta(hours=1)))
     return tuple(tasks)
 
 
