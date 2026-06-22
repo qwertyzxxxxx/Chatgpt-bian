@@ -1,16 +1,16 @@
 # Hotlist Daily Summary
 
-- **Generated at:** 2026-06-22T11:17:54+00:00
+- **Generated at:** 2026-06-22T12:54:39+00:00
 - **Symbols watched:** 71
-- **Alerts generated:** 1
-- **Expired symbols:** 57
+- **Alerts generated:** 0
+- **Expired symbols:** 59
 
 ## Top Opportunities
 
 | Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Expiry |
 | --- | :--- | ---: | ---: | ---: | ---: | ---: | --- |
-| `IDUSDT` | LONG | 0.03736774 | 0.03622774 | 0.03850774 | 0.03964774 | 2.00 | 2026-06-22T12:17:54+00:00 |
-| `REUSDT` | SHORT | 0.81582175 | 0.8466 | 0.78504349 | 0.75426524 | 2.00 | 2026-06-22T12:17:54+00:00 |
-| `CLOUSDT` | LONG | 0.23360577 | 0.22726005 | 0.23995148 | 0.2462972 | 2.00 | 2026-06-22T12:17:54+00:00 |
+| `CLOUSDT` | LONG | 0.23518838 | 0.2289 | 0.24147676 | 0.24776515 | 2.00 | 2026-06-22T13:54:39+00:00 |
+| `IDUSDT` | LONG | 0.03675964 | 0.03564 | 0.03787929 | 0.03899893 | 2.00 | 2026-06-22T13:54:39+00:00 |
+| `REUSDT` | SHORT | 0.80585821 | 0.8375 | 0.77421642 | 0.74257462 | 2.00 | 2026-06-22T13:54:39+00:00 |
 
 > Research only. No live trading action is performed by this report.
