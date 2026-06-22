@@ -134,7 +134,7 @@ class GeminiCommittee:
 
         telegram_status: dict[str, Any] = {}
         if send_telegram and telegram_bot_token and telegram_chat_id:
-            msgs = format_trade(decision)
+            msgs = format_trade(decision, candidates_analyzed=len(candidates))
             telegram_status = _send_telegram(msgs, telegram_bot_token, telegram_chat_id, telegram_timeout)
 
         return {
