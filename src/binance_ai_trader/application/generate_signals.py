@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from binance_ai_trader.data_quality import quality_context_status
 from binance_ai_trader.domain.models import SignalResult
@@ -16,6 +17,9 @@ from binance_ai_trader.signals import (
     SignalEngine,
 )
 
+if TYPE_CHECKING:
+    from binance_ai_trader.config import StrategyConfig
+
 
 class SignalGenerator:
     def __init__(
@@ -26,10 +30,17 @@ class SignalGenerator:
         sector_map: SectorMap | None = None,
         sector_gate: SectorSignalGate | None = None,
         short_engine: ShortSignalEngine | None = None,
+        strategy_config: "StrategyConfig | None" = None,
     ) -> None:
         self._repository = repository
-        self._engine = engine or SignalEngine()
-        self._short_engine = short_engine or ShortSignalEngine(self._engine.policy)
+        self._strategy_config = strategy_config
+        if strategy_config is not None:
+            policy = strategy_config.to_signal_policy()
+            self._engine = engine or SignalEngine(policy)
+            self._short_engine = short_engine or ShortSignalEngine(policy)
+        else:
+            self._engine = engine or SignalEngine()
+            self._short_engine = short_engine or ShortSignalEngine(self._engine.policy)
         self._regime_gate = regime_gate or RegimeSignalGate()
         self._sector_map = sector_map or SectorMap({})
         self._sector_gate = sector_gate or SectorSignalGate()
@@ -54,6 +65,17 @@ class SignalGenerator:
 
         run_id = ranked_scores[0].run_id
         combined_regime = self._repository.load_combined_regime(snapshot.snapshot_id)
+
+        if (self._strategy_config is not None
+                and combined_regime not in self._strategy_config.enabled_regimes):
+            generated_at = _utc_now()
+            self._repository.save_signals(run_id, (), generated_at, snapshot.snapshot_id)
+            self._repository.finalize_snapshot(snapshot.snapshot_id, generated_at)
+            return SignalResult(
+                run_id=run_id, signals=(), processed_symbols=0,
+                snapshot_id=snapshot.snapshot_id,
+            )
+
         sector_ranks = self._repository.load_sector_ranks(run_id)
         capital_scores = self._repository.load_capital_scores_with_quality(run_id)
         space_scores = self._repository.load_space_scores_with_quality(run_id)
@@ -69,6 +91,9 @@ class SignalGenerator:
             for direction in self._regime_gate.allowed_directions(
                 combined_regime, ranked.score.score, weakness_score
             ):
+                if (self._strategy_config is not None
+                        and direction not in self._strategy_config.enabled_directions):
+                    continue
                 signal_score = ranked.score.score if direction == "LONG" else weakness_score
                 if direction == "LONG" and not self._sector_gate.allows_long(
                     sector, sector_rank, signal_score, snapshots_available
@@ -78,6 +103,14 @@ class SignalGenerator:
                 space_item = space_scores.get((ranked.score.symbol, direction))
                 capital_score = 50.0 if capital_item is None else capital_item[0]
                 space_score = 50.0 if space_item is None else space_item[0]
+
+                if self._strategy_config is not None:
+                    cfg = self._strategy_config
+                    if (capital_score < cfg.capital_score_min
+                            or capital_score > cfg.capital_score_max
+                            or space_score < cfg.space_score_min):
+                        continue
+
                 quality = {
                     "scan": run_quality,
                     "score": ranked.score.data_quality_status,
@@ -110,9 +143,14 @@ class SignalGenerator:
         signals = []
         processed_symbols: set[str] = set()
         direction_counts = {"LONG": 0, "SHORT": 0}
+        output_limit = (self._strategy_config.output_limit
+                        if self._strategy_config is not None else None)
         for (ranked, direction, signal_score, sector, sector_rank, capital_score,
              space_score, final_score, quality) in opportunities:
-            if direction_counts[direction] >= 3:
+            if output_limit is not None:
+                if len(signals) >= output_limit:
+                    break
+            elif direction_counts[direction] >= 3:
                 continue
             processed_symbols.add(ranked.score.symbol)
             engine = self._engine if direction == "LONG" else self._short_engine
@@ -158,8 +196,10 @@ class SignalGenerator:
                     )
                 )
                 direction_counts[direction] += 1
-            if all(count >= 3 for direction, count in direction_counts.items()
-                   if any(item[1] == direction for item in opportunities)):
+            if output_limit is None and all(
+                count >= 3 for direction, count in direction_counts.items()
+                if any(item[1] == direction for item in opportunities)
+            ):
                 break
 
         result = SignalResult(
@@ -176,7 +216,6 @@ class SignalGenerator:
         return result
 
 
-
 def _component_score(breakdown: dict[str, object], name: str, fallback: float) -> float:
     value = breakdown.get(name)
     if isinstance(value, dict) and "score" in value:
@@ -184,7 +223,6 @@ def _component_score(breakdown: dict[str, object], name: str, fallback: float) -
     if isinstance(value, (int, float)):
         return float(value)
     return fallback
-
 
 
 def _utc_now() -> str:
