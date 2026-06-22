@@ -37,14 +37,14 @@ class TestTelegramFormatter(unittest.TestCase):
 
     def test_summary_contains_all_strategies(self):
         msg = format_summary(self.stats, self.lb)
-        self.assertIn("热门榜单", msg)
-        self.assertIn("AI宏观", msg)
-        self.assertIn("Gemini AI委员会", msg)
+        self.assertIn("Hotlist", msg)
+        self.assertIn("AI Macro", msg)
+        self.assertIn("Gemini Committee", msg)
 
     def test_summary_contains_top_winner(self):
         msg = format_summary(self.stats, self.lb)
         self.assertIn("🏆", msg)
-        self.assertIn("Gemini AI委员会", msg)
+        self.assertIn("Gemini Committee", msg)
         self.assertIn("68.0%", msg)
 
     def test_summary_contains_win_rate(self):
