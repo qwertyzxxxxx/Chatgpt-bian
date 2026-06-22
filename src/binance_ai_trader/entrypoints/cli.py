@@ -20,7 +20,7 @@ from binance_ai_trader.application.evaluate_signals import SignalEvaluator
 from binance_ai_trader.application.generate_signals import SignalGenerator
 from binance_ai_trader.application.score_market_data import MarketScorer
 from binance_ai_trader.backtest import BacktestEngine, BacktestPolicy
-from binance_ai_trader.config import SectorConfig, UniverseConfig
+from binance_ai_trader.config import SectorConfig, StrategyConfig, UniverseConfig, load_all_strategy_configs
 from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
 from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
 from binance_ai_trader.hotlist import (
@@ -120,6 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--max-workers", type=int, default=5)
     scan.add_argument("--timeout", type=float, default=10.0)
     scan.add_argument("--max-retries", type=int, default=3)
+    scan.add_argument("--strategies-dir", type=Path, default=Path("config/strategies"))
     scan.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
     regime = subparsers.add_parser("regime", help="analyze BTC/ETH market regime")
@@ -786,6 +787,26 @@ def _scan(args: argparse.Namespace) -> int:
         signal_result = SignalGenerator(repository, sector_map=sector_map).generate_latest(
             snapshot.snapshot_id
         )
+        if hasattr(args, "strategies_dir") and args.strategies_dir.exists():
+            for strategy_config in load_all_strategy_configs(args.strategies_dir):
+                if strategy_config.strategy_id == "baseline_v1":
+                    continue
+                strat_snapshot_id = repository.fork_snapshot_for_strategy(
+                    run_id=result.run_id,
+                    strategy_id=strategy_config.strategy_id,
+                    data_cutoff_ms=snapshot.data_cutoff_ms,
+                    created_at=datetime.now(UTC).isoformat(timespec="milliseconds"),
+                )
+                SignalGenerator(
+                    repository,
+                    sector_map=sector_map,
+                    strategy_config=strategy_config,
+                ).generate_latest(strat_snapshot_id)
+                logging.info(
+                    "Generated signals for extra strategy %s (snapshot %s)",
+                    strategy_config.strategy_id,
+                    strat_snapshot_id,
+                )
     finally:
         repository.close()
 
