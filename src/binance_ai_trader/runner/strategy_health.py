@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -28,7 +29,68 @@ def _parse_dt(s: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
-def check_strategy_health(repository: "MarketDataRepository") -> str:
+def _table_exists(con: sqlite3.Connection, table: str) -> bool:
+    return con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
+
+
+def _check_hotlist_stall(db_path: str, now: datetime) -> str | None:
+    """Return a warning line if hotlist scanned normally but produced zero candidates for 60+ min."""
+    try:
+        con = sqlite3.connect(db_path)
+        con.row_factory = sqlite3.Row
+        cutoff = (now - timedelta(minutes=60)).isoformat(timespec="seconds")
+        if not _table_exists(con, "hotlist_opportunities"):
+            con.close()
+            return None
+        row = con.execute(
+            "SELECT COUNT(*) AS n FROM hotlist_opportunities WHERE created_at >= ?",
+            (cutoff,),
+        ).fetchone()
+        recent_candidates = int(row["n"])
+        con.close()
+        if recent_candidates == 0:
+            return "⚠️ Hotlist：过去60分钟扫描正常但无候选——请检查市场条件或阈值"
+    except Exception as exc:
+        log.debug("hotlist stall check failed: %s", exc)
+    return None
+
+
+def _check_gemini_trade_drought(db_path: str, now: datetime) -> str | None:
+    """Return a warning line if gemini ran in last 24h but produced 0 TRADE decisions."""
+    try:
+        con = sqlite3.connect(db_path)
+        con.row_factory = sqlite3.Row
+        cutoff = (now - timedelta(hours=24)).isoformat(timespec="seconds")
+        if not _table_exists(con, "gemini_committee_reviews"):
+            con.close()
+            return None
+        total_row = con.execute(
+            "SELECT COUNT(*) AS n FROM gemini_committee_reviews WHERE created_at >= ?",
+            (cutoff,),
+        ).fetchone()
+        total = int(total_row["n"])
+        if total == 0:
+            con.close()
+            return None
+        trade_row = con.execute(
+            "SELECT COUNT(*) AS n FROM gemini_committee_reviews WHERE created_at >= ? AND decision='TRADE'",
+            (cutoff,),
+        ).fetchone()
+        trade_count = int(trade_row["n"])
+        con.close()
+        if trade_count == 0:
+            return f"⚠️ Gemini：过去24小时分析{total}次，0次TRADE——请检查阈值或候选池质量"
+    except Exception as exc:
+        log.debug("gemini drought check failed: %s", exc)
+    return None
+
+
+def check_strategy_health(
+    repository: "MarketDataRepository",
+    db_path: str | None = None,
+) -> str:
     now = datetime.now(UTC)
     lines = [
         "🔧 策略运行状态报告",
@@ -71,6 +133,17 @@ def check_strategy_health(repository: "MarketDataRepository") -> str:
         else:
             lines.append(f"✅ {label}：正常（上次 {time_str}）")
 
+    if db_path:
+        lines.append("")
+        stall_warn = _check_hotlist_stall(db_path, now)
+        if stall_warn:
+            lines.append(stall_warn)
+            any_issue = True
+        drought_warn = _check_gemini_trade_drought(db_path, now)
+        if drought_warn:
+            lines.append(drought_warn)
+            any_issue = True
+
     lines.append("")
     if any_issue:
         lines.append("⚠️ 存在异常策略，请检查运行日志。")
@@ -86,8 +159,9 @@ def send_strategy_health(
     bot_token: str,
     chat_id: str,
     timeout: int = 10,
+    db_path: str | None = None,
 ) -> bool:
-    text = check_strategy_health(repository)
+    text = check_strategy_health(repository, db_path=db_path)
     _MAX = 4096
     chunks = [text[i : i + _MAX] for i in range(0, len(text), _MAX)]
     ok = True
