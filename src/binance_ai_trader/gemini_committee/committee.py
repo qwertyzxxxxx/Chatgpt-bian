@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .candidate_builder import build_candidates
+from .candidate_builder import build_candidates, load_market_regime_context
 from .gemini_client import call_gemini
 from .models import Candidate, CommitteeDecision, SkipResult
 from .prompt_builder import build_prompt
@@ -119,7 +119,8 @@ class GeminiCommittee:
             return result
 
         api_key = os.environ.get("GEMINI_API_KEY", "")
-        prompt = build_prompt(candidates)
+        regime_context = load_market_regime_context(self._db_path)
+        prompt = build_prompt(candidates, regime_context=regime_context)
         decision, prompt_hash = call_gemini(
             prompt,
             api_key=api_key,
