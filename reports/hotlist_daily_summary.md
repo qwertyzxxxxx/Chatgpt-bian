@@ -1,16 +1,15 @@
 # Hotlist Daily Summary
 
-- **Generated at:** 2026-06-22T16:02:52+00:00
+- **Generated at:** 2026-06-22T17:31:16+00:00
 - **Symbols watched:** 73
 - **Alerts generated:** 1
-- **Expired symbols:** 58
+- **Expired symbols:** 61
 
 ## Top Opportunities
 
 | Symbol | Direction | Entry | SL | TP1 | TP2 | RR | Expiry |
 | --- | :--- | ---: | ---: | ---: | ---: | ---: | --- |
-| `ZEREBROUSDT` | SHORT | 0.0378741 | 0.03873 | 0.03701821 | 0.03616231 | 2.00 | 2026-06-22T17:02:52+00:00 |
-| `REUSDT` | SHORT | 0.79990999 | 0.8234 | 0.77641998 | 0.75292998 | 2.00 | 2026-06-22T17:02:52+00:00 |
-| `TNSRUSDT` | SHORT | 0.03974902 | 0.04114 | 0.03835805 | 0.03696707 | 2.00 | 2026-06-22T17:02:52+00:00 |
+| `GUAUSDT` | SHORT | 0.55102316 | 0.5676 | 0.53444633 | 0.51786949 | 2.00 | 2026-06-22T18:31:16+00:00 |
+| `ZEREBROUSDT` | SHORT | 0.03746189 | 0.038316 | 0.03660777 | 0.03575366 | 2.00 | 2026-06-22T18:31:16+00:00 |
 
 > Research only. No live trading action is performed by this report.
