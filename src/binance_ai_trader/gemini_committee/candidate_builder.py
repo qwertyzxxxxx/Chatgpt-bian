@@ -268,6 +268,33 @@ def merge_top_n(
     return merged[:max_n]
 
 
+def load_market_regime_context(db_path: str) -> dict[str, str] | None:
+    """Read the latest BTC/ETH/combined regime from market_regimes.
+
+    Returns None if the table is missing or empty — the caller must handle
+    the None case gracefully (regime context is optional, not required).
+    """
+    try:
+        con = sqlite3.connect(db_path)
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            "SELECT btc_regime, eth_regime, combined_regime, evaluated_at"
+            " FROM market_regimes ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        con.close()
+        if row is None:
+            return None
+        return {
+            "btc_regime": str(row["btc_regime"] or "UNKNOWN"),
+            "eth_regime": str(row["eth_regime"] or "UNKNOWN"),
+            "combined_regime": str(row["combined_regime"] or "UNKNOWN"),
+            "evaluated_at": str(row["evaluated_at"] or "UNKNOWN"),
+        }
+    except Exception as exc:
+        logger.debug("load_market_regime_context failed: %s", exc)
+        return None
+
+
 def build_candidates(
     hotlist_db: str,
     ai_macro_db: str,

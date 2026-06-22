@@ -213,6 +213,28 @@ class MarketDataRepository:
         if cursor.rowcount != 1:
             raise ValueError(f"snapshot is unknown or already finalized: {snapshot_id}")
 
+    def fork_snapshot_for_strategy(
+        self, run_id: str, strategy_id: str, data_cutoff_ms: int, created_at: str
+    ) -> str:
+        """Create a strategy-specific SCAN snapshot sharing the same collection run.
+
+        The forked snapshot points to the same collection_run_id so every
+        repository query that looks up data by run_id (scores, capital, space,
+        sector ranks) returns the same market data — only the strategy_id tag
+        and snapshot_id differ.  Returns the new snapshot_id.
+        """
+        snapshot_id = f"snapshot-scan-{run_id}-{strategy_id}"
+        source_ref = f"{run_id}:{strategy_id}"
+        with self._connection:
+            self._connection.execute(
+                """INSERT OR IGNORE INTO analysis_snapshots (
+                       snapshot_id, snapshot_type, collection_run_id, source_ref,
+                       data_cutoff_ms, strategy_id, created_at
+                   ) VALUES (?, 'SCAN', ?, ?, ?, ?, ?)""",
+                (snapshot_id, run_id, source_ref, data_cutoff_ms, strategy_id, created_at),
+            )
+        return snapshot_id
+
     def create_manual_snapshot(
         self, source_ref: str, data_cutoff_ms: int, created_at: str
     ) -> str:
@@ -1251,7 +1273,7 @@ class MarketDataRepository:
             for rank, item in enumerate(signals, start=1)
         ]
         with self._connection:
-            self._connection.execute("DELETE FROM signals WHERE run_id=?", (run_id,))
+            self._connection.execute("DELETE FROM signals WHERE snapshot_id=?", (snapshot_id,))
             self._connection.executemany(
                 """
                 INSERT INTO signals (
@@ -1741,6 +1763,7 @@ class MarketDataRepository:
         self._ensure_analysis_snapshot_lineage()
         self._ensure_capital_flow_history()
         self._ensure_data_quality_status()
+        self._ensure_multi_strategy_snapshots()
 
     def _ensure_runner_skipped_status(self) -> None:
         schema = self._connection.execute(
@@ -2223,6 +2246,43 @@ class MarketDataRepository:
                     evaluation_rows,
                 )
         finally:
+            self._connection.execute("PRAGMA foreign_keys = ON")
+
+    def _ensure_multi_strategy_snapshots(self) -> None:
+        schema = self._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='analysis_snapshots'"
+        ).fetchone()
+        if schema is None or "collection_run_id TEXT UNIQUE" not in schema[0]:
+            return
+        self._connection.commit()
+        self._connection.execute("PRAGMA foreign_keys = OFF")
+        self._connection.execute("PRAGMA legacy_alter_table = ON")
+        try:
+            with self._connection:
+                self._connection.execute(
+                    "ALTER TABLE analysis_snapshots RENAME TO analysis_snapshots_pre_multi"
+                )
+                self._connection.execute(
+                    """
+                    CREATE TABLE analysis_snapshots (
+                        snapshot_id TEXT PRIMARY KEY,
+                        snapshot_type TEXT NOT NULL CHECK (snapshot_type IN ('SCAN', 'BACKTEST', 'MANUAL')),
+                        collection_run_id TEXT REFERENCES collection_runs(id),
+                        source_ref TEXT NOT NULL,
+                        data_cutoff_ms INTEGER NOT NULL,
+                        strategy_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        finalized_at TEXT,
+                        UNIQUE (snapshot_type, source_ref)
+                    )
+                    """
+                )
+                self._connection.execute(
+                    "INSERT INTO analysis_snapshots SELECT * FROM analysis_snapshots_pre_multi"
+                )
+                self._connection.execute("DROP TABLE analysis_snapshots_pre_multi")
+        finally:
+            self._connection.execute("PRAGMA legacy_alter_table = OFF")
             self._connection.execute("PRAGMA foreign_keys = ON")
 
 
