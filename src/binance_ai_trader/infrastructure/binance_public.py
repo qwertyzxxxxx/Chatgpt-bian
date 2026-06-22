@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import time
 from decimal import Decimal, InvalidOperation
@@ -8,6 +9,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+log = logging.getLogger(__name__)
 
 from binance_ai_trader.domain.models import Contract, Kline, Ticker24h
 
@@ -40,18 +43,23 @@ class BinancePublicClient:
         payload = self._get_json("/fapi/v1/ticker/24hr")
         if not isinstance(payload, list):
             raise BinancePublicApiError("Expected ticker array")
-        try:
-            return tuple(
-                Ticker24h(
+        results: list[Ticker24h] = []
+        skipped = 0
+        for item in payload:
+            try:
+                results.append(Ticker24h(
                     symbol=item["symbol"],
                     quote_volume=Decimal(item["quoteVolume"]),
                     price_change_percent=Decimal(item["priceChangePercent"]),
                     close_time_ms=int(item["closeTime"]),
-                )
-                for item in payload
-            )
-        except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
-            raise BinancePublicApiError("Invalid 24h ticker response") from exc
+                ))
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                skipped += 1
+        if skipped:
+            log.warning("tickers_24h: skipped %d malformed item(s), kept %d", skipped, len(results))
+        if not results:
+            raise BinancePublicApiError("Invalid 24h ticker response: no valid items parsed")
+        return tuple(results)
 
     def open_interest(self, symbol: str) -> Decimal:
         payload = self._get_json("/fapi/v1/openInterest", {"symbol": symbol})
