@@ -2408,7 +2408,7 @@ def _run_hotlist_performance_task(args: argparse.Namespace) -> RunnerTaskResult:
     )
 
 
-def _run_gemini_committee_task(args: argparse.Namespace) -> int:
+def _run_gemini_committee_task(args: argparse.Namespace) -> RunnerTaskResult:
     import os as _os
     from binance_ai_trader.gemini_committee.committee import GeminiCommittee
 
@@ -2419,14 +2419,19 @@ def _run_gemini_committee_task(args: argparse.Namespace) -> int:
         ai_macro_db_path=str(getattr(args, "ai_macro_database", "data/ai_macro.db")),
     )
     try:
-        gc.review(
+        result = gc.review(
             send_telegram=bool(bot_token and chat_id),
             telegram_bot_token=bot_token,
             telegram_chat_id=chat_id,
         )
     finally:
         gc.close()
-    return 0
+    skip_reason = result.get("reason")
+    status = "SKIPPED" if skip_reason else "SUCCEEDED"
+    details: dict[str, object] = {"outcome": skip_reason or "decision_made"}
+    if "telegram" in result:
+        details["telegram"] = result["telegram"]
+    return RunnerTaskResult(status=status, details=details)
 
 
 def _run_performance_settle_task(args: argparse.Namespace) -> int:
