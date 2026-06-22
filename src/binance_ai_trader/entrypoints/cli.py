@@ -609,6 +609,14 @@ def build_parser() -> argparse.ArgumentParser:
     _pc_lb_p.add_argument("--leaderboard-report", type=Path, default=Path("reports/performance_leaderboard.md"))
     _pc_lb_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+    _pc_diag_p = perf_center_cmds.add_parser(
+        "strategy-diagnostic",
+        help="diagnose why signal strategies (baseline_v1 etc.) have no strategy_results",
+    )
+    _pc_diag_p.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    _pc_diag_p.add_argument("--days", type=int, default=30, help="lookback window in days")
+    _pc_diag_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
     leaderboard_watch = subparsers.add_parser(
         "leaderboard-watch", help="排行榜观察池 — Leaderboard Watch Pool V1"
     )
@@ -2789,7 +2797,7 @@ def _performance_center(args: argparse.Namespace) -> int:
 
     pc = PerformanceCenter(
         market_db=str(args.database),
-        ai_macro_db=str(args.ai_macro_database),
+        ai_macro_db=str(getattr(args, "ai_macro_database", "data/ai_macro.db")),
         summary_report_path=str(getattr(args, "summary_report", "reports/performance_summary.md")),
         leaderboard_report_path=str(getattr(args, "leaderboard_report", "reports/performance_leaderboard.md")),
     )
@@ -2814,6 +2822,12 @@ def _performance_center(args: argparse.Namespace) -> int:
     if args.pc_command == "leaderboard":
         result = pc.leaderboard()
         print(_json.dumps(result, separators=(",", ":"), sort_keys=True))
+        return 0
+
+    if args.pc_command == "strategy-diagnostic":
+        days = getattr(args, "days", 30)
+        result = pc.strategy_diagnostic(days=days)
+        print(_json.dumps(result, separators=(",", ":"), sort_keys=True, default=str))
         return 0
 
     return 1
