@@ -9,14 +9,46 @@ RESULT_TP1 = "TP1"
 RESULT_TP2 = "TP2"
 RESULT_SL = "SL"
 RESULT_TIMEOUT = "TIMEOUT"
+RESULT_EXPIRED = "EXPIRED"
 
 STRATEGY_HOTLIST = "hotlist"
 STRATEGY_AI_MACRO = "ai_macro"
 STRATEGY_GEMINI = "gemini_committee"
 
-ALL_RESULTS = (RESULT_TP1, RESULT_TP2, RESULT_SL, RESULT_TIMEOUT, RESULT_OPEN)
+ALL_RESULTS = (RESULT_TP1, RESULT_TP2, RESULT_SL, RESULT_TIMEOUT, RESULT_EXPIRED, RESULT_OPEN)
 WIN_RESULTS = (RESULT_TP1, RESULT_TP2)
-LOSS_RESULTS = (RESULT_SL, RESULT_TIMEOUT)
+LOSS_RESULTS = (RESULT_SL,)
+NEUTRAL_RESULTS = (RESULT_TIMEOUT, RESULT_EXPIRED)
+
+_RESULT_ALIASES: dict[str, str] = {
+    "WIN": RESULT_TP1,
+    "WIN_TP1": RESULT_TP1,
+    "TP1_HIT": RESULT_TP1,
+    "PROFIT": RESULT_TP1,
+    "CLOSED_PROFIT": RESULT_TP1,
+    "WIN_TP2": RESULT_TP2,
+    "TP2_HIT": RESULT_TP2,
+    "LOSS": RESULT_SL,
+    "CLOSED_LOSS": RESULT_SL,
+    "LOSS_SL": RESULT_SL,
+    "TIMEOUT": RESULT_TIMEOUT,
+    "EXPIRED": RESULT_EXPIRED,
+    "OPEN": RESULT_OPEN,
+}
+
+
+def normalize_result(raw: str | None) -> str:
+    """Map legacy / alias result strings to canonical values.
+
+    Canonical values: OPEN, TP1, TP2, SL, TIMEOUT, EXPIRED.
+    Unknown values are passed through unchanged so no data is silently dropped.
+    """
+    if not raw:
+        return RESULT_OPEN
+    upper = raw.strip().upper()
+    if not upper:
+        return RESULT_OPEN
+    return _RESULT_ALIASES.get(upper, upper)
 
 
 @dataclass
@@ -59,6 +91,7 @@ class StrategyResult:
     @classmethod
     def from_row(cls, row: tuple, columns: list) -> "StrategyResult":
         d = dict(zip(columns, row))
+        raw_result = d.get("result", RESULT_OPEN)
         return cls(
             result_id=d["result_id"],
             strategy=d["strategy"],
@@ -71,7 +104,7 @@ class StrategyResult:
             opened_at=d["opened_at"],
             source_id=d["source_id"],
             closed_at=d.get("closed_at"),
-            result=d.get("result", RESULT_OPEN),
+            result=normalize_result(raw_result),
             pnl_pct=float(d["pnl_pct"]) if d.get("pnl_pct") is not None else None,
             rr_realized=float(d["rr_realized"]) if d.get("rr_realized") is not None else None,
             duration_minutes=int(d["duration_minutes"]) if d.get("duration_minutes") is not None else None,
@@ -86,6 +119,7 @@ class StrategyStats:
     tp2: int = 0
     sl: int = 0
     timeout: int = 0
+    expired: int = 0
     open_count: int = 0
     win_rate: float = 0.0
     avg_rr: float = 0.0
