@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from .models import Candidate
 
@@ -35,10 +36,31 @@ _ANTI_HALLUCINATION = """
 """.strip()
 
 
-def build_prompt(candidates: list[Candidate]) -> str:
+def _build_regime_section(regime_context: dict[str, str]) -> str:
+    btc = regime_context.get("btc_regime", "UNKNOWN")
+    eth = regime_context.get("eth_regime", "UNKNOWN")
+    combined = regime_context.get("combined_regime", "UNKNOWN")
+    evaluated_at = regime_context.get("evaluated_at", "UNKNOWN")
+    return (
+        f"市场宏观背景（最近评估：{evaluated_at}）：\n"
+        f"- BTC趋势：{btc}\n"
+        f"- ETH趋势：{eth}\n"
+        f"- 综合市场状态：{combined}\n"
+        f"（宏观背景仅供参考，主要判断依据是候选数据的技术指标）"
+    )
+
+
+def build_prompt(
+    candidates: list[Candidate],
+    regime_context: dict[str, str] | None = None,
+) -> str:
     candidates_json = json.dumps(
         [c.to_dict() for c in candidates],
         ensure_ascii=False,
         indent=2,
     )
-    return f"{_ANTI_HALLUCINATION}\n\n候选数据：\n{candidates_json}"
+    parts = [_ANTI_HALLUCINATION]
+    if regime_context:
+        parts.append(_build_regime_section(regime_context))
+    parts.append(f"候选数据：\n{candidates_json}")
+    return "\n\n".join(parts)
