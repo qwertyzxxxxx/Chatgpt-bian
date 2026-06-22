@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from .models import Candidate
 
@@ -13,6 +14,7 @@ _ANTI_HALLUCINATION = """
 3. 如果某字段值为 "UNKNOWN"，你必须写 "UNKNOWN"，不得猜测。
 4. 你只能从以下候选中选择一个，或者选择 NO_TRADE。
 5. 如果所有候选都不适合交易，必须输出 should_trade = false 且 decision = "NO_TRADE"。
+6. RANGE 市场中，只要技术面支持方向（EMA趋势对齐、RSI不极端、ATR合理），即可交易。
 
 你必须严格输出以下 JSON 格式，不得包含任何注释或额外字段：
 
@@ -35,10 +37,23 @@ _ANTI_HALLUCINATION = """
 """.strip()
 
 
-def build_prompt(candidates: list[Candidate]) -> str:
+def build_prompt(
+    candidates: list[Candidate],
+    regime_context: dict[str, Any] | None = None,
+) -> str:
     candidates_json = json.dumps(
         [c.to_dict() for c in candidates],
         ensure_ascii=False,
         indent=2,
     )
-    return f"{_ANTI_HALLUCINATION}\n\n候选数据：\n{candidates_json}"
+    parts = [_ANTI_HALLUCINATION]
+    if regime_context:
+        regime_section = (
+            f"\n市场环境（当前）：\n"
+            f"  BTC制度: {regime_context.get('btc_regime', 'UNKNOWN')}\n"
+            f"  ETH制度: {regime_context.get('eth_regime', 'UNKNOWN')}\n"
+            f"  综合制度: {regime_context.get('combined_regime', 'UNKNOWN')}\n"
+        )
+        parts.append(regime_section)
+    parts.append(f"\n候选数据：\n{candidates_json}")
+    return "\n".join(parts)

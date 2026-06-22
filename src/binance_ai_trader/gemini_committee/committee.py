@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +68,24 @@ class GeminiCommittee:
     def close(self) -> None:
         self._repo.close()
 
+    def _load_regime_context(self) -> dict[str, str] | None:
+        try:
+            con = sqlite3.connect(self._db_path, timeout=5.0)
+            row = con.execute(
+                """SELECT btc_regime, eth_regime, combined_regime
+                   FROM market_regimes ORDER BY evaluated_at DESC LIMIT 1"""
+            ).fetchone()
+            con.close()
+            if row:
+                return {
+                    "btc_regime": str(row[0] or "UNKNOWN"),
+                    "eth_regime": str(row[1] or "UNKNOWN"),
+                    "combined_regime": str(row[2] or "UNKNOWN"),
+                }
+        except Exception as exc:
+            logger.debug("regime_context load failed: %s", exc)
+        return None
+
     def _check_skips(self) -> SkipResult | None:
         api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         if not api_key:
@@ -119,7 +138,8 @@ class GeminiCommittee:
             return result
 
         api_key = os.environ.get("GEMINI_API_KEY", "")
-        prompt = build_prompt(candidates)
+        regime_context = self._load_regime_context()
+        prompt = build_prompt(candidates, regime_context)
         decision, prompt_hash = call_gemini(
             prompt,
             api_key=api_key,
