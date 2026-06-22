@@ -5,7 +5,7 @@ from typing import List
 from .models import (
     StrategyResult, StrategyStats, Leaderboard,
     STRATEGY_HOTLIST, STRATEGY_AI_MACRO, STRATEGY_GEMINI,
-    RESULT_TP1, RESULT_TP2, RESULT_SL, RESULT_TIMEOUT, RESULT_OPEN,
+    RESULT_TP1, RESULT_TP2, RESULT_SL, RESULT_TIMEOUT, RESULT_EXPIRED, RESULT_OPEN,
     WIN_RESULTS,
 )
 
@@ -21,14 +21,20 @@ _KNOWN_SIGNAL_STRATEGIES = (
     "range_disabled_v1",
 )
 
+_DECISIVE = frozenset((RESULT_TP1, RESULT_TP2, RESULT_SL))
+
 
 def _consecutive(results: List[str]) -> tuple:
+    """Count max consecutive wins / losses using decisive results only.
+
+    TIMEOUT, EXPIRED, and OPEN break any active streak (neutral).
+    """
     max_wins = max_losses = cur_wins = cur_losses = 0
     for r in results:
         if r in WIN_RESULTS:
             cur_wins += 1
             cur_losses = 0
-        elif r in (RESULT_SL, RESULT_TIMEOUT):
+        elif r == RESULT_SL:
             cur_losses += 1
             cur_wins = 0
         else:
@@ -47,17 +53,18 @@ def compute_stats(results: List[StrategyResult], strategy: str) -> StrategyStats
     s.tp2 = sum(1 for r in items if r.result == RESULT_TP2)
     s.sl = sum(1 for r in items if r.result == RESULT_SL)
     s.timeout = sum(1 for r in items if r.result == RESULT_TIMEOUT)
+    s.expired = sum(1 for r in items if r.result == RESULT_EXPIRED)
     s.open_count = sum(1 for r in items if r.result == RESULT_OPEN)
 
-    closed = [r for r in items if r.result != RESULT_OPEN]
-    if closed:
-        wins = [r for r in closed if r.result in WIN_RESULTS]
-        s.win_rate = round(len(wins) / len(closed) * 100, 1)
-        rrs = [r.rr_realized for r in closed if r.rr_realized is not None]
+    decisive = [r for r in items if r.result in _DECISIVE]
+    if decisive:
+        wins = [r for r in decisive if r.result in WIN_RESULTS]
+        s.win_rate = round(len(wins) / len(decisive) * 100, 1)
+        rrs = [r.rr_realized for r in decisive if r.rr_realized is not None]
         s.avg_rr = round(sum(rrs) / len(rrs), 2) if rrs else 0.0
-        pnls = [r.pnl_pct for r in closed if r.pnl_pct is not None]
+        pnls = [r.pnl_pct for r in decisive if r.pnl_pct is not None]
         s.avg_pnl_pct = round(sum(pnls) / len(pnls), 4) if pnls else 0.0
-        result_seq = [r.result for r in closed]
+        result_seq = [r.result for r in decisive]
         s.max_consecutive_wins, s.max_consecutive_losses = _consecutive(result_seq)
 
     return s
@@ -65,6 +72,15 @@ def compute_stats(results: List[StrategyResult], strategy: str) -> StrategyStats
 
 def compute_all_stats(results: List[StrategyResult]) -> List[StrategyStats]:
     return [compute_stats(results, s) for s in ALL_STRATEGIES]
+
+
+def compute_all_stats_windowed(
+    results: List[StrategyResult],
+    all_strategies: List[str],
+    since_iso: str,
+) -> List[StrategyStats]:
+    windowed = [r for r in results if (r.opened_at or "") >= since_iso]
+    return [compute_stats(windowed, s) for s in all_strategies]
 
 
 def build_leaderboard(results: List[StrategyResult]) -> Leaderboard:

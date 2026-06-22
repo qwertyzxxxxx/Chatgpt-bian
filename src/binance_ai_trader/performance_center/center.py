@@ -74,7 +74,7 @@ class PerformanceCenter:
             token = bot_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
             cid = chat_id or os.environ.get("TELEGRAM_CHAT_ID", "")
             if token and cid:
-                ok = send_summary(stats, lb, token, cid, telegram_timeout)
+                ok = send_summary(stats, lb, token, cid, telegram_timeout, all_results=all_results)
                 telegram_status = "SENT" if ok else "FAILED"
             else:
                 telegram_status = "NO_CREDENTIALS"
@@ -90,6 +90,7 @@ class PerformanceCenter:
                     "tp2": s.tp2,
                     "sl": s.sl,
                     "timeout": s.timeout,
+                    "expired": s.expired,
                     "open": s.open_count,
                     "win_rate": s.win_rate,
                     "avg_rr": s.avg_rr,
@@ -117,3 +118,8 @@ class PerformanceCenter:
                 for i, s in enumerate(lb.entries)
             ]
         }
+
+    def strategy_diagnostic(self, days: int = 30) -> dict:
+        from .diagnostic import run_strategy_diagnostic
+        results = run_strategy_diagnostic(self._market_db, days=days)
+        return {"days": days, "diagnostic": results}

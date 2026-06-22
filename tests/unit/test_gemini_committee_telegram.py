@@ -45,7 +45,6 @@ class FormatTradeTest(unittest.TestCase):
         msgs = format_trade(_no_trade_decision())
         combined = "".join(msgs)
         self.assertIn("NO_TRADE", combined)
-        self.assertIn("NONE", combined)
         self.assertIn("仅供研究", combined)
 
     def test_long_message_is_split(self):

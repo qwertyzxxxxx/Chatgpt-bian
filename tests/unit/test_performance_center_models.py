@@ -52,7 +52,6 @@ class TestStrategyResultModel(unittest.TestCase):
 
     def test_loss_results(self):
         self.assertIn(RESULT_SL, LOSS_RESULTS)
-        self.assertIn(RESULT_TIMEOUT, LOSS_RESULTS)
 
     def test_strategy_constants(self):
         self.assertEqual(STRATEGY_HOTLIST, "hotlist")
