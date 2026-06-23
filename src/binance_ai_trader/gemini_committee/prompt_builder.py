@@ -14,7 +14,6 @@ _ANTI_HALLUCINATION = """
 3. 如果某字段值为 "UNKNOWN"，你必须写 "UNKNOWN"，不得猜测。
 4. 你只能从以下候选中选择一个，或者选择 NO_TRADE。
 5. 如果所有候选都不适合交易，必须输出 should_trade = false 且 decision = "NO_TRADE"。
-6. RANGE 市场中，只要技术面支持方向（EMA趋势对齐、RSI不极端、ATR合理），即可交易。
 
 你必须严格输出以下 JSON 格式，不得包含任何注释或额外字段：
 

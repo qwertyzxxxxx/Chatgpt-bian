@@ -451,7 +451,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--leaderboard-watch-hours", type=int, default=24)
     run_loop.add_argument("--leaderboard-watch-top-n", type=int, default=10)
     run_loop.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
-    run_loop.add_argument("--history-days", type=int, default=180)
+    run_loop.add_argument("--history-days", type=int, default=30)
     run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
     run_loop.add_argument("--history-request-pause", type=float, default=0.05)
     run_loop.add_argument("--health-port", type=int, default=None,
