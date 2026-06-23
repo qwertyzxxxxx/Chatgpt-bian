@@ -193,6 +193,7 @@ def default_tasks(
     strategy_health: TaskCallback | None = None,
     ops_daily: TaskCallback | None = None,
     hourly_settlement: TaskCallback | None = None,
+    strategy_self_report: TaskCallback | None = None,
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
     tasks = [
@@ -223,6 +224,8 @@ def default_tasks(
         tasks.append(RunnerTask("ops_daily", ops_daily, interval=timedelta(hours=6)))
     if hourly_settlement is not None:
         tasks.append(RunnerTask("hourly_settlement", hourly_settlement, interval=timedelta(hours=1)))
+    if strategy_self_report is not None:
+        tasks.append(RunnerTask("strategy_self_report", strategy_self_report, interval=timedelta(hours=1)))
     return tuple(tasks)
 
 
