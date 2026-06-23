@@ -618,6 +618,21 @@ def build_parser() -> argparse.ArgumentParser:
     _pc_diag_p.add_argument("--days", type=int, default=30, help="lookback window in days")
     _pc_diag_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+    _diag = subparsers.add_parser(
+        "strategy-diagnostic",
+        aliases=["strategy_diagnostic"],
+        help="8策略运行诊断 — 漏斗、状态、断点原因",
+    )
+    _diag_cmds = _diag.add_subparsers(dest="diag_command", required=True)
+    _diag_full = _diag_cmds.add_parser("full", help="全量诊断报告（8策略）")
+    _diag_full.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    _diag_full.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
+    _diag_full.add_argument("--since-hours", type=int, default=24,
+                            help="回溯窗口小时数（默认24）")
+    _diag_full.add_argument("--send-telegram", action="store_true", default=False)
+    _add_telegram_arguments(_diag_full)
+    _diag_full.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
     leaderboard_watch = subparsers.add_parser(
         "leaderboard-watch", help="排行榜观察池 — Leaderboard Watch Pool V1"
     )
@@ -676,7 +691,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "gemini-committee", "performance-center", "leaderboard-watch", "-h", "--help"}:
+    if not arguments or arguments[0] not in {"scan", "regime", "sectors", "backtest", "evaluate", "strategies", "hotlist", "hotlist-alert", "hotlist-ai-review", "hotlist-performance", "ops", "telegram", "auto-research", "auto_research", "paper-simulate", "daily-report", "run-loop", "health", "capital", "space", "walk-forward", "collect-history", "ai-macro", "gemini-committee", "performance-center", "leaderboard-watch", "strategy-diagnostic", "strategy_diagnostic", "-h", "--help"}:
         arguments.insert(0, "scan")
     args = build_parser().parse_args(arguments)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -728,6 +743,8 @@ def main(argv: list[str] | None = None) -> int:
         return _performance_center(args)
     if args.command == "leaderboard-watch":
         return _leaderboard_watch(args)
+    if args.command in {"strategy-diagnostic", "strategy_diagnostic"}:
+        return _strategy_diagnostic(args)
     return _scan(args)
 
 
@@ -2781,6 +2798,51 @@ def _run_strategy_health_task(args: argparse.Namespace) -> int:
         send_strategy_health(repo, bot_token, chat_id, db_path=str(database))
     finally:
         repo.close()
+    return 0
+
+
+def _strategy_diagnostic(args: argparse.Namespace) -> int:
+    import os as _os
+    from binance_ai_trader.diagnostics.strategy_diagnostic import (
+        format_telegram,
+        format_text,
+        run_diagnostics,
+    )
+
+    since_hours = int(getattr(args, "since_hours", 24))
+    market_db = str(getattr(args, "database", "data/market_data.db"))
+    ai_macro_db = str(getattr(args, "ai_macro_database", "data/ai_macro.db"))
+
+    stats_list = run_diagnostics(
+        market_db=market_db,
+        since_hours=since_hours,
+        ai_macro_db=ai_macro_db,
+    )
+    text = format_text(stats_list, since_hours=since_hours)
+    print(text)
+
+    if getattr(args, "send_telegram", False):
+        bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+        if bot_token and chat_id:
+            import json
+            import urllib.request
+            msg = format_telegram(stats_list, since_hours=since_hours)
+            _MAX = 4096
+            for chunk in [msg[i: i + _MAX] for i in range(0, len(msg), _MAX)]:
+                payload = json.dumps({"chat_id": chat_id, "text": chunk}).encode()
+                url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+                try:
+                    req = urllib.request.Request(
+                        url, data=payload,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=10):
+                        pass
+                except Exception as exc:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning("Telegram send failed: %s", exc)
     return 0
 
 
