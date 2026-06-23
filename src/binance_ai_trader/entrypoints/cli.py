@@ -1533,6 +1533,27 @@ def _run_loop(args: argparse.Namespace) -> int:
         if notifier is not None and status == "FAILED":
             notifier.send(f"Runner task failed: {event_type}\n{error or 'unknown error'}")
 
+    if notifier is not None:
+        try:
+            from binance_ai_trader.runner.startup_report import send_startup_report
+            enabled_modules = {
+                "hotlist_alert":      getattr(args, "enable_hotlist_alerts", False),
+                "gemini_committee":   getattr(args, "enable_gemini_committee", False),
+                "performance_center": getattr(args, "enable_performance_center", False),
+                "leaderboard_watch":  getattr(args, "enable_leaderboard_watch", False),
+                "strategy_health":    getattr(args, "enable_strategy_health", False),
+                "hourly_report":      True,
+            }
+            send_startup_report(
+                db_path=str(database),
+                enabled_modules=enabled_modules,
+                bot_token=token,
+                chat_id=chat_id,
+                timeout=getattr(args, "telegram_timeout", 10.0),
+            )
+        except Exception:
+            pass
+
     tasks = default_tasks(
         scan=lambda: invoke([
             "scan", "--database", str(database), "--config", str(args.config),
@@ -1597,6 +1618,10 @@ def _run_loop(args: argparse.Namespace) -> int:
         hourly_settlement=(
             (lambda: _run_hourly_settlement_task(args))
             if getattr(args, "enable_ops_dashboard", False) else None
+        ),
+        strategy_self_report=(
+            (lambda: _run_hourly_strategy_report_task(args))
+            if token and chat_id else None
         ),
         history_interval=timedelta(hours=args.history_interval_hours),
     )
@@ -2756,6 +2781,27 @@ def _run_strategy_health_task(args: argparse.Namespace) -> int:
         send_strategy_health(repo, bot_token, chat_id, db_path=str(database))
     finally:
         repo.close()
+    return 0
+
+
+def _run_hourly_strategy_report_task(args: argparse.Namespace) -> int:
+    import os as _os
+    from binance_ai_trader.runner.hourly_strategy_report import send_hourly_report
+
+    bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not bot_token or not chat_id:
+        return 0
+    market_db = str(getattr(args, "database", "data/market_data.db"))
+    ai_macro_db = str(getattr(args, "ai_macro_database", "data/ai_macro.db"))
+    lw_db = str(getattr(args, "leaderboard_watch_database", "data/leaderboard_watch.db"))
+    send_hourly_report(
+        market_db=market_db,
+        bot_token=bot_token,
+        chat_id=chat_id,
+        ai_macro_db=ai_macro_db,
+        lw_db=lw_db,
+    )
     return 0
 
 
