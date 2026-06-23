@@ -82,6 +82,7 @@ if __name__ == "__main__":
         "--enable-leaderboard-watch",
         "--enable-strategy-health",
         "--history-days", "30",
+        "--research-step-bars", "100",
     ] + sys.argv[1:]
 
     for _attempt in range(6):
