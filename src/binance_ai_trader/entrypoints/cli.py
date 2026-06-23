@@ -425,6 +425,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument(
         "--baseline-config", type=Path, default=Path("config/strategies/baseline_v1.json")
     )
+    run_loop.add_argument(
+        "--strategies-dir", type=Path, default=Path("config/strategies"),
+        help="directory of strategy JSON configs; each strategy produces its own snapshot "
+             "(default: config/strategies)",
+    )
     run_loop.add_argument("--base-url", default="https://fapi.binance.com")
     run_loop.add_argument("--kline-limit", type=int, default=200)
     run_loop.add_argument("--max-workers", type=int, default=5)
@@ -1578,6 +1583,7 @@ def _run_loop(args: argparse.Namespace) -> int:
             "--kline-limit", str(args.kline_limit), "--max-workers", str(args.max_workers),
             "--timeout", str(args.timeout), "--max-retries", str(args.max_retries),
             "--log-level", args.log_level,
+            "--strategies-dir", str(args.strategies_dir),
         ]),
         evaluate=lambda: invoke(["evaluate", "--database", str(database)]),
         paper_simulate=lambda: invoke(["paper-simulate", "--database", str(database)]),
