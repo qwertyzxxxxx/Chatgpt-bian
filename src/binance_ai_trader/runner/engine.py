@@ -142,6 +142,7 @@ class ProductionRunner:
         started_at = now.isoformat(timespec="milliseconds")
         started_clock = time.monotonic_ns()
         self._repository.start_runner_event(event_id, task.event_type, started_at)
+        LOGGER.info("task_start event_type=%s", task.event_type)
         status = "SUCCEEDED"
         error_message = None
         try:
@@ -165,6 +166,7 @@ class ProductionRunner:
             LOGGER.exception("Runner task failed: %s", task.event_type)
         completed_at = _utc(self._clock()).isoformat(timespec="milliseconds")
         duration_ms = max(0, (time.monotonic_ns() - started_clock) // 1_000_000)
+        LOGGER.info("task_done event_type=%s status=%s duration_ms=%d", task.event_type, status, duration_ms)
         self._repository.finish_runner_event(
             event_id, status, completed_at, error_message, duration_ms
         )
