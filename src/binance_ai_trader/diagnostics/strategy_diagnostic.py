@@ -511,10 +511,10 @@ def format_telegram(
             lines.append(
                 f"   漏斗: universe={st.universe} → scored={st.scored}"
                 f" → snapshots={st.snapshots} → signals={st.signals}"
-                f" → trades={st.trades}"
+                f" → paper_trades={st.trades}"
             )
         else:
-            lines.append(f"   signals={st.signals} | trades={st.trades}")
+            lines.append(f"   signals={st.signals} | paper_trades={st.trades}")
         lines.append(
             f"   结果: open={st.open_count} | TP1={st.tp1} | TP2={st.tp2}"
             f" | SL={st.sl} | TIMEOUT={st.timeout}"
@@ -548,7 +548,7 @@ def format_text(
         lines.append(
             f"   漏斗:  universe={st.universe:>4}  scored={st.scored:>4}"
             f"  snapshots={st.snapshots:>4}  signals={st.signals:>4}"
-            f"  trades={st.trades:>4}"
+            f"  paper_trades={st.trades:>4}"
         )
         lines.append(
             f"   结果:  open={st.open_count}  TP1={st.tp1}  TP2={st.tp2}"
