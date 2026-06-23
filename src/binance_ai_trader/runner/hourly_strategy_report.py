@@ -249,11 +249,34 @@ def build_hourly_report(
     except Exception as exc:
         return f"⚠️ 策略自检：无法连接数据库 — {exc}"
 
+    _REGIME_BIAS: dict[str, str] = {"bear_short_space80_v1": "BEAR"}
     try:
         hotlist = _query_hotlist_stats(con, since)
         signals_by_strat = _query_signals_by_strategy(con, since)
         trades_by_strat = _query_trades_by_strategy(con, since)
         gemini = _query_gemini_stats(con, since)
+
+        _latest_scored = 0
+        try:
+            row = con.execute(
+                "SELECT COUNT(*) FROM scores s"
+                " JOIN collection_runs cr ON cr.id = s.run_id"
+                " WHERE cr.status = 'SUCCEEDED' AND cr.started_at >= ?",
+                (since,),
+            ).fetchone()
+            _latest_scored = int(row[0]) if row else 0
+        except Exception:
+            pass
+
+        dead_reasons: dict[str, str] = {}
+        for strategy_id, _label in _STRATEGY_ENTRIES:
+            sig = signals_by_strat.get(strategy_id, 0)
+            trade = trades_by_strat.get(strategy_id, 0)
+            if sig == 0 and trade == 0:
+                dead_reasons[strategy_id] = _dead_reason_for_scan(
+                    con, strategy_id, since, _latest_scored,
+                    regime_bias=_REGIME_BIAS.get(strategy_id),
+                )
     finally:
         con.close()
 
@@ -272,28 +295,12 @@ def build_hourly_report(
         f" | TP2: {hotlist['tp2']} | SL: {hotlist['sl']}",
     ]
 
-    _REGIME_BIAS = {"bear_short_space80_v1": "BEAR"}
-    _latest_scored = 0
-    try:
-        row = con.execute(
-            "SELECT COUNT(*) FROM scores s"
-            " JOIN collection_runs cr ON cr.id = s.run_id"
-            " WHERE cr.status = 'SUCCEEDED' AND cr.started_at >= ?",
-            (since,),
-        ).fetchone()
-        _latest_scored = int(row[0]) if row else 0
-    except Exception:
-        pass
-
     for strategy_id, label in _STRATEGY_ENTRIES:
         sig = signals_by_strat.get(strategy_id, 0)
         trade = trades_by_strat.get(strategy_id, 0)
         dead = sig == 0 and trade == 0
         if dead:
-            reason = _dead_reason_for_scan(
-                con, strategy_id, since, _latest_scored,
-                regime_bias=_REGIME_BIAS.get(strategy_id),
-            )
+            reason = dead_reasons.get(strategy_id, "no_snapshots")
             flag = f"  ⚠️ DEAD [{reason}]"
         elif sig > 0 and trade == 0:
             flag = "  ⚠️ WEAK [signals_not_traded]"
