@@ -182,8 +182,8 @@ def default_tasks(
     evaluate: TaskCallback,
     paper_simulate: TaskCallback,
     daily_report: TaskCallback,
-    auto_research: TaskCallback,
-    collect_history: TaskCallback,
+    auto_research: TaskCallback | None = None,
+    collect_history: TaskCallback | None = None,
     history_interval: timedelta = timedelta(hours=24),
     hotlist_alert: TaskCallback | None = None,
     gemini_committee: TaskCallback | None = None,
@@ -203,9 +203,11 @@ def default_tasks(
         RunnerTask("evaluate", evaluate, interval=quarter_hour),
         RunnerTask("paper_simulate", paper_simulate, interval=quarter_hour),
         RunnerTask("daily_report", daily_report, daily_at=datetime_time(0, 5)),
-        RunnerTask("collect_history", collect_history, interval=history_interval),
-        RunnerTask("auto_research", auto_research, interval=timedelta(hours=6)),
     ]
+    if collect_history is not None:
+        tasks.append(RunnerTask("collect_history", collect_history, interval=history_interval))
+    if auto_research is not None:
+        tasks.append(RunnerTask("auto_research", auto_research, interval=timedelta(hours=6)))
     if hotlist_alert is not None:
         tasks.append(RunnerTask("hotlist_alert", hotlist_alert, interval=quarter_hour, startup_immediate=True))
     if gemini_committee is not None:
