@@ -12,6 +12,7 @@ export * from './hotlistAlertRow';
 export * from './hotlistCandidatePerformance';
 export * from './hotlistPushPerformance';
 export * from './hotlistPushedOrderRow';
+export * from './hotlistSourcePerf';
 export * from './hotlistSummary';
 export * from './hotlistWatchlistRow';
 export * from './leaderboardReviewRow';

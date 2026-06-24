@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { HotlistSourcePerf } from './hotlistSourcePerf';
 
 export interface HotlistCandidatePerformance {
   open: number;
@@ -14,4 +15,5 @@ export interface HotlistCandidatePerformance {
   total: number;
   win_rate: number;
   generated_at: string;
+  by_source: { [key: string]: HotlistSourcePerf };
 }

@@ -58,6 +58,15 @@ export const ListHotlistAlertsResponseItem = zod.object({
 export const ListHotlistAlertsResponse = zod.array(ListHotlistAlertsResponseItem)
 
 
+const HotlistSourcePerfSchema = zod.object({
+  "open": zod.number(),
+  "tp1": zod.number(),
+  "tp2": zod.number(),
+  "sl": zod.number(),
+  "total": zod.number(),
+  "win_rate": zod.number()
+})
+
 /**
  * @summary Hotlist push performance (Telegram-pushed orders only, last 24 hours)
  */
@@ -68,7 +77,8 @@ export const GetHotlistPushPerformanceResponse = zod.object({
   "sl": zod.number(),
   "total": zod.number(),
   "win_rate": zod.number(),
-  "generated_at": zod.string()
+  "generated_at": zod.string(),
+  "by_source": zod.record(zod.string(), HotlistSourcePerfSchema)
 })
 
 
@@ -82,7 +92,8 @@ export const GetHotlistCandidatePerformanceResponse = zod.object({
   "sl": zod.number(),
   "total": zod.number(),
   "win_rate": zod.number(),
-  "generated_at": zod.string()
+  "generated_at": zod.string(),
+  "by_source": zod.record(zod.string(), HotlistSourcePerfSchema)
 })
 
 
@@ -98,7 +109,8 @@ export const ListHotlistRecentPushedOrdersResponseItem = zod.object({
   "pnl_pct": zod.number().nullish(),
   "rr_realized": zod.number().nullish(),
   "duration_minutes": zod.number().nullish(),
-  "closed_at": zod.string().nullish()
+  "closed_at": zod.string().nullish(),
+  "rank_type": zod.string().optional()
 })
 export const ListHotlistRecentPushedOrdersResponse = zod.array(ListHotlistRecentPushedOrdersResponseItem)
 

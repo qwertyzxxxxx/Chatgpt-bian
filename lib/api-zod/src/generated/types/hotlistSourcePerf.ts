@@ -5,15 +5,12 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { HotlistSourcePerf } from './hotlistSourcePerf';
 
-export interface HotlistPushPerformance {
+export interface HotlistSourcePerf {
   open: number;
   tp1: number;
   tp2: number;
   sl: number;
   total: number;
   win_rate: number;
-  generated_at: string;
-  by_source: { [key: string]: HotlistSourcePerf };
 }

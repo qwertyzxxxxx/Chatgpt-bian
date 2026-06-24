@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { HotlistSourcePerf } from "@workspace/api-client-react";
 
 function StatCard({ title, value, sub }: { title: string; value: string | number; sub?: string }) {
   return (
@@ -25,6 +26,33 @@ function StatCard({ title, value, sub }: { title: string; value: string | number
   );
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  GAINER: "📈 GAINER",
+  LOSER: "📉 LOSER",
+  VOLUME: "🔥 VOLUME",
+  UNKNOWN: "❓ UNKNOWN",
+};
+
+function SourcePerfRow({ src, perf }: { src: string; perf: HotlistSourcePerf | undefined }) {
+  if (!perf || perf.total === 0) {
+    return (
+      <div className="flex items-center justify-between text-xs text-muted-foreground py-0.5 pl-2">
+        <span>{SOURCE_LABELS[src] ?? src}</span>
+        <span>—</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between text-xs py-0.5 pl-2">
+      <span className="font-medium">{SOURCE_LABELS[src] ?? src}</span>
+      <span className="text-muted-foreground">
+        {perf.total}結算 {perf.win_rate}%勝
+        &nbsp;TP1:{perf.tp1} TP2:{perf.tp2} SL:{perf.sl}
+      </span>
+    </div>
+  );
+}
+
 function PerfCard({
   title,
   sub,
@@ -34,6 +62,7 @@ function PerfCard({
   total,
   win_rate,
   open,
+  by_source,
   isLoading,
 }: {
   title: string;
@@ -44,6 +73,7 @@ function PerfCard({
   total: number;
   win_rate: number;
   open: number;
+  by_source?: { [key: string]: HotlistSourcePerf };
   isLoading: boolean;
 }) {
   return (
@@ -67,11 +97,26 @@ function PerfCard({
             <p className="text-xs text-muted-foreground mt-1">
               结算 {total} | TP1 {tp1} · TP2 {tp2} · SL {sl} | 持仓 {open}
             </p>
+            {by_source && (
+              <div className="mt-2 border-t pt-1 space-y-0.5">
+                {["GAINER", "LOSER", "VOLUME"].map((src) => (
+                  <SourcePerfRow key={src} src={src} perf={by_source[src]} />
+                ))}
+              </div>
+            )}
           </>
         )}
       </CardContent>
     </Card>
   );
+}
+
+function rankTypeBadge(rankType: string | undefined) {
+  if (!rankType || rankType === "UNKNOWN") return <Badge variant="outline" className="text-xs text-muted-foreground">?</Badge>;
+  if (rankType === "GAINER") return <Badge variant="default" className="text-xs bg-green-600">G</Badge>;
+  if (rankType === "LOSER") return <Badge variant="destructive" className="text-xs">L</Badge>;
+  if (rankType === "VOLUME") return <Badge variant="secondary" className="text-xs">V</Badge>;
+  return <Badge variant="outline" className="text-xs">{rankType}</Badge>;
 }
 
 function resultBadge(result: string | null | undefined) {
@@ -131,6 +176,7 @@ export default function HotlistPage() {
           total={pp?.total ?? 0}
           win_rate={pp?.win_rate ?? 0}
           open={pp?.open ?? 0}
+          by_source={pp?.by_source}
           isLoading={pushPerf.isLoading}
         />
         <PerfCard
@@ -142,6 +188,7 @@ export default function HotlistPage() {
           total={cp?.total ?? 0}
           win_rate={cp?.win_rate ?? 0}
           open={cp?.open ?? 0}
+          by_source={cp?.by_source}
           isLoading={candidatePerf.isLoading}
         />
       </div>
@@ -162,6 +209,7 @@ export default function HotlistPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>来源</TableHead>
                   <TableHead>Symbol</TableHead>
                   <TableHead>方向</TableHead>
                   <TableHead>买入价</TableHead>
@@ -174,6 +222,7 @@ export default function HotlistPage() {
               <TableBody>
                 {recentOrders.data.map((row, i) => (
                   <TableRow key={i}>
+                    <TableCell>{rankTypeBadge(row.rank_type)}</TableCell>
                     <TableCell className="font-mono font-semibold">{row.symbol}</TableCell>
                     <TableCell>
                       <Badge variant={row.direction === "LONG" ? "default" : "destructive"}>

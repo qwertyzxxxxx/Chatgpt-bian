@@ -101,6 +101,15 @@ export interface StrategyFunnelData {
   generated_at: string;
 }
 
+export interface HotlistSourcePerf {
+  open: number;
+  tp1: number;
+  tp2: number;
+  sl: number;
+  total: number;
+  win_rate: number;
+}
+
 export interface HotlistPushPerformance {
   open: number;
   tp1: number;
@@ -109,6 +118,7 @@ export interface HotlistPushPerformance {
   total: number;
   win_rate: number;
   generated_at: string;
+  by_source: { [key: string]: HotlistSourcePerf };
 }
 
 export interface HotlistCandidatePerformance {
@@ -119,6 +129,7 @@ export interface HotlistCandidatePerformance {
   total: number;
   win_rate: number;
   generated_at: string;
+  by_source: { [key: string]: HotlistSourcePerf };
 }
 
 export interface HotlistPushedOrderRow {
@@ -137,6 +148,7 @@ export interface HotlistPushedOrderRow {
   duration_minutes?: number | null;
   /** @nullable */
   closed_at?: string | null;
+  rank_type?: string;
 }
 
 export type ListHotlistAlertsParams = {
