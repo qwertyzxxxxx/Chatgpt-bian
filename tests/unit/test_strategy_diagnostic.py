@@ -226,6 +226,16 @@ class DeadReasonTest(unittest.TestCase):
         con.execute(
             "INSERT INTO scores (run_id, symbol) VALUES (?,?)", ("run1", "BTCUSDT")
         )
+        # COMPLETE space data → not a missing-data case, so reason is filters_too_strict
+        con.execute(
+            "CREATE TABLE space_snapshots (run_id TEXT, symbol TEXT, direction TEXT,"
+            " data_quality_status TEXT)"
+        )
+        con.execute(
+            "INSERT INTO space_snapshots (run_id, symbol, direction, data_quality_status)"
+            " VALUES (?,?,?,?)",
+            ("run1", "BTCUSDT", "LONG", "COMPLETE"),
+        )
         # Add snapshot for breakout_hunter_v1 but NO signals
         con.execute(
             "INSERT INTO analysis_snapshots"
@@ -500,6 +510,152 @@ class StrategyStatsTest(unittest.TestCase):
         st = StrategyStats(strategy_id="test", strategy_name="Test")
         self.assertIsNone(st.win_rate)
         self.assertIsNone(st.avg_rr)
+
+
+# ───────────── Scheme A: regime SLEEPING + missing-data WEAK labels ──────────
+
+def _set_regime(con: sqlite3.Connection, regime: str) -> None:
+    con.execute(
+        "INSERT INTO market_regimes (combined_regime, evaluated_at) VALUES (?,?)",
+        (regime, _ts()),
+    )
+
+
+def _add_run(con: sqlite3.Connection, run_id: str = "run1") -> None:
+    con.execute(
+        "INSERT INTO collection_runs (id, started_at, status) VALUES (?,?,?)",
+        (run_id, _ts(), "SUCCEEDED"),
+    )
+    con.execute("INSERT INTO scores (run_id, symbol) VALUES (?,?)", (run_id, "BTCUSDT"))
+
+
+def _add_snapshot(con: sqlite3.Connection, strategy_id: str, run_id: str = "run1") -> None:
+    con.execute(
+        "INSERT INTO analysis_snapshots"
+        " (snapshot_id, snapshot_type, source_ref, strategy_id, created_at)"
+        " VALUES (?,?,?,?,?)",
+        (f"snap-{strategy_id}", "SCAN", run_id, strategy_id, _ts()),
+    )
+
+
+class SchemeARegimeAndMissingDataTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._db = str(Path(self._tmp.name) / "market.db")
+        _make_market_db(self._db)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _stat(self, strategy_id: str):
+        from binance_ai_trader.diagnostics.strategy_diagnostic import run_diagnostics
+        stats = run_diagnostics(self._db, since_hours=24)
+        return next(s for s in stats if s.strategy_id == strategy_id)
+
+    # (1)+(2) Range-disabled strategy is SLEEPING (not DEAD) when regime is RANGE
+    def test_range_disabled_sleeping_in_range_regime(self):
+        con = sqlite3.connect(self._db)
+        _add_run(con)
+        _set_regime(con, "OBSERVE")  # OBSERVE normalizes to RANGE
+        con.commit()
+        con.close()
+        st = self._stat("range_disabled_v1")
+        self.assertEqual(st.status, "SLEEPING")
+        self.assertIn("disabled_by_regime", st.dead_reasons)
+
+    # (3) Bear short (BEAR-only) is SLEEPING when regime is BULL
+    def test_bear_short_sleeping_in_bull_regime(self):
+        con = sqlite3.connect(self._db)
+        _add_run(con)
+        _set_regime(con, "BULL")
+        con.commit()
+        con.close()
+        st = self._stat("bear_short_space80_v1")
+        self.assertEqual(st.status, "SLEEPING")
+        self.assertIn("disabled_by_regime", st.dead_reasons)
+
+    # (3b) Bear short is SLEEPING when regime is RANGE
+    def test_bear_short_sleeping_in_range_regime(self):
+        con = sqlite3.connect(self._db)
+        _add_run(con)
+        _set_regime(con, "RANGE")
+        con.commit()
+        con.close()
+        st = self._stat("bear_short_space80_v1")
+        self.assertEqual(st.status, "SLEEPING")
+        self.assertIn("disabled_by_regime", st.dead_reasons)
+
+    # (4) Space-gated strategy with MISSING space data → WEAK [space_score_missing ...]
+    def test_breakout_hunter_weak_when_space_data_missing(self):
+        con = sqlite3.connect(self._db)
+        _add_run(con)
+        _set_regime(con, "BULL")  # not regime-gated for breakout_hunter
+        _add_snapshot(con, "breakout_hunter_v1")
+        # No space_snapshots table at all → fallback space_score=50 → space missing
+        con.commit()
+        con.close()
+        st = self._stat("breakout_hunter_v1")
+        self.assertEqual(st.status, "WEAK")
+        self.assertIn("space_score_missing / insufficient_history", st.dead_reasons)
+
+    # (4b) Capital strategy with INCOMPLETE space data → WEAK [space_score_missing ...]
+    def test_capital_weak_when_space_data_incomplete(self):
+        con = sqlite3.connect(self._db)
+        _add_run(con)
+        _set_regime(con, "BULL")
+        _add_snapshot(con, "capital_60_80_space80_v1")
+        con.execute(
+            "CREATE TABLE space_snapshots (run_id TEXT, symbol TEXT, direction TEXT,"
+            " data_quality_status TEXT)"
+        )
+        con.execute(
+            "INSERT INTO space_snapshots (run_id, symbol, direction, data_quality_status)"
+            " VALUES (?,?,?,?)",
+            ("run1", "BTCUSDT", "LONG", "PARTIAL"),  # not COMPLETE → still missing
+        )
+        con.commit()
+        con.close()
+        st = self._stat("capital_60_80_space80_v1")
+        self.assertEqual(st.status, "WEAK")
+        self.assertIn("space_score_missing / insufficient_history", st.dead_reasons)
+
+    # (5) Baseline signals>0 trades=0 while account PAUSED → WEAK [paper_account_paused]
+    def test_baseline_weak_paper_account_paused(self):
+        con = sqlite3.connect(self._db)
+        _add_run(con)
+        _insert_signal(con, "run1", "BTCUSDT", "baseline_v1")
+        con.execute(
+            "CREATE TABLE paper_accounts (mode TEXT, updated_at TEXT)"
+        )
+        con.execute(
+            "INSERT INTO paper_accounts (mode, updated_at) VALUES (?,?)",
+            ("PAUSED", _ts()),
+        )
+        con.commit()
+        con.close()
+        st = self._stat("baseline_v1")
+        self.assertEqual(st.status, "WEAK")
+        self.assertIn("paper_account_paused", st.dead_reasons)
+
+    # (5b) Baseline signals expired/unfilled → WEAK [entry_not_touched / expired]
+    def test_baseline_weak_entry_not_touched_expired(self):
+        con = sqlite3.connect(self._db)
+        _add_run(con)
+        _insert_signal(con, "run1", "BTCUSDT", "baseline_v1")
+        con.execute(
+            "CREATE TABLE signal_evaluations (signal_run_id TEXT, symbol TEXT,"
+            " result TEXT, evaluated_at TEXT)"
+        )
+        con.execute(
+            "INSERT INTO signal_evaluations (signal_run_id, symbol, result, evaluated_at)"
+            " VALUES (?,?,?,?)",
+            ("run1", "BTCUSDT", "EXPIRED", _ts()),
+        )
+        con.commit()
+        con.close()
+        st = self._stat("baseline_v1")
+        self.assertEqual(st.status, "WEAK")
+        self.assertIn("entry_not_touched / expired", st.dead_reasons)
 
 
 # ─────────────────────────── Req 9: compileall ───────────────────────────────
