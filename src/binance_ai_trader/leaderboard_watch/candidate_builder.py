@@ -11,6 +11,8 @@ from .models import WatchCandidateForGemini, WatchItem
 
 logger = logging.getLogger(__name__)
 
+_GEMINI_LIMITS: dict[str, int] = {"15m": 96, "1h": 72, "4h": 60, "1d": 30}
+
 
 def _fetch_klines(
     symbol: str,
@@ -40,6 +42,20 @@ def _fetch_klines(
         return []
 
 
+def _klines_to_dicts(klines) -> list[dict]:
+    """Convert Kline domain objects to the dict format expected by compute_indicators."""
+    return [
+        {
+            "open": float(k.open),
+            "high": float(k.high),
+            "low": float(k.low),
+            "close": float(k.close),
+            "volume": float(k.volume),
+        }
+        for k in klines
+    ]
+
+
 def _minutes_since(iso: str) -> int:
     try:
         ts = datetime.fromisoformat(iso.replace("Z", "+00:00"))
@@ -52,14 +68,46 @@ def build_candidates(
     items: list[WatchItem],
     base_url: str = "https://fapi.binance.com",
     timeout: float = 10.0,
+    cache=None,
 ) -> list[WatchCandidateForGemini]:
+    """Build Gemini candidates from the watch pool.
+
+    Parameters
+    ----------
+    items:
+        Active watch-pool items to evaluate.
+    base_url:
+        Binance FAPI base URL (fallback when *cache* is None or misses).
+    timeout:
+        HTTP timeout for direct API fetches.
+    cache:
+        Optional ``MarketDataCache`` instance.  When provided, kline data is
+        read from the cache (SQLite first, gap-fill from API) instead of doing
+        a full Binance pull for each symbol.  Pass ``None`` to use the
+        original direct-fetch behaviour.
+    """
     candidates: list[WatchCandidateForGemini] = []
+    cache_hits = 0
+    cache_misses = 0
 
     for item in items:
-        m15 = _fetch_klines(item.symbol, "15m", 96, base_url, timeout)
-        h1 = _fetch_klines(item.symbol, "1h", 72, base_url, timeout)
-        h4 = _fetch_klines(item.symbol, "4h", 60, base_url, timeout)
-        d1 = _fetch_klines(item.symbol, "1d", 30, base_url, timeout)
+        if cache is not None:
+            m15_klines = cache.get_klines(item.symbol, "15m", _GEMINI_LIMITS["15m"])
+            h1_klines = cache.get_klines(item.symbol, "1h", _GEMINI_LIMITS["1h"])
+            h4_klines = cache.get_klines(item.symbol, "4h", _GEMINI_LIMITS["4h"])
+            d1_klines = cache.get_klines(item.symbol, "1d", _GEMINI_LIMITS["1d"])
+            m15 = _klines_to_dicts(m15_klines)
+            h1 = _klines_to_dicts(h1_klines)
+            h4 = _klines_to_dicts(h4_klines)
+            d1 = _klines_to_dicts(d1_klines)
+            stats = cache.stats()
+            cache_hits = stats.cache_hit
+            cache_misses = stats.cache_miss
+        else:
+            m15 = _fetch_klines(item.symbol, "15m", _GEMINI_LIMITS["15m"], base_url, timeout)
+            h1 = _fetch_klines(item.symbol, "1h", _GEMINI_LIMITS["1h"], base_url, timeout)
+            h4 = _fetch_klines(item.symbol, "4h", _GEMINI_LIMITS["4h"], base_url, timeout)
+            d1 = _fetch_klines(item.symbol, "1d", _GEMINI_LIMITS["1d"], base_url, timeout)
 
         any_data = any([m15, h1, h4, d1])
         full_data = all([m15, h1, h4, d1])
@@ -69,10 +117,6 @@ def build_candidates(
             if not klines:
                 return {}
             out = compute_indicators(klines, tf)
-            # Expose spec field names alongside the indicator-engine outputs so
-            # the JSON sent to Gemini always contains volume_ratio/recent_high/
-            # recent_low (the engine names them *_20 / recent_swing_*). Additive
-            # aliases only — the shared indicator_engine is left untouched.
             if "volume_ratio" not in out and "volume_ratio_20" in out:
                 out["volume_ratio"] = out["volume_ratio_20"]
             if "recent_high" not in out and "recent_swing_high" in out:
@@ -101,4 +145,8 @@ def build_candidates(
             d1=ind(d1, "d1"),
         ))
 
+    logger.debug(
+        "build_candidates: count=%d cache_hit=%d cache_miss=%d",
+        len(candidates), cache_hits, cache_misses,
+    )
     return candidates
