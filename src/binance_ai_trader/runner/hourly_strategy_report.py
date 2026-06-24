@@ -64,32 +64,6 @@ def _query_hotlist_stats(con: sqlite3.Connection, since: str) -> dict[str, int]:
     return {"alerts": alerts, "open": open_, "tp1": tp1, "tp2": tp2, "sl": sl}
 
 
-def _dead_reason_for_scan(
-    con: sqlite3.Connection,
-    strategy_id: str,
-    since: str,
-    scored: int,
-    *,
-    regime_bias: str | None = None,
-) -> str:
-    """Return a short machine-readable dead reason for a scan strategy with no signals."""
-    from binance_ai_trader.diagnostics.strategy_diagnostic import _latest_combined_regime
-    has_snapshots = _safe_count(
-        con,
-        "SELECT COUNT(*) FROM analysis_snapshots WHERE strategy_id = ? AND created_at >= ?",
-        (strategy_id, since),
-    ) > 0
-    if not has_snapshots:
-        return "no_snapshots"
-    if scored > 0:
-        if regime_bias == "BEAR":
-            regime = _latest_combined_regime(con)
-            if regime and regime.upper() in ("BULL", "STRONG_BULL"):
-                return "disabled_by_regime"
-        return "filters_too_strict"
-    return "no_market_match"
-
-
 def _query_signals_by_strategy(con: sqlite3.Connection, since: str) -> dict[str, int]:
     if not (_table_exists(con, "signals") and _table_exists(con, "analysis_snapshots")):
         return {}
@@ -249,7 +223,11 @@ def build_hourly_report(
     except Exception as exc:
         return f"⚠️ 策略自检：无法连接数据库 — {exc}"
 
-    _REGIME_BIAS: dict[str, str] = {"bear_short_space80_v1": "BEAR"}
+    from binance_ai_trader.diagnostics.strategy_diagnostic import (
+        _latest_combined_regime,
+        _latest_run_id,
+        classify_scan_status,
+    )
     try:
         hotlist = _query_hotlist_stats(con, since)
         signals_by_strat = _query_signals_by_strategy(con, since)
@@ -268,15 +246,18 @@ def build_hourly_report(
         except Exception:
             pass
 
-        dead_reasons: dict[str, str] = {}
+        _latest_run = _latest_run_id(con, since)
+        _regime = _latest_combined_regime(con)
+        scan_status: dict[str, tuple[str, list[str]]] = {}
         for strategy_id, _label in _STRATEGY_ENTRIES:
-            sig = signals_by_strat.get(strategy_id, 0)
-            trade = trades_by_strat.get(strategy_id, 0)
-            if sig == 0 and trade == 0:
-                dead_reasons[strategy_id] = _dead_reason_for_scan(
-                    con, strategy_id, since, _latest_scored,
-                    regime_bias=_REGIME_BIAS.get(strategy_id),
-                )
+            scan_status[strategy_id] = classify_scan_status(
+                con, strategy_id, since,
+                scored=_latest_scored,
+                signals=signals_by_strat.get(strategy_id, 0),
+                trades=trades_by_strat.get(strategy_id, 0),
+                latest_run=_latest_run,
+                regime=_regime,
+            )
     finally:
         con.close()
 
@@ -298,19 +279,21 @@ def build_hourly_report(
     for strategy_id, label in _STRATEGY_ENTRIES:
         sig = signals_by_strat.get(strategy_id, 0)
         trade = trades_by_strat.get(strategy_id, 0)
-        dead = sig == 0 and trade == 0
-        if dead:
-            reason = dead_reasons.get(strategy_id, "no_snapshots")
-            flag = f"  ⚠️ DEAD [{reason}]"
-        elif sig > 0 and trade == 0:
-            flag = "  ⚠️ WEAK [signals_not_traded]"
+        status, reasons = scan_status.get(strategy_id, ("DEAD", ["no_snapshots"]))
+        reason = " / ".join(reasons) if reasons else ""
+        if status == "SLEEPING":
+            flag = f"  😴 SLEEPING [{reason}]"
+        elif status == "DEAD":
+            flag = f"  💀 DEAD [{reason}]"
+        elif status == "WEAK":
+            flag = f"  ⚠️ WEAK [{reason}]"
         else:
             flag = ""
         lines += ["", label, f"  • signals: {sig} | trades: {trade}{flag}"]
-        if dead:
-            alerts.append(f"⚠️ {label}：24小时无信号和交易 → DEAD [{reason}]")
-        elif sig > 0 and trade == 0:
-            alerts.append(f"⚠️ {label}：有{sig}个信号但0笔交易 → signals_not_traded")
+        if status == "DEAD":
+            alerts.append(f"💀 {label}：24小时无信号和交易 → DEAD [{reason}]")
+        elif status == "WEAK":
+            alerts.append(f"⚠️ {label}：{reason}（signals={sig} / trades={trade}）")
 
     lines += ["", "🤖 AI Macro"]
     if ai_macro is not None:

@@ -271,6 +271,26 @@ class BuildHourlyReportTest(unittest.TestCase):
         report = build_hourly_report(self._db)
         self.assertNotIn("Gemini无有效交易", report)
 
+    def test_regime_disabled_strategy_sleeping_no_alert(self):
+        from binance_ai_trader.runner.hourly_strategy_report import build_hourly_report
+        from datetime import UTC, datetime
+        con = sqlite3.connect(self._db)
+        con.execute(
+            "CREATE TABLE market_regimes (combined_regime TEXT NOT NULL,"
+            " evaluated_at TEXT NOT NULL)"
+        )
+        con.execute(
+            "INSERT INTO market_regimes (combined_regime, evaluated_at) VALUES (?,?)",
+            ("RANGE", datetime.now(UTC).isoformat(timespec="seconds")),
+        )
+        con.commit()
+        con.close()
+        report = build_hourly_report(self._db)
+        # Regime-gated strategies should render as SLEEPING (😴), not DEAD,
+        # and SLEEPING must never produce an alert line.
+        self.assertIn("😴 SLEEPING", report)
+        self.assertNotIn("→ SLEEPING", report)
+
     def test_db_connection_failure_returns_error_message(self):
         from binance_ai_trader.runner.hourly_strategy_report import build_hourly_report
         report = build_hourly_report("/nonexistent/path/db.sqlite")
