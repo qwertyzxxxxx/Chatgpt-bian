@@ -436,6 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--timeout", type=float, default=10.0)
     run_loop.add_argument("--max-retries", type=int, default=3)
     run_loop.add_argument("--research-step-bars", type=int, default=1)
+    run_loop.add_argument("--enable-auto-research", action="store_true")
     run_loop.add_argument("--poll-seconds", type=float, default=30.0)
     run_loop.add_argument("--lock-file", type=Path)
     run_loop.add_argument("--once", action="store_true")
@@ -1588,12 +1589,15 @@ def _run_loop(args: argparse.Namespace) -> int:
         evaluate=lambda: invoke(["evaluate", "--database", str(database)]),
         paper_simulate=lambda: invoke(["paper-simulate", "--database", str(database)]),
         daily_report=lambda: _daily_report(database, None, notifier),
-        auto_research=lambda: invoke([
-            "auto-research", "--database", str(database),
-            "--sectors-config", str(args.sectors_config),
-            "--baseline-config", str(args.baseline_config),
-            "--step-bars", str(args.research_step_bars),
-        ]),
+        auto_research=(
+            (lambda: invoke([
+                "auto-research", "--database", str(database),
+                "--sectors-config", str(args.sectors_config),
+                "--baseline-config", str(args.baseline_config),
+                "--step-bars", str(args.research_step_bars),
+            ]))
+            if getattr(args, "enable_auto_research", False) else None
+        ),
         collect_history=lambda: invoke([
             "collect-history", "--database", str(database), "--config", str(args.config),
             "--sectors-config", str(args.sectors_config), "--base-url", args.base_url,
