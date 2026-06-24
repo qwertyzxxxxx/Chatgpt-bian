@@ -159,6 +159,22 @@ class TestRepository(unittest.TestCase):
         self.repo.save_review("rev-001", decision)
         self.assertFalse(self.repo.has_open_review())
 
+    def test_save_review_persists_field_stats(self):
+        import json
+        decision = WatchDecision.no_trade("raw")
+        stats = {"candidate_count": 3, "unknown_ratio": 0.25}
+        self.repo.save_review("rev-fs", decision, field_stats=json.dumps(stats))
+        reviews = self.repo.recent_reviews(5)
+        row = next(r for r in reviews if r["review_id"] == "rev-fs")
+        self.assertEqual(json.loads(row["field_stats"]), stats)
+
+    def test_save_review_field_stats_defaults_empty(self):
+        decision = WatchDecision.no_trade("raw")
+        self.repo.save_review("rev-fs-default", decision)
+        reviews = self.repo.recent_reviews(5)
+        row = next(r for r in reviews if r["review_id"] == "rev-fs-default")
+        self.assertEqual(row["field_stats"], "{}")
+
     def test_save_review_trade_sets_open(self):
         self.repo.upsert_item(_make_item("BTCUSDT"))
         decision = WatchDecision(
