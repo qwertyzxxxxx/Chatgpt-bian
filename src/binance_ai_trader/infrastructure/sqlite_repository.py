@@ -431,6 +431,30 @@ class MarketDataRepository:
         ).fetchall()
         return tuple(_row_to_kline(row) for row in rows)
 
+    def load_latest_kline_close_ms(self, symbol: str, interval: str) -> int | None:
+        """Return the most recent close_time_ms for *symbol/interval*, or None."""
+        row = self._connection.execute(
+            "SELECT MAX(close_time_ms) FROM klines WHERE symbol=? AND interval=?",
+            (symbol, interval),
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+
+    def count_klines(self, symbol: str, interval: str) -> int:
+        """Return the total number of stored klines for *symbol/interval*."""
+        row = self._connection.execute(
+            "SELECT COUNT(*) FROM klines WHERE symbol=? AND interval=?",
+            (symbol, interval),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def load_earliest_kline_open_ms(self, symbol: str, interval: str) -> int | None:
+        """Return the earliest open_time_ms for *symbol/interval*, or None."""
+        row = self._connection.execute(
+            "SELECT MIN(open_time_ms) FROM klines WHERE symbol=? AND interval=?",
+            (symbol, interval),
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+
     def load_backtest_evaluation_times(
         self, start_ms: int | None = None, end_ms: int | None = None,
         required_future_bars: int = 96,
