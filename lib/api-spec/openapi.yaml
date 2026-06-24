@@ -65,6 +65,47 @@ paths:
                 items:
                   $ref: "#/components/schemas/HotlistAlertRow"
 
+  /hotlist/push-performance:
+    get:
+      operationId: getHotlistPushPerformance
+      tags: [hotlist]
+      summary: Hotlist push performance (Telegram-pushed orders only, last 24 hours)
+      responses:
+        "200":
+          description: Push performance stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HotlistPushPerformance"
+
+  /hotlist/candidate-performance:
+    get:
+      operationId: getHotlistCandidatePerformance
+      tags: [hotlist]
+      summary: Hotlist candidate pool performance (all internal candidates, last 24 hours)
+      responses:
+        "200":
+          description: Candidate performance stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HotlistCandidatePerformance"
+
+  /hotlist/recent-pushed-orders:
+    get:
+      operationId: listHotlistRecentPushedOrders
+      tags: [hotlist]
+      summary: Last 7 Telegram-pushed hotlist orders with settlement data
+      responses:
+        "200":
+          description: Recent pushed orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HotlistPushedOrderRow"
+
   /hotlist/watchlist:
     get:
       operationId: listHotlistWatchlist
@@ -335,6 +376,84 @@ components:
       required:
         - layers
         - generated_at
+
+    HotlistPushPerformance:
+      type: object
+      properties:
+        open:
+          type: integer
+        tp1:
+          type: integer
+        tp2:
+          type: integer
+        sl:
+          type: integer
+        total:
+          type: integer
+        win_rate:
+          type: integer
+        generated_at:
+          type: string
+      required:
+        - open
+        - tp1
+        - tp2
+        - sl
+        - total
+        - win_rate
+        - generated_at
+
+    HotlistCandidatePerformance:
+      type: object
+      properties:
+        open:
+          type: integer
+        tp1:
+          type: integer
+        tp2:
+          type: integer
+        sl:
+          type: integer
+        total:
+          type: integer
+        win_rate:
+          type: integer
+        generated_at:
+          type: string
+      required:
+        - open
+        - tp1
+        - tp2
+        - sl
+        - total
+        - win_rate
+        - generated_at
+
+    HotlistPushedOrderRow:
+      type: object
+      properties:
+        symbol:
+          type: string
+        direction:
+          type: string
+        entry:
+          type: ["string", "null"]
+        pushed_at:
+          type: string
+        result:
+          type: ["string", "null"]
+        pnl_pct:
+          type: ["number", "null"]
+        rr_realized:
+          type: ["number", "null"]
+        duration_minutes:
+          type: ["integer", "null"]
+        closed_at:
+          type: ["string", "null"]
+      required:
+        - symbol
+        - direction
+        - pushed_at
 
     FunnelLayerRow:
       type: object

@@ -101,6 +101,44 @@ export interface StrategyFunnelData {
   generated_at: string;
 }
 
+export interface HotlistPushPerformance {
+  open: number;
+  tp1: number;
+  tp2: number;
+  sl: number;
+  total: number;
+  win_rate: number;
+  generated_at: string;
+}
+
+export interface HotlistCandidatePerformance {
+  open: number;
+  tp1: number;
+  tp2: number;
+  sl: number;
+  total: number;
+  win_rate: number;
+  generated_at: string;
+}
+
+export interface HotlistPushedOrderRow {
+  symbol: string;
+  direction: string;
+  /** @nullable */
+  entry?: string | null;
+  pushed_at: string;
+  /** @nullable */
+  result?: string | null;
+  /** @nullable */
+  pnl_pct?: number | null;
+  /** @nullable */
+  rr_realized?: number | null;
+  /** @nullable */
+  duration_minutes?: number | null;
+  /** @nullable */
+  closed_at?: string | null;
+}
+
 export type ListHotlistAlertsParams = {
 limit?: number;
 };

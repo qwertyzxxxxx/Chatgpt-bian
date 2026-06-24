@@ -2,7 +2,10 @@ import { Router, type IRouter } from "express";
 import Database from "better-sqlite3";
 import {
   GetHotlistSummaryResponse,
+  GetHotlistPushPerformanceResponse,
+  GetHotlistCandidatePerformanceResponse,
   ListHotlistAlertsResponse,
+  ListHotlistRecentPushedOrdersResponse,
   ListHotlistWatchlistResponse,
 } from "@workspace/api-zod";
 
@@ -158,6 +161,117 @@ router.get("/hotlist/alerts", (req, res): void => {
   }
 
   const data = ListHotlistAlertsResponse.parse(rows);
+  res.json(data);
+});
+
+router.get("/hotlist/push-performance", (_req, res): void => {
+  const db = openDb(getDbPath());
+  const window24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 19);
+  const now = new Date().toISOString().slice(0, 19);
+
+  let open = 0, tp1 = 0, tp2 = 0, sl = 0;
+
+  if (db && tableExists(db, "hotlist_alerts") && tableExists(db, "strategy_results")) {
+    const rows = db.prepare(`
+      SELECT UPPER(sr.result) AS result, COUNT(DISTINCT ha.rowid) AS n
+      FROM hotlist_alerts ha
+      LEFT JOIN strategy_results sr
+        ON sr.symbol = ha.symbol
+       AND sr.direction = ha.direction
+       AND sr.entry = ha.entry
+       AND sr.strategy = 'hotlist'
+      WHERE ha.created_at >= ?
+      GROUP BY UPPER(sr.result)
+    `).all(window24h) as { result: string; n: number }[];
+
+    for (const r of rows) {
+      if (r.result === "OPEN" || r.result === "NULL") open += r.n;
+      else if (r.result === "TP1") tp1 = r.n;
+      else if (r.result === "TP2") tp2 = r.n;
+      else if (r.result === "SL") sl = r.n;
+    }
+    db.close();
+  }
+
+  const total = tp1 + tp2 + sl;
+  const win_rate = total > 0 ? Math.round(((tp1 + tp2) * 100) / total) : 0;
+
+  const data = GetHotlistPushPerformanceResponse.parse({ open, tp1, tp2, sl, total, win_rate, generated_at: now });
+  res.json(data);
+});
+
+router.get("/hotlist/candidate-performance", (_req, res): void => {
+  const db = openDb(getDbPath());
+  const window24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 19);
+  const now = new Date().toISOString().slice(0, 19);
+
+  let open = 0, tp1 = 0, tp2 = 0, sl = 0;
+
+  if (db && tableExists(db, "hotlist_outcomes")) {
+    const rows = db.prepare(`
+      SELECT UPPER(status) AS status, COUNT(*) AS n
+      FROM hotlist_outcomes
+      WHERE evaluated_at >= ?
+      GROUP BY UPPER(status)
+    `).all(window24h) as { status: string; n: number }[];
+
+    for (const r of rows) {
+      if (r.status === "OPEN") open = r.n;
+      else if (r.status === "TP1_HIT") tp1 = r.n;
+      else if (r.status === "TP2_HIT" || r.status === "WIN" || r.status === "WIN_TP2") tp2 = Math.max(tp2, r.n);
+      else if (r.status === "SL_HIT" || r.status === "LOSS") sl = Math.max(sl, r.n);
+    }
+    db.close();
+  }
+
+  const total = tp1 + tp2 + sl;
+  const win_rate = total > 0 ? Math.round(((tp1 + tp2) * 100) / total) : 0;
+
+  const data = GetHotlistCandidatePerformanceResponse.parse({ open, tp1, tp2, sl, total, win_rate, generated_at: now });
+  res.json(data);
+});
+
+router.get("/hotlist/recent-pushed-orders", (_req, res): void => {
+  const db = openDb(getDbPath());
+  const rows: unknown[] = [];
+
+  if (db && tableExists(db, "hotlist_alerts")) {
+    const hasSr = tableExists(db, "strategy_results");
+    if (hasSr) {
+      const raw = db.prepare(`
+        SELECT ha.symbol, ha.direction, ha.entry, ha.created_at AS pushed_at,
+               sr.result, sr.pnl_pct, sr.rr_realized, sr.duration_minutes, sr.closed_at
+        FROM hotlist_alerts ha
+        LEFT JOIN strategy_results sr
+          ON sr.symbol = ha.symbol
+         AND sr.direction = ha.direction
+         AND sr.entry = ha.entry
+         AND sr.strategy = 'hotlist'
+        ORDER BY ha.created_at DESC
+        LIMIT 7
+      `).all() as {
+        symbol: string; direction: string; entry: string | null; pushed_at: string;
+        result: string | null; pnl_pct: number | null; rr_realized: number | null;
+        duration_minutes: number | null; closed_at: string | null;
+      }[];
+      rows.push(...raw);
+    } else {
+      const raw = db.prepare(`
+        SELECT symbol, direction, entry, created_at AS pushed_at,
+               NULL AS result, NULL AS pnl_pct, NULL AS rr_realized,
+               NULL AS duration_minutes, NULL AS closed_at
+        FROM hotlist_alerts
+        ORDER BY created_at DESC LIMIT 7
+      `).all() as {
+        symbol: string; direction: string; entry: string | null; pushed_at: string;
+        result: null; pnl_pct: null; rr_realized: null; duration_minutes: null; closed_at: null;
+      }[];
+      rows.push(...raw);
+    }
+    db.close();
+  }
+
+  const data = ListHotlistRecentPushedOrdersResponse.parse(rows);
   res.json(data);
 });
 

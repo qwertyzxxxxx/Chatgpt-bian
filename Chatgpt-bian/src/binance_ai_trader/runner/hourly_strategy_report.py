@@ -1,0 +1,506 @@
+"""Hourly strategy self-report: queries 24-hour stats from all modules and sends to Telegram."""
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+import urllib.request
+from datetime import UTC, datetime, timedelta
+
+log = logging.getLogger(__name__)
+
+_STRATEGY_ENTRIES = [
+    ("baseline_v1",              "📈 Baseline V1"),
+    ("breakout_hunter_v1",       "🎯 Breakout Hunter V1"),
+    ("bear_short_space80_v1",    "📉 Bear Short Space80"),
+    ("capital_60_80_space80_v1", "💰 Capital 60-80 Space80"),
+    ("range_disabled_v1",        "⛔ Range Disabled V1"),
+]
+
+
+def _table_exists(con: sqlite3.Connection, table: str) -> bool:
+    return (
+        con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        is not None
+    )
+
+
+def _safe_count(con: sqlite3.Connection, sql: str, params: tuple = ()) -> int:
+    try:
+        row = con.execute(sql, params).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def _query_hotlist_stats(con: sqlite3.Connection, since: str) -> dict[str, int]:
+    alerts = 0
+    if _table_exists(con, "hotlist_alerts"):
+        alerts = _safe_count(
+            con,
+            "SELECT COUNT(*) FROM hotlist_alerts WHERE created_at >= ?",
+            (since,),
+        )
+
+    open_, tp1, tp2, sl = 0, 0, 0, 0
+    if _table_exists(con, "hotlist_outcomes"):
+        rows = con.execute(
+            "SELECT UPPER(status), COUNT(*) FROM hotlist_outcomes"
+            " WHERE evaluated_at >= ? GROUP BY status",
+            (since,),
+        ).fetchall()
+        outcome_map: dict[str, int] = {str(s): int(n) for s, n in rows}
+        open_ = outcome_map.get("OPEN", 0)
+        tp1 = outcome_map.get("TP1_HIT", 0)
+        tp2 = max(
+            outcome_map.get("WIN", 0),
+            outcome_map.get("TP2_HIT", 0),
+            outcome_map.get("WIN_TP2", 0),
+        )
+        sl = max(outcome_map.get("LOSS", 0), outcome_map.get("SL_HIT", 0))
+
+    return {"alerts": alerts, "open": open_, "tp1": tp1, "tp2": tp2, "sl": sl}
+
+
+def _query_hotlist_candidate_performance(con: sqlite3.Connection, since: str) -> dict[str, int]:
+    """Candidate pool performance: all hotlist_opportunities evaluated via hotlist_outcomes."""
+    open_, tp1, tp2, sl = 0, 0, 0, 0
+    if _table_exists(con, "hotlist_outcomes"):
+        try:
+            rows = con.execute(
+                "SELECT UPPER(status), COUNT(*) FROM hotlist_outcomes"
+                " WHERE evaluated_at >= ? GROUP BY status",
+                (since,),
+            ).fetchall()
+            m: dict[str, int] = {str(s): int(n) for s, n in rows}
+            open_ = m.get("OPEN", 0)
+            tp1 = m.get("TP1_HIT", 0)
+            tp2 = max(m.get("WIN", 0), m.get("TP2_HIT", 0), m.get("WIN_TP2", 0))
+            sl = max(m.get("LOSS", 0), m.get("SL_HIT", 0))
+        except Exception:
+            pass
+    total = tp1 + tp2 + sl
+    wins = tp1 + tp2
+    win_rate = round(wins * 100 // total) if total else 0
+    return {"open": open_, "tp1": tp1, "tp2": tp2, "sl": sl, "total": total, "win_rate": win_rate}
+
+
+def _query_hotlist_push_performance(con: sqlite3.Connection, since: str) -> dict[str, int]:
+    """Push performance: only signals actually sent to Telegram (hotlist_alerts JOIN strategy_results)."""
+    open_, tp1, tp2, sl = 0, 0, 0, 0
+    if _table_exists(con, "hotlist_alerts") and _table_exists(con, "strategy_results"):
+        try:
+            rows = con.execute(
+                """
+                SELECT UPPER(sr.result), COUNT(DISTINCT ha.rowid)
+                FROM hotlist_alerts ha
+                LEFT JOIN strategy_results sr
+                  ON sr.symbol = ha.symbol
+                 AND sr.direction = ha.direction
+                 AND sr.entry = ha.entry
+                 AND sr.strategy = 'hotlist'
+                WHERE ha.created_at >= ?
+                GROUP BY UPPER(sr.result)
+                """,
+                (since,),
+            ).fetchall()
+            m2: dict[str, int] = {str(s): int(n) for s, n in rows}
+            open_ = m2.get("OPEN", 0) + m2.get("NONE", 0)
+            tp1 = m2.get("TP1", 0)
+            tp2 = m2.get("TP2", 0)
+            sl = m2.get("SL", 0)
+        except Exception:
+            pass
+    total = tp1 + tp2 + sl
+    wins = tp1 + tp2
+    win_rate = round(wins * 100 // total) if total else 0
+    return {"open": open_, "tp1": tp1, "tp2": tp2, "sl": sl, "total": total, "win_rate": win_rate}
+
+
+def _query_last_7_pushed_orders(con: sqlite3.Connection) -> list[dict[str, object]]:
+    """Last 7 Telegram-pushed hotlist alerts with settlement data from strategy_results."""
+    if not _table_exists(con, "hotlist_alerts"):
+        return []
+    try:
+        has_sr = _table_exists(con, "strategy_results")
+        if has_sr:
+            rows = con.execute(
+                """
+                SELECT ha.symbol, ha.direction, ha.entry, ha.created_at AS pushed_at,
+                       sr.result, sr.pnl_pct, sr.rr_realized, sr.duration_minutes, sr.closed_at
+                FROM hotlist_alerts ha
+                LEFT JOIN strategy_results sr
+                  ON sr.symbol = ha.symbol
+                 AND sr.direction = ha.direction
+                 AND sr.entry = ha.entry
+                 AND sr.strategy = 'hotlist'
+                ORDER BY ha.created_at DESC
+                LIMIT 7
+                """,
+            ).fetchall()
+        else:
+            rows = con.execute(
+                """
+                SELECT symbol, direction, entry, created_at AS pushed_at,
+                       NULL, NULL, NULL, NULL, NULL
+                FROM hotlist_alerts
+                ORDER BY created_at DESC
+                LIMIT 7
+                """,
+            ).fetchall()
+        return [
+            {
+                "symbol": row[0],
+                "direction": row[1],
+                "entry": row[2],
+                "pushed_at": row[3],
+                "result": row[4],
+                "pnl_pct": row[5],
+                "rr_realized": row[6],
+                "duration_minutes": row[7],
+                "closed_at": row[8],
+            }
+            for row in rows
+        ]
+    except Exception:
+        return []
+
+
+def _query_signals_by_strategy(con: sqlite3.Connection, since: str) -> dict[str, int]:
+    if not (_table_exists(con, "signals") and _table_exists(con, "analysis_snapshots")):
+        return {}
+    rows = con.execute(
+        """
+        SELECT COALESCE(a.strategy_id, 'baseline_v1') AS sid, COUNT(*) AS n
+        FROM signals s
+        LEFT JOIN analysis_snapshots a ON a.snapshot_id = s.snapshot_id
+        WHERE s.generated_at >= ?
+        GROUP BY sid
+        """,
+        (since,),
+    ).fetchall()
+    return {str(row[0]): int(row[1]) for row in rows}
+
+
+def _query_trades_by_strategy(con: sqlite3.Connection, since: str) -> dict[str, int]:
+    if not (
+        _table_exists(con, "paper_trades")
+        and _table_exists(con, "signals")
+        and _table_exists(con, "analysis_snapshots")
+    ):
+        return {}
+    rows = con.execute(
+        """
+        SELECT COALESCE(a.strategy_id, 'baseline_v1') AS sid, COUNT(*) AS n
+        FROM paper_trades pt
+        JOIN signals s ON s.run_id = pt.signal_run_id AND s.symbol = pt.symbol
+        LEFT JOIN analysis_snapshots a ON a.snapshot_id = s.snapshot_id
+        WHERE pt.processed_at >= ?
+        GROUP BY sid
+        """,
+        (since,),
+    ).fetchall()
+    return {str(row[0]): int(row[1]) for row in rows}
+
+
+def _query_ai_macro_stats(ai_macro_db: str | None, since: str) -> dict[str, int] | None:
+    if not ai_macro_db:
+        return None
+    try:
+        con = sqlite3.connect(ai_macro_db)
+        con.row_factory = sqlite3.Row
+        if not _table_exists(con, "ai_macro_trades"):
+            con.close()
+            return None
+        candidates = _safe_count(
+            con,
+            "SELECT COUNT(*) FROM ai_macro_trades WHERE created_at >= ?",
+            (since,),
+        )
+        trades = _safe_count(
+            con,
+            "SELECT COUNT(*) FROM ai_macro_trades WHERE created_at >= ?"
+            " AND status NOT IN ('SKIPPED','PENDING')",
+            (since,),
+        )
+        con.close()
+        return {"candidates": candidates, "trades": trades}
+    except Exception as exc:
+        log.debug("ai_macro stats failed: %s", exc)
+        return None
+
+
+def _query_gemini_stats(con: sqlite3.Connection, since: str) -> dict[str, object]:
+    result: dict[str, object] = {
+        "reviews": 0,
+        "TRADE": 0,
+        "NO_TRADE": 0,
+        "SKIPPED": 0,
+        "top_reasons": [],
+    }
+    if not _table_exists(con, "gemini_committee_reviews"):
+        return result
+
+    total = _safe_count(
+        con,
+        "SELECT COUNT(*) FROM gemini_committee_reviews WHERE created_at >= ?",
+        (since,),
+    )
+    result["reviews"] = total
+    if total == 0:
+        return result
+
+    rows = con.execute(
+        "SELECT UPPER(decision), COUNT(*) FROM gemini_committee_reviews"
+        " WHERE created_at >= ? GROUP BY UPPER(decision)",
+        (since,),
+    ).fetchall()
+    for decision, cnt in rows:
+        key = str(decision)
+        if key in ("TRADE", "NO_TRADE", "SKIPPED"):
+            result[key] = int(cnt)
+
+    skipped_by_status = _safe_count(
+        con,
+        "SELECT COUNT(*) FROM gemini_committee_reviews"
+        " WHERE created_at >= ? AND UPPER(status) = 'SKIPPED'",
+        (since,),
+    )
+    result["SKIPPED"] = max(int(result.get("SKIPPED", 0)), skipped_by_status)
+
+    reason_rows = con.execute(
+        """
+        SELECT risk_level, COUNT(*) AS n
+        FROM gemini_committee_reviews
+        WHERE created_at >= ? AND UPPER(decision) = 'NO_TRADE' AND risk_level IS NOT NULL
+        GROUP BY risk_level ORDER BY n DESC LIMIT 3
+        """,
+        (since,),
+    ).fetchall()
+    result["top_reasons"] = [f"{row[0]}×{row[1]}" for row in reason_rows]
+    return result
+
+
+def _query_leaderboard_stats(lw_db: str | None, since: str) -> dict[str, int]:
+    result: dict[str, int] = {"pool_size": 0, "reviews": 0, "TRADE": 0, "NO_TRADE": 0}
+    if not lw_db:
+        return result
+    try:
+        con = sqlite3.connect(lw_db)
+        if _table_exists(con, "leaderboard_watch_items"):
+            result["pool_size"] = _safe_count(
+                con,
+                "SELECT COUNT(*) FROM leaderboard_watch_items"
+                " WHERE status IN ('ACTIVE', 'NEW', 'OPEN')",
+            )
+        if _table_exists(con, "leaderboard_watch_reviews"):
+            result["reviews"] = _safe_count(
+                con,
+                "SELECT COUNT(*) FROM leaderboard_watch_reviews WHERE created_at >= ?",
+                (since,),
+            )
+            for decision in ("TRADE", "NO_TRADE"):
+                result[decision] = _safe_count(
+                    con,
+                    "SELECT COUNT(*) FROM leaderboard_watch_reviews"
+                    " WHERE created_at >= ? AND UPPER(decision) = ?",
+                    (since, decision),
+                )
+        con.close()
+    except Exception as exc:
+        log.debug("leaderboard stats failed: %s", exc)
+    return result
+
+
+def build_hourly_report(
+    market_db: str,
+    ai_macro_db: str | None = None,
+    lw_db: str | None = None,
+    gemini_committee_enabled: bool = True,
+) -> str:
+    now = datetime.now(UTC)
+    since = (now - timedelta(hours=24)).isoformat(timespec="seconds")
+
+    try:
+        con = sqlite3.connect(market_db)
+    except Exception as exc:
+        return f"⚠️ 策略自检：无法连接数据库 — {exc}"
+
+    from binance_ai_trader.diagnostics.strategy_diagnostic import (
+        _latest_combined_regime,
+        _latest_run_id,
+        classify_scan_status,
+    )
+    try:
+        hotlist = _query_hotlist_stats(con, since)
+        hotlist_candidate_perf = _query_hotlist_candidate_performance(con, since)
+        hotlist_push_perf = _query_hotlist_push_performance(con, since)
+        last_7_orders = _query_last_7_pushed_orders(con)
+        signals_by_strat = _query_signals_by_strategy(con, since)
+        trades_by_strat = _query_trades_by_strategy(con, since)
+        gemini = _query_gemini_stats(con, since)
+
+        _latest_scored = 0
+        try:
+            row = con.execute(
+                "SELECT COUNT(*) FROM scores s"
+                " JOIN collection_runs cr ON cr.id = s.run_id"
+                " WHERE cr.status = 'SUCCEEDED' AND cr.started_at >= ?",
+                (since,),
+            ).fetchone()
+            _latest_scored = int(row[0]) if row else 0
+        except Exception:
+            pass
+
+        _latest_run = _latest_run_id(con, since)
+        _regime = _latest_combined_regime(con)
+        scan_status: dict[str, tuple[str, list[str]]] = {}
+        for strategy_id, _label in _STRATEGY_ENTRIES:
+            scan_status[strategy_id] = classify_scan_status(
+                con, strategy_id, since,
+                scored=_latest_scored,
+                signals=signals_by_strat.get(strategy_id, 0),
+                trades=trades_by_strat.get(strategy_id, 0),
+                latest_run=_latest_run,
+                regime=_regime,
+            )
+    finally:
+        con.close()
+
+    ai_macro = _query_ai_macro_stats(ai_macro_db, since)
+    lw = _query_leaderboard_stats(lw_db, since)
+
+    alerts: list[str] = []
+
+    _c = hotlist_candidate_perf
+    _p = hotlist_push_perf
+    lines: list[str] = [
+        "📊 策略自检报告",
+        f"{now.strftime('%Y-%m-%d %H:%M UTC')}（过去24小时）",
+        "",
+        "🔔 Hotlist",
+        f"  • alerts: {hotlist['alerts']}",
+        f"  • open: {hotlist['open']} | TP1: {hotlist['tp1']}"
+        f" | TP2: {hotlist['tp2']} | SL: {hotlist['sl']}",
+        "",
+        "📊 候选池绩效（hotlist_outcomes）",
+        f"  • 结算: {_c['total']}  胜率: {_c['win_rate']}%",
+        f"  • TP1: {_c['tp1']} | TP2: {_c['tp2']} | SL: {_c['sl']} | open: {_c['open']}",
+        "",
+        "📤 推送绩效（Telegram推送 × strategy_results）",
+        f"  • 结算: {_p['total']}  胜率: {_p['win_rate']}%",
+        f"  • TP1: {_p['tp1']} | TP2: {_p['tp2']} | SL: {_p['sl']} | open: {_p['open']}",
+    ]
+
+    if last_7_orders:
+        lines += ["", "📌 最近7条推送订单结算"]
+        for o in last_7_orders:
+            result_str = str(o["result"]) if o["result"] is not None else "未结算"
+            pnl_str = f"  {o['pnl_pct']:+.2f}%" if o["pnl_pct"] is not None else ""
+            lines.append(
+                f"  {o['symbol']} {o['direction']} @{o['entry']}  [{result_str}{pnl_str}]"
+            )
+
+    for strategy_id, label in _STRATEGY_ENTRIES:
+        sig = signals_by_strat.get(strategy_id, 0)
+        trade = trades_by_strat.get(strategy_id, 0)
+        status, reasons = scan_status.get(strategy_id, ("DEAD", ["no_snapshots"]))
+        reason = " / ".join(reasons) if reasons else ""
+        if status == "SLEEPING":
+            flag = f"  😴 SLEEPING [{reason}]"
+        elif status == "DEAD":
+            flag = f"  💀 DEAD [{reason}]"
+        elif status == "WEAK":
+            flag = f"  ⚠️ WEAK [{reason}]"
+        else:
+            flag = ""
+        lines += ["", label, f"  • signals: {sig} | trades: {trade}{flag}"]
+        if status == "DEAD":
+            alerts.append(f"💀 {label}：24小时无信号和交易 → DEAD [{reason}]")
+        elif status == "WEAK":
+            alerts.append(f"⚠️ {label}：{reason}（signals={sig} / trades={trade}）")
+
+    lines += ["", "🤖 AI Macro"]
+    if ai_macro is not None:
+        lines.append(
+            f"  • candidates: {ai_macro['candidates']} | trades: {ai_macro['trades']}"
+        )
+    else:
+        lines.append("  • 未启用或无数据")
+
+    if not gemini_committee_enabled:
+        # Committee is disabled by default in production. Show its status but skip
+        # all stats and the 0-TRADE alert (the code remains intact, just unused).
+        lines += [
+            "",
+            "🧠 Gemini Committee: DISABLED",
+        ]
+    else:
+        g_reviews = int(gemini["reviews"])
+        g_trade = int(gemini["TRADE"])
+        g_no_trade = int(gemini["NO_TRADE"])
+        g_skipped = int(gemini["SKIPPED"])
+        top_reasons: list[str] = list(gemini.get("top_reasons", []))  # type: ignore[arg-type]
+
+        lines += [
+            "",
+            "🧠 Gemini Committee",
+            f"  • reviews: {g_reviews} | TRADE: {g_trade}"
+            f" | NO_TRADE: {g_no_trade} | SKIPPED: {g_skipped}",
+        ]
+        if top_reasons:
+            lines.append(f"  • 主要拒绝原因: {', '.join(top_reasons)}")
+        if g_reviews > 0 and g_trade == 0:
+            lines.append("  ⚠️ Gemini无有效交易")
+            alerts.append(
+                f"⚠️ Gemini：已审查{g_reviews}次，0次TRADE → 请检查候选质量或阈值"
+            )
+
+    lines += [
+        "",
+        "👀 Leaderboard Watch",
+        f"  • pool: {lw['pool_size']} | reviews: {lw['reviews']}"
+        f" | TRADE: {lw['TRADE']} | NO_TRADE: {lw['NO_TRADE']}",
+    ]
+
+    if alerts:
+        lines += ["", "━━━━━━━━━━━━", *alerts]
+
+    lines += ["", "仅供研究 | 不进行实盘交易"]
+    return "\n".join(lines)
+
+
+def send_hourly_report(
+    market_db: str,
+    bot_token: str,
+    chat_id: str,
+    ai_macro_db: str | None = None,
+    lw_db: str | None = None,
+    timeout: int = 10,
+    gemini_committee_enabled: bool = True,
+) -> bool:
+    text = build_hourly_report(
+        market_db,
+        ai_macro_db=ai_macro_db,
+        lw_db=lw_db,
+        gemini_committee_enabled=gemini_committee_enabled,
+    )
+    _MAX = 4096
+    ok = True
+    for chunk in [text[i: i + _MAX] for i in range(0, len(text), _MAX)]:
+        payload = json.dumps({"chat_id": chat_id, "text": chunk}).encode()
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        try:
+            req = urllib.request.Request(
+                url, data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout):
+                pass
+        except Exception as exc:
+            log.warning("Hourly report send failed: %s", exc)
+            ok = False
+    return ok

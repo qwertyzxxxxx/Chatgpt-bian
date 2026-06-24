@@ -18,6 +18,9 @@ import type {
 import type {
   HealthStatus,
   HotlistAlertRow,
+  HotlistCandidatePerformance,
+  HotlistPushPerformance,
+  HotlistPushedOrderRow,
   HotlistSummary,
   HotlistWatchlistRow,
   LeaderboardReviewRow,
@@ -277,6 +280,117 @@ export function useListHotlistAlerts<TData = Awaited<ReturnType<typeof listHotli
 
 
 
+
+
+export const getGetHotlistPushPerformanceUrl = () => {
+  return `/api/hotlist/push-performance`
+}
+
+/**
+ * @summary Hotlist push performance (Telegram-pushed orders only, last 24 hours)
+ */
+export const getHotlistPushPerformance = async ( options?: RequestInit): Promise<HotlistPushPerformance> => {
+  return customFetch<HotlistPushPerformance>(getGetHotlistPushPerformanceUrl(), { ...options, method: 'GET' });
+}
+
+export const getGetHotlistPushPerformanceQueryKey = () => {
+  return [`/api/hotlist/push-performance`] as const;
+}
+
+export const getGetHotlistPushPerformanceQueryOptions = <TData = Awaited<ReturnType<typeof getHotlistPushPerformance>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHotlistPushPerformance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}) => {
+  const {query: queryOptions, request: requestOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetHotlistPushPerformanceQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getHotlistPushPerformance>>> = ({ signal }) => getHotlistPushPerformance({ signal, ...requestOptions });
+  return { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getHotlistPushPerformance>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetHotlistPushPerformanceQueryResult = NonNullable<Awaited<ReturnType<typeof getHotlistPushPerformance>>>
+export type GetHotlistPushPerformanceQueryError = ErrorType<unknown>
+
+/**
+ * @summary Hotlist push performance (Telegram-pushed orders only, last 24 hours)
+ */
+export function useGetHotlistPushPerformance<TData = Awaited<ReturnType<typeof getHotlistPushPerformance>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHotlistPushPerformance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetHotlistPushPerformanceQueryOptions(options)
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+export const getGetHotlistCandidatePerformanceUrl = () => {
+  return `/api/hotlist/candidate-performance`
+}
+
+/**
+ * @summary Hotlist candidate pool performance (all internal candidates, last 24 hours)
+ */
+export const getHotlistCandidatePerformance = async ( options?: RequestInit): Promise<HotlistCandidatePerformance> => {
+  return customFetch<HotlistCandidatePerformance>(getGetHotlistCandidatePerformanceUrl(), { ...options, method: 'GET' });
+}
+
+export const getGetHotlistCandidatePerformanceQueryKey = () => {
+  return [`/api/hotlist/candidate-performance`] as const;
+}
+
+export const getGetHotlistCandidatePerformanceQueryOptions = <TData = Awaited<ReturnType<typeof getHotlistCandidatePerformance>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHotlistCandidatePerformance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}) => {
+  const {query: queryOptions, request: requestOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetHotlistCandidatePerformanceQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getHotlistCandidatePerformance>>> = ({ signal }) => getHotlistCandidatePerformance({ signal, ...requestOptions });
+  return { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getHotlistCandidatePerformance>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetHotlistCandidatePerformanceQueryResult = NonNullable<Awaited<ReturnType<typeof getHotlistCandidatePerformance>>>
+export type GetHotlistCandidatePerformanceQueryError = ErrorType<unknown>
+
+/**
+ * @summary Hotlist candidate pool performance (all internal candidates, last 24 hours)
+ */
+export function useGetHotlistCandidatePerformance<TData = Awaited<ReturnType<typeof getHotlistCandidatePerformance>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHotlistCandidatePerformance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetHotlistCandidatePerformanceQueryOptions(options)
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+export const getListHotlistRecentPushedOrdersUrl = () => {
+  return `/api/hotlist/recent-pushed-orders`
+}
+
+/**
+ * @summary Last 7 Telegram-pushed hotlist orders with settlement data
+ */
+export const listHotlistRecentPushedOrders = async ( options?: RequestInit): Promise<HotlistPushedOrderRow[]> => {
+  return customFetch<HotlistPushedOrderRow[]>(getListHotlistRecentPushedOrdersUrl(), { ...options, method: 'GET' });
+}
+
+export const getListHotlistRecentPushedOrdersQueryKey = () => {
+  return [`/api/hotlist/recent-pushed-orders`] as const;
+}
+
+export const getListHotlistRecentPushedOrdersQueryOptions = <TData = Awaited<ReturnType<typeof listHotlistRecentPushedOrders>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listHotlistRecentPushedOrders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}) => {
+  const {query: queryOptions, request: requestOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListHotlistRecentPushedOrdersQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listHotlistRecentPushedOrders>>> = ({ signal }) => listHotlistRecentPushedOrders({ signal, ...requestOptions });
+  return { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listHotlistRecentPushedOrders>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListHotlistRecentPushedOrdersQueryResult = NonNullable<Awaited<ReturnType<typeof listHotlistRecentPushedOrders>>>
+export type ListHotlistRecentPushedOrdersQueryError = ErrorType<unknown>
+
+/**
+ * @summary Last 7 Telegram-pushed hotlist orders with settlement data
+ */
+export function useListHotlistRecentPushedOrders<TData = Awaited<ReturnType<typeof listHotlistRecentPushedOrders>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listHotlistRecentPushedOrders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListHotlistRecentPushedOrdersQueryOptions(options)
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & { queryKey: QueryKey };
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 
 export const getListHotlistWatchlistUrl = () => {
