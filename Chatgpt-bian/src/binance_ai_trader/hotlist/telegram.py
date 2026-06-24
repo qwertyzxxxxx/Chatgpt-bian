@@ -59,9 +59,15 @@ def format_hotlist_alert_batch_message(
         change_sign = "+" if plan.change_24h_pct > 0 else ""
         sentiment_str = f"  {plan.sentiment}" if plan.sentiment else ""
         rank_score = abs(plan.change_24h_pct)
+        stop_pct = abs((plan.suggested_limit_entry - plan.stop_loss) / plan.suggested_limit_entry * 100)
         lines += [
             f"#{i} {direction_emoji} {alert.symbol}  {alert.direction}{sentiment_str}",
-            f"   排名分: |24h|={rank_score:.2f}%  量: {int(plan.quote_volume / 1_000_000):.0f}M USDT",
+            f"   排名分:",
+            f"     |24h涨跌|: {rank_score:.2f}%",
+            f"     成交额: {int(plan.quote_volume / 1_000_000):.0f}M USDT",
+            f"     量比15m: {plan.volume_ratio_15m:.2f}x",
+            f"     止损: {stop_pct:.2f}%",
+            f"     RR: {plan.rr}",
             f"   24h涨跌: {change_sign}{plan.change_24h_pct:.2f}%",
             f"   当前价: {plan.current_price}",
             f"   买入: {plan.suggested_limit_entry}",

@@ -1,4 +1,11 @@
-import { useGetHotlistSummary, useListHotlistAlerts, useListHotlistWatchlist } from "@workspace/api-client-react";
+import {
+  useGetHotlistSummary,
+  useListHotlistAlerts,
+  useListHotlistWatchlist,
+  useGetHotlistPushPerformance,
+  useGetHotlistCandidatePerformance,
+  useListHotlistRecentPushedOrders,
+} from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,12 +25,75 @@ function StatCard({ title, value, sub }: { title: string; value: string | number
   );
 }
 
+function PerfCard({
+  title,
+  sub,
+  tp1,
+  tp2,
+  sl,
+  total,
+  win_rate,
+  open,
+  isLoading,
+}: {
+  title: string;
+  sub?: string;
+  tp1: number;
+  tp2: number;
+  sl: number;
+  total: number;
+  win_rate: number;
+  open: number;
+  isLoading: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
+        {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-6 w-24" />
+            <Skeleton className="h-4 w-40" />
+          </div>
+        ) : (
+          <>
+            <div className="text-2xl font-bold">
+              {win_rate}%{" "}
+              <span className="text-sm font-normal text-muted-foreground">胜率</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              结算 {total} | TP1 {tp1} · TP2 {tp2} · SL {sl} | 持仓 {open}
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function resultBadge(result: string | null | undefined) {
+  if (!result) return <Badge variant="outline" className="text-muted-foreground">未结算</Badge>;
+  if (result === "TP2") return <Badge className="bg-green-600 text-white">TP2</Badge>;
+  if (result === "TP1") return <Badge className="bg-emerald-500 text-white">TP1</Badge>;
+  if (result === "SL") return <Badge variant="destructive">SL</Badge>;
+  if (result === "OPEN") return <Badge variant="secondary">OPEN</Badge>;
+  return <Badge variant="outline">{result}</Badge>;
+}
+
 export default function HotlistPage() {
   const summary = useGetHotlistSummary();
   const alerts = useListHotlistAlerts({ limit: 30 });
   const watchlist = useListHotlistWatchlist();
+  const pushPerf = useGetHotlistPushPerformance();
+  const candidatePerf = useGetHotlistCandidatePerformance();
+  const recentOrders = useListHotlistRecentPushedOrders();
 
   const s = summary.data;
+  const pp = pushPerf.data;
+  const cp = candidatePerf.data;
 
   return (
     <div className="space-y-6">
@@ -49,6 +119,86 @@ export default function HotlistPage() {
           </>
         )}
       </div>
+
+      {/* Performance cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <PerfCard
+          title="📤 推送绩效"
+          sub="实际 Telegram 推送订单 × strategy_results（过去 24h）"
+          tp1={pp?.tp1 ?? 0}
+          tp2={pp?.tp2 ?? 0}
+          sl={pp?.sl ?? 0}
+          total={pp?.total ?? 0}
+          win_rate={pp?.win_rate ?? 0}
+          open={pp?.open ?? 0}
+          isLoading={pushPerf.isLoading}
+        />
+        <PerfCard
+          title="📊 候选池绩效"
+          sub="所有内部候选 × hotlist_outcomes（过去 24h）"
+          tp1={cp?.tp1 ?? 0}
+          tp2={cp?.tp2 ?? 0}
+          sl={cp?.sl ?? 0}
+          total={cp?.total ?? 0}
+          win_rate={cp?.win_rate ?? 0}
+          open={cp?.open ?? 0}
+          isLoading={candidatePerf.isLoading}
+        />
+      </div>
+
+      {/* Last 7 pushed orders */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">📌 最近7条推送订单结算</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {recentOrders.isLoading ? (
+            <div className="p-4 space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+            </div>
+          ) : !recentOrders.data?.length ? (
+            <p className="p-4 text-sm text-muted-foreground">暂无推送订单数据</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Symbol</TableHead>
+                  <TableHead>方向</TableHead>
+                  <TableHead>买入价</TableHead>
+                  <TableHead>结果</TableHead>
+                  <TableHead>PnL%</TableHead>
+                  <TableHead>RR实现</TableHead>
+                  <TableHead>推送时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recentOrders.data.map((row, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-mono font-semibold">{row.symbol}</TableCell>
+                    <TableCell>
+                      <Badge variant={row.direction === "LONG" ? "default" : "destructive"}>
+                        {row.direction}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{row.entry ?? "—"}</TableCell>
+                    <TableCell>{resultBadge(row.result)}</TableCell>
+                    <TableCell className={
+                      row.pnl_pct == null ? "text-muted-foreground" :
+                      row.pnl_pct >= 0 ? "text-green-600 font-semibold" : "text-red-500 font-semibold"
+                    }>
+                      {row.pnl_pct != null ? `${row.pnl_pct >= 0 ? "+" : ""}${row.pnl_pct.toFixed(2)}%` : "—"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">
+                      {row.rr_realized != null ? row.rr_realized.toFixed(2) : "—"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">{row.pushed_at}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Top symbols */}
       {s?.top_symbols && s.top_symbols.length > 0 && (
