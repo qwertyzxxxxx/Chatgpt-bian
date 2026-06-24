@@ -35,7 +35,47 @@ def format_status(status: PoolStatus) -> list[str]:
     return _chunks(body)
 
 
-def format_review(decision: WatchDecision) -> list[str]:
+def _format_no_trade_diagnostics(decision: WatchDecision, stats: dict | None) -> str:
+    """Build the NO_TRADE diagnostic block: candidate count, data quality, top
+    reject reasons, missing-fields Top5, and risk distribution. Returns an empty
+    string when no stats are supplied (preserving the legacy message shape)."""
+    if not stats:
+        return ""
+
+    section = "\n── 诊断 ──\n"
+    section += f"候选数量：{stats.get('candidate_count', 0)}\n"
+    section += f"数据质量：{decision.data_quality}\n"
+
+    risk = stats.get("risk_distribution") or {}
+    section += (
+        "风险分布："
+        f"HIGH {risk.get('HIGH', 0)} / "
+        f"MEDIUM {risk.get('MEDIUM', 0)} / "
+        f"LOW {risk.get('LOW', 0)}\n"
+    )
+
+    # Aggregate reject reasons (per-symbol) into counts, highest first.
+    reason_counts: dict[str, int] = {}
+    for rj in decision.reject_reasons:
+        reason = str(rj.get("reason", "?")).strip() or "?"
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    if reason_counts:
+        section += "\n主要拒绝原因 Top:\n"
+        top_reasons = sorted(reason_counts.items(), key=lambda x: (-x[1], x[0]))[:5]
+        for reason, count in top_reasons:
+            section += f"• {reason} ×{count}\n"
+
+    missing = stats.get("missing_field_counts") or {}
+    if missing:
+        section += "\n缺失字段 Top5:\n"
+        top_missing = sorted(missing.items(), key=lambda x: (-x[1], x[0]))[:5]
+        for field, count in top_missing:
+            section += f"• {field} ×{count}\n"
+
+    return section
+
+
+def format_review(decision: WatchDecision, stats: dict | None = None) -> list[str]:
     if decision.decision == "NO_TRADE":
         body = (
             "🤖 排行榜 Gemini 建议\n"
@@ -47,6 +87,7 @@ def format_review(decision: WatchDecision) -> list[str]:
         )
         for r in decision.reasons:
             body += f"• {r}\n"
+        body += _format_no_trade_diagnostics(decision, stats)
         body += "\n仅供研究 | 不进行实盘交易"
         return _chunks(body)
 
