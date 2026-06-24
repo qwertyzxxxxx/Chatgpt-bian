@@ -1,0 +1,25 @@
+{
+  "strategy_id": "capital_60_80_space80_v1",
+  "name": "Capital 60-80 Space 60 V1",
+  "description": "BULL-only variant targeting capital accumulation phase (capital_score 60-80, pre-surge window). Minimum space score lowered to 60 to reflect pre-breakout conditions. SLEEPING in BEAR and RANGE regimes.",
+  "scoring_weights": {
+    "trend": 30.0,
+    "volume": 20.0,
+    "momentum": 20.0,
+    "structure": 15.0,
+    "risk": 15.0
+  },
+  "range_min_score": 65.0,
+  "sector_medium_min_score": 85.0,
+  "sector_weak_min_score": 90.0,
+  "entry_distance_min_pct": -3.0,
+  "entry_distance_max_pct": 1.0,
+  "max_stop_loss_pct": 7.0,
+  "min_rr_tp2": 2.0,
+  "evaluation_window_bars": 96,
+  "enabled_regimes": ["BULL"],
+  "enabled_directions": ["LONG", "SHORT"],
+  "capital_score_min": 60.0,
+  "capital_score_max": 80.0,
+  "space_score_min": 60.0
+}
