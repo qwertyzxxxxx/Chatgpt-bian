@@ -68,7 +68,18 @@ def build_candidates(
         def ind(klines: list[dict], tf: str) -> dict:
             if not klines:
                 return {}
-            return compute_indicators(klines, tf)
+            out = compute_indicators(klines, tf)
+            # Expose spec field names alongside the indicator-engine outputs so
+            # the JSON sent to Gemini always contains volume_ratio/recent_high/
+            # recent_low (the engine names them *_20 / recent_swing_*). Additive
+            # aliases only — the shared indicator_engine is left untouched.
+            if "volume_ratio" not in out and "volume_ratio_20" in out:
+                out["volume_ratio"] = out["volume_ratio_20"]
+            if "recent_high" not in out and "recent_swing_high" in out:
+                out["recent_high"] = out["recent_swing_high"]
+            if "recent_low" not in out and "recent_swing_low" in out:
+                out["recent_low"] = out["recent_swing_low"]
+            return out
 
         candidates.append(WatchCandidateForGemini(
             symbol=item.symbol,

@@ -64,32 +64,6 @@ def _query_hotlist_stats(con: sqlite3.Connection, since: str) -> dict[str, int]:
     return {"alerts": alerts, "open": open_, "tp1": tp1, "tp2": tp2, "sl": sl}
 
 
-def _dead_reason_for_scan(
-    con: sqlite3.Connection,
-    strategy_id: str,
-    since: str,
-    scored: int,
-    *,
-    regime_bias: str | None = None,
-) -> str:
-    """Return a short machine-readable dead reason for a scan strategy with no signals."""
-    from binance_ai_trader.diagnostics.strategy_diagnostic import _latest_combined_regime
-    has_snapshots = _safe_count(
-        con,
-        "SELECT COUNT(*) FROM analysis_snapshots WHERE strategy_id = ? AND created_at >= ?",
-        (strategy_id, since),
-    ) > 0
-    if not has_snapshots:
-        return "no_snapshots"
-    if scored > 0:
-        if regime_bias == "BEAR":
-            regime = _latest_combined_regime(con)
-            if regime and regime.upper() in ("BULL", "STRONG_BULL"):
-                return "disabled_by_regime"
-        return "filters_too_strict"
-    return "no_market_match"
-
-
 def _query_signals_by_strategy(con: sqlite3.Connection, since: str) -> dict[str, int]:
     if not (_table_exists(con, "signals") and _table_exists(con, "analysis_snapshots")):
         return {}
@@ -240,6 +214,7 @@ def build_hourly_report(
     market_db: str,
     ai_macro_db: str | None = None,
     lw_db: str | None = None,
+    gemini_committee_enabled: bool = True,
 ) -> str:
     now = datetime.now(UTC)
     since = (now - timedelta(hours=24)).isoformat(timespec="seconds")
@@ -249,16 +224,18 @@ def build_hourly_report(
     except Exception as exc:
         return f"⚠️ 策略自检：无法连接数据库 — {exc}"
 
-    _REGIME_BIAS = {"bear_short_space80_v1": "BEAR"}
-    _latest_scored = 0
-    _strategy_flags: dict[str, tuple[str, str | None]] = {}
-
+    from binance_ai_trader.diagnostics.strategy_diagnostic import (
+        _latest_combined_regime,
+        _latest_run_id,
+        classify_scan_status,
+    )
     try:
         hotlist = _query_hotlist_stats(con, since)
         signals_by_strat = _query_signals_by_strategy(con, since)
         trades_by_strat = _query_trades_by_strategy(con, since)
         gemini = _query_gemini_stats(con, since)
 
+        _latest_scored = 0
         try:
             row = con.execute(
                 "SELECT COUNT(*) FROM scores s"
@@ -270,23 +247,18 @@ def build_hourly_report(
         except Exception:
             pass
 
+        _latest_run = _latest_run_id(con, since)
+        _regime = _latest_combined_regime(con)
+        scan_status: dict[str, tuple[str, list[str]]] = {}
         for strategy_id, _label in _STRATEGY_ENTRIES:
-            sig = signals_by_strat.get(strategy_id, 0)
-            trade = trades_by_strat.get(strategy_id, 0)
-            dead = sig == 0 and trade == 0
-            if dead:
-                reason: str | None = _dead_reason_for_scan(
-                    con, strategy_id, since, _latest_scored,
-                    regime_bias=_REGIME_BIAS.get(strategy_id),
-                )
-                flag = f"  ⚠️ DEAD [{reason}]"
-            elif sig > 0 and trade == 0:
-                reason = None
-                flag = "  ⚠️ WEAK [signals_not_traded]"
-            else:
-                reason = None
-                flag = ""
-            _strategy_flags[strategy_id] = (flag, reason)
+            scan_status[strategy_id] = classify_scan_status(
+                con, strategy_id, since,
+                scored=_latest_scored,
+                signals=signals_by_strat.get(strategy_id, 0),
+                trades=trades_by_strat.get(strategy_id, 0),
+                latest_run=_latest_run,
+                regime=_regime,
+            )
     finally:
         con.close()
 
@@ -308,15 +280,21 @@ def build_hourly_report(
     for strategy_id, label in _STRATEGY_ENTRIES:
         sig = signals_by_strat.get(strategy_id, 0)
         trade = trades_by_strat.get(strategy_id, 0)
-        dead = sig == 0 and trade == 0
-        flag, reason = _strategy_flags.get(strategy_id, ("", None))
+        status, reasons = scan_status.get(strategy_id, ("DEAD", ["no_snapshots"]))
+        reason = " / ".join(reasons) if reasons else ""
+        if status == "SLEEPING":
+            flag = f"  😴 SLEEPING [{reason}]"
+        elif status == "DEAD":
+            flag = f"  💀 DEAD [{reason}]"
+        elif status == "WEAK":
+            flag = f"  ⚠️ WEAK [{reason}]"
+        else:
+            flag = ""
         lines += ["", label, f"  • signals: {sig} | trades: {trade}{flag}"]
-        if dead and reason is not None:
-            alerts.append(f"⚠️ {label}：24小时无信号和交易 → DEAD [{reason}]")
-        elif dead:
-            alerts.append(f"⚠️ {label}：24小时无信号和交易 → DEAD")
-        elif sig > 0 and trade == 0:
-            alerts.append(f"⚠️ {label}：有{sig}个信号但0笔交易 → signals_not_traded")
+        if status == "DEAD":
+            alerts.append(f"💀 {label}：24小时无信号和交易 → DEAD [{reason}]")
+        elif status == "WEAK":
+            alerts.append(f"⚠️ {label}：{reason}（signals={sig} / trades={trade}）")
 
     lines += ["", "🤖 AI Macro"]
     if ai_macro is not None:
@@ -326,25 +304,33 @@ def build_hourly_report(
     else:
         lines.append("  • 未启用或无数据")
 
-    g_reviews = int(gemini["reviews"])
-    g_trade = int(gemini["TRADE"])
-    g_no_trade = int(gemini["NO_TRADE"])
-    g_skipped = int(gemini["SKIPPED"])
-    top_reasons: list[str] = list(gemini.get("top_reasons", []))  # type: ignore[arg-type]
+    if not gemini_committee_enabled:
+        # Committee is disabled by default in production. Show its status but skip
+        # all stats and the 0-TRADE alert (the code remains intact, just unused).
+        lines += [
+            "",
+            "🧠 Gemini Committee: DISABLED",
+        ]
+    else:
+        g_reviews = int(gemini["reviews"])
+        g_trade = int(gemini["TRADE"])
+        g_no_trade = int(gemini["NO_TRADE"])
+        g_skipped = int(gemini["SKIPPED"])
+        top_reasons: list[str] = list(gemini.get("top_reasons", []))  # type: ignore[arg-type]
 
-    lines += [
-        "",
-        "🧠 Gemini Committee",
-        f"  • reviews: {g_reviews} | TRADE: {g_trade}"
-        f" | NO_TRADE: {g_no_trade} | SKIPPED: {g_skipped}",
-    ]
-    if top_reasons:
-        lines.append(f"  • 主要拒绝原因: {', '.join(top_reasons)}")
-    if g_reviews > 0 and g_trade == 0:
-        lines.append("  ⚠️ Gemini无有效交易")
-        alerts.append(
-            f"⚠️ Gemini：已审查{g_reviews}次，0次TRADE → 请检查候选质量或阈值"
-        )
+        lines += [
+            "",
+            "🧠 Gemini Committee",
+            f"  • reviews: {g_reviews} | TRADE: {g_trade}"
+            f" | NO_TRADE: {g_no_trade} | SKIPPED: {g_skipped}",
+        ]
+        if top_reasons:
+            lines.append(f"  • 主要拒绝原因: {', '.join(top_reasons)}")
+        if g_reviews > 0 and g_trade == 0:
+            lines.append("  ⚠️ Gemini无有效交易")
+            alerts.append(
+                f"⚠️ Gemini：已审查{g_reviews}次，0次TRADE → 请检查候选质量或阈值"
+            )
 
     lines += [
         "",
@@ -367,8 +353,14 @@ def send_hourly_report(
     ai_macro_db: str | None = None,
     lw_db: str | None = None,
     timeout: int = 10,
+    gemini_committee_enabled: bool = True,
 ) -> bool:
-    text = build_hourly_report(market_db, ai_macro_db=ai_macro_db, lw_db=lw_db)
+    text = build_hourly_report(
+        market_db,
+        ai_macro_db=ai_macro_db,
+        lw_db=lw_db,
+        gemini_committee_enabled=gemini_committee_enabled,
+    )
     _MAX = 4096
     ok = True
     for chunk in [text[i: i + _MAX] for i in range(0, len(text), _MAX)]:

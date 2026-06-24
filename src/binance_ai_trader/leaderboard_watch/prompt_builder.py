@@ -41,11 +41,30 @@ Gemini 有权选择 LONG 或 SHORT，不受 candidate 类型限制。
 }
 """.strip()
 
+# Optional addendum for aggressive mode. It only nudges risk appetite *within*
+# the mandatory rules above — it never forces a TRADE and never relaxes the
+# stop-loss requirement. Conservative mode (the default) leaves the prompt
+# untouched, preserving existing behavior exactly.
+_AGGRESSIVE_ADDENDUM = """
+【进取模式 aggressive】
+在严格遵守以上全部规则的前提下，你可以适度提高风险偏好：
+- 可以接受 MEDIUM 风险的高弹性机会（仍必须给出完整的 entry/stop_loss/tp1/tp2/rr）。
+- 当 RR ≥ 1.5 且趋势与方向一致时，可以倾向选择 TRADE。
+- 仍然严禁无止损推荐，严禁编造信息，缺失字段仍填 "UNKNOWN"。
+- 如果确实没有合适机会，依然必须输出 NO_TRADE，不得为了交易而交易。
+""".strip()
 
-def build_prompt(candidates: list[WatchCandidateForGemini]) -> str:
+
+def build_prompt(
+    candidates: list[WatchCandidateForGemini],
+    mode: str = "conservative",
+) -> str:
     data = json.dumps(
         [c.to_dict() for c in candidates],
         ensure_ascii=False,
         indent=2,
     )
-    return f"{_SYSTEM}\n\n候选数据（排行榜观察池）：\n{data}"
+    system = _SYSTEM
+    if mode == "aggressive":
+        system = f"{_SYSTEM}\n\n{_AGGRESSIVE_ADDENDUM}"
+    return f"{system}\n\n候选数据（排行榜观察池）：\n{data}"

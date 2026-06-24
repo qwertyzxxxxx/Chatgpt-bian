@@ -198,7 +198,7 @@ def default_tasks(
     strategy_self_report: TaskCallback | None = None,
 ) -> tuple[RunnerTask, ...]:
     quarter_hour = timedelta(minutes=15)
-    tasks = [
+    tasks: list[RunnerTask] = [
         RunnerTask("scan", scan, interval=quarter_hour, startup_immediate=True),
         RunnerTask("evaluate", evaluate, interval=quarter_hour),
         RunnerTask("paper_simulate", paper_simulate, interval=quarter_hour),

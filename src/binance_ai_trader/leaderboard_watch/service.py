@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .candidate_builder import build_candidates
+from .diagnostics import analyze_candidate_fields, top_missing_fields
 from .gemini_client import call_gemini
 from .models import (
     PoolStatus,
@@ -163,6 +164,7 @@ class LeaderboardWatchService:
         telegram_bot_token: str = "",
         telegram_chat_id: str = "",
         telegram_timeout: float = 10.0,
+        gemini_mode: str = "conservative",
     ) -> dict[str, Any]:
         # Count eligible candidates first — included in every SKIPPED response so
         # callers can verify the pool is healthy even when the key is absent.
@@ -215,7 +217,12 @@ class LeaderboardWatchService:
             return result
 
         candidates = build_candidates(items, base_url=self._base_url, timeout=10.0)
-        prompt = build_prompt(candidates)
+        prompt = build_prompt(candidates, mode=gemini_mode)
+
+        # Field-quality diagnostics on the exact JSON sent to Gemini. Stored on
+        # the review for historical UNKNOWN-ratio tracking and surfaced in the
+        # NO_TRADE Telegram message so the operator can see *why* no trade fired.
+        field_stats = analyze_candidate_fields([c.to_dict() for c in candidates])
 
         decision, _ = call_gemini(
             prompt,
@@ -225,13 +232,17 @@ class LeaderboardWatchService:
             max_retries=self._gemini_retries,
         )
 
+        # Record the per-symbol reject-reason count alongside the field stats so
+        # the diagnostic can report it accurately (distinct from decision.reasons).
+        field_stats["reject_reasons_count"] = len(decision.reject_reasons)
+
         review_id = str(uuid.uuid4())
-        self._repo.save_review(review_id, decision)
+        self._repo.save_review(review_id, decision, field_stats=json.dumps(field_stats))
         self._repo.save_candidates(review_id, candidates)
 
         telegram_status: dict[str, Any] = {}
         if send_telegram and telegram_bot_token and telegram_chat_id:
-            msgs = format_review(decision)
+            msgs = format_review(decision, stats=field_stats)
             telegram_status = _send_telegram(msgs, telegram_bot_token, telegram_chat_id, telegram_timeout)
 
         return {
