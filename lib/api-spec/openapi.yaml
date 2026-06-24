@@ -1,0 +1,351 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: hotlist
+    description: Hotlist momentum scanner data
+  - name: leaderboard
+    description: Leaderboard AI review data
+  - name: strategy
+    description: Strategy status and funnel data
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /hotlist/summary:
+    get:
+      operationId: getHotlistSummary
+      tags: [hotlist]
+      summary: Hotlist summary stats (last 24 hours)
+      responses:
+        "200":
+          description: Summary stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HotlistSummary"
+
+  /hotlist/alerts:
+    get:
+      operationId: listHotlistAlerts
+      tags: [hotlist]
+      summary: Recent hotlist alerts
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HotlistAlertRow"
+
+  /hotlist/watchlist:
+    get:
+      operationId: listHotlistWatchlist
+      tags: [hotlist]
+      summary: Active hotlist watchlist items
+      responses:
+        "200":
+          description: Watchlist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HotlistWatchlistRow"
+
+  /leaderboard/stats:
+    get:
+      operationId: getLeaderboardStats
+      tags: [leaderboard]
+      summary: Leaderboard AI review aggregate stats
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardStats"
+
+  /leaderboard/reviews:
+    get:
+      operationId: listLeaderboardReviews
+      tags: [leaderboard]
+      summary: Recent Leaderboard AI reviews
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Review list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LeaderboardReviewRow"
+
+  /strategy/status:
+    get:
+      operationId: getStrategyStatus
+      tags: [strategy]
+      summary: Strategy runner status and signal counts
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StrategyStatus"
+
+  /strategy/funnel:
+    get:
+      operationId: getStrategyFunnel
+      tags: [strategy]
+      summary: Latest strategy funnel diagnostic data
+      responses:
+        "200":
+          description: Funnel data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StrategyFunnelData"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    HotlistSummary:
+      type: object
+      properties:
+        scans_24h:
+          type: integer
+        candidates_24h:
+          type: integer
+        alerts_24h:
+          type: integer
+        open_positions:
+          type: integer
+        settled_tp1:
+          type: integer
+        settled_tp2:
+          type: integer
+        settled_sl:
+          type: integer
+        watchlist_active:
+          type: integer
+        top_symbols:
+          type: array
+          items:
+            $ref: "#/components/schemas/SymbolStat"
+        generated_at:
+          type: string
+      required:
+        - scans_24h
+        - candidates_24h
+        - alerts_24h
+        - open_positions
+        - settled_tp1
+        - settled_tp2
+        - settled_sl
+        - watchlist_active
+        - top_symbols
+        - generated_at
+
+    SymbolStat:
+      type: object
+      properties:
+        symbol:
+          type: string
+        count:
+          type: integer
+      required:
+        - symbol
+        - count
+
+    HotlistAlertRow:
+      type: object
+      properties:
+        id:
+          type: ["integer", "null"]
+        symbol:
+          type: string
+        direction:
+          type: string
+        entry:
+          type: ["string", "null"]
+        level:
+          type: string
+        created_at:
+          type: string
+        rank_score:
+          type: ["number", "null"]
+      required:
+        - symbol
+        - direction
+        - level
+        - created_at
+
+    HotlistWatchlistRow:
+      type: object
+      properties:
+        symbol:
+          type: string
+        source:
+          type: string
+        status:
+          type: string
+        last_rank:
+          type: integer
+        observation_count:
+          type: integer
+        first_seen_at:
+          type: string
+        expires_at:
+          type: string
+      required:
+        - symbol
+        - source
+        - status
+        - last_rank
+        - observation_count
+        - first_seen_at
+        - expires_at
+
+    LeaderboardStats:
+      type: object
+      properties:
+        pool_total:
+          type: integer
+        pool_active:
+          type: integer
+        reviews_24h:
+          type: integer
+        trade_24h:
+          type: integer
+        no_trade_24h:
+          type: integer
+        unknown_ratio_avg:
+          type: ["number", "null"]
+        generated_at:
+          type: string
+      required:
+        - pool_total
+        - pool_active
+        - reviews_24h
+        - trade_24h
+        - no_trade_24h
+        - generated_at
+
+    LeaderboardReviewRow:
+      type: object
+      properties:
+        id:
+          type: ["integer", "null"]
+        decision:
+          type: string
+        candidate_count:
+          type: ["integer", "null"]
+        reject_reasons:
+          type: ["string", "null"]
+        field_stats:
+          type: ["string", "null"]
+        created_at:
+          type: string
+      required:
+        - decision
+        - created_at
+
+    StrategyStatus:
+      type: object
+      properties:
+        last_run_at:
+          type: ["string", "null"]
+        hotlist_open:
+          type: integer
+        ai_macro_open:
+          type: integer
+        committee_enabled:
+          type: boolean
+        committee_24h_total:
+          type: integer
+        committee_24h_trade:
+          type: integer
+        committee_24h_no_trade:
+          type: integer
+        generated_at:
+          type: string
+      required:
+        - hotlist_open
+        - ai_macro_open
+        - committee_enabled
+        - committee_24h_total
+        - committee_24h_trade
+        - committee_24h_no_trade
+        - generated_at
+
+    StrategyFunnelData:
+      type: object
+      properties:
+        run_id:
+          type: ["integer", "null"]
+        started_at:
+          type: ["string", "null"]
+        layers:
+          type: array
+          items:
+            $ref: "#/components/schemas/FunnelLayerRow"
+        generated_at:
+          type: string
+      required:
+        - layers
+        - generated_at
+
+    FunnelLayerRow:
+      type: object
+      properties:
+        strategy:
+          type: string
+        layer:
+          type: string
+        count:
+          type: integer
+      required:
+        - strategy
+        - layer
+        - count
