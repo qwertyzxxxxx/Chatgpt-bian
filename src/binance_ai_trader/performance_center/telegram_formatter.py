@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import List, Optional
 
 from .models import StrategyStats, Leaderboard
-from .stats import compute_all_stats_windowed
+from .stats import compute_all_stats_windowed, compute_all_stats_windowed_closed
 
 log = logging.getLogger(__name__)
 
@@ -42,10 +42,11 @@ def _label(strategy: str) -> str:
 
 
 def _stats_line(s: StrategyStats) -> str:
-    wins = s.tp1 + s.tp2
+    decisive = s.tp1 + s.tp2 + s.sl
     pnl_sign = "+" if s.avg_pnl_pct >= 0 else ""
+    open_str = f"  持仓中{s.open_count}" if s.open_count > 0 else ""
     return (
-        f"交易{s.total} 胜率{s.win_rate}% RR{s.avg_rr} 均收益{pnl_sign}{s.avg_pnl_pct:.2f}%"
+        f"决出{decisive}{open_str} 胜率{s.win_rate}% RR{s.avg_rr} 均收益{pnl_sign}{s.avg_pnl_pct:.2f}%"
     )
 
 
@@ -79,25 +80,29 @@ def format_summary(
             s.strategy: s
             for s in compute_all_stats_windowed(all_results, strategies_in_order, cutoff_7d)
         }
+        # 近24h 按结算时间(closed_at)过滤，避免批量开仓记录虚增数字
         stats_24h = {
             s.strategy: s
-            for s in compute_all_stats_windowed(all_results, strategies_in_order, cutoff_24h)
+            for s in compute_all_stats_windowed_closed(all_results, strategies_in_order, cutoff_24h)
         }
 
         for strat in strategies_in_order:
             s_all = stats_by_strategy.get(strat)
             s_7d = stats_7d.get(strat)
             s_24h = stats_24h.get(strat)
-            if s_all is None or (s_all.total == 0 and
+            decisive_all = (s_all.tp1 + s_all.tp2 + s_all.sl) if s_all else 0
+            if s_all is None or (decisive_all == 0 and
                                   (s_7d is None or s_7d.total == 0) and
                                   (s_24h is None or s_24h.total == 0)):
                 continue
             lines.append(f"─── {_label(strat)} ───")
             lines.append(f"全部: {_stats_line(s_all)}")
-            if s_7d and s_7d.total > 0:
+            # 只有7天窗口和全量不同时才显示，避免重复
+            decisive_7d = (s_7d.tp1 + s_7d.tp2 + s_7d.sl) if s_7d else 0
+            if s_7d and decisive_7d > 0 and decisive_7d != decisive_all:
                 lines.append(f"近7天: {_stats_line(s_7d)}")
             if s_24h and s_24h.total > 0:
-                lines.append(f"近24h: {_stats_line(s_24h)}")
+                lines.append(f"近24h结算: {_stats_line(s_24h)}")
             lines.append(f"持仓中: {s_all.open_count}  止损: {s_all.sl}  TP1: {s_all.tp1}  TP2: {s_all.tp2}")
             lines.append("")
     else:
