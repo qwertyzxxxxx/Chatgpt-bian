@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS leaderboard_watch_reviews (
     data_quality TEXT NOT NULL,
     raw_response TEXT NOT NULL,
     reasons      TEXT NOT NULL DEFAULT '[]',
+    field_stats  TEXT NOT NULL DEFAULT '{}',
     status       TEXT NOT NULL DEFAULT 'OPEN'
 );
 
@@ -65,7 +66,22 @@ class LeaderboardWatchRepository:
             stmt = stmt.strip()
             if stmt:
                 self._con.execute(stmt)
+        self._migrate()
         self._con.commit()
+
+    def _migrate(self) -> None:
+        """Add columns missing from databases created by older schema versions."""
+        cols = {
+            row["name"]
+            for row in self._con.execute(
+                "PRAGMA table_info(leaderboard_watch_reviews)"
+            ).fetchall()
+        }
+        if "field_stats" not in cols:
+            self._con.execute(
+                "ALTER TABLE leaderboard_watch_reviews"
+                " ADD COLUMN field_stats TEXT NOT NULL DEFAULT '{}'"
+            )
 
     def close(self) -> None:
         self._con.close()
@@ -207,15 +223,20 @@ class LeaderboardWatchRepository:
             top_active=[_to_item(r) for r in top],
         )
 
-    def save_review(self, review_id: str, decision: WatchDecision) -> None:
+    def save_review(
+        self,
+        review_id: str,
+        decision: WatchDecision,
+        field_stats: str = "{}",
+    ) -> None:
         import json
         self._con.execute(
             """
             INSERT OR REPLACE INTO leaderboard_watch_reviews
               (review_id, created_at, decision, best_symbol, direction,
                entry, stop_loss, tp1, tp2, rr, rating, risk_level,
-               data_quality, raw_response, reasons, status)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               data_quality, raw_response, reasons, field_stats, status)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 review_id,
@@ -233,6 +254,7 @@ class LeaderboardWatchRepository:
                 decision.data_quality,
                 decision.raw_response[:4000],
                 json.dumps(decision.reasons),
+                field_stats,
                 "OPEN",
             ),
         )

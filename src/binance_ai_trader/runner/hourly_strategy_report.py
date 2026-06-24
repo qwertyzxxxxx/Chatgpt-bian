@@ -214,6 +214,7 @@ def build_hourly_report(
     market_db: str,
     ai_macro_db: str | None = None,
     lw_db: str | None = None,
+    gemini_committee_enabled: bool = True,
 ) -> str:
     now = datetime.now(UTC)
     since = (now - timedelta(hours=24)).isoformat(timespec="seconds")
@@ -303,25 +304,33 @@ def build_hourly_report(
     else:
         lines.append("  • 未启用或无数据")
 
-    g_reviews = int(gemini["reviews"])
-    g_trade = int(gemini["TRADE"])
-    g_no_trade = int(gemini["NO_TRADE"])
-    g_skipped = int(gemini["SKIPPED"])
-    top_reasons: list[str] = list(gemini.get("top_reasons", []))  # type: ignore[arg-type]
+    if not gemini_committee_enabled:
+        # Committee is disabled by default in production. Show its status but skip
+        # all stats and the 0-TRADE alert (the code remains intact, just unused).
+        lines += [
+            "",
+            "🧠 Gemini Committee: DISABLED",
+        ]
+    else:
+        g_reviews = int(gemini["reviews"])
+        g_trade = int(gemini["TRADE"])
+        g_no_trade = int(gemini["NO_TRADE"])
+        g_skipped = int(gemini["SKIPPED"])
+        top_reasons: list[str] = list(gemini.get("top_reasons", []))  # type: ignore[arg-type]
 
-    lines += [
-        "",
-        "🧠 Gemini Committee",
-        f"  • reviews: {g_reviews} | TRADE: {g_trade}"
-        f" | NO_TRADE: {g_no_trade} | SKIPPED: {g_skipped}",
-    ]
-    if top_reasons:
-        lines.append(f"  • 主要拒绝原因: {', '.join(top_reasons)}")
-    if g_reviews > 0 and g_trade == 0:
-        lines.append("  ⚠️ Gemini无有效交易")
-        alerts.append(
-            f"⚠️ Gemini：已审查{g_reviews}次，0次TRADE → 请检查候选质量或阈值"
-        )
+        lines += [
+            "",
+            "🧠 Gemini Committee",
+            f"  • reviews: {g_reviews} | TRADE: {g_trade}"
+            f" | NO_TRADE: {g_no_trade} | SKIPPED: {g_skipped}",
+        ]
+        if top_reasons:
+            lines.append(f"  • 主要拒绝原因: {', '.join(top_reasons)}")
+        if g_reviews > 0 and g_trade == 0:
+            lines.append("  ⚠️ Gemini无有效交易")
+            alerts.append(
+                f"⚠️ Gemini：已审查{g_reviews}次，0次TRADE → 请检查候选质量或阈值"
+            )
 
     lines += [
         "",
@@ -344,8 +353,14 @@ def send_hourly_report(
     ai_macro_db: str | None = None,
     lw_db: str | None = None,
     timeout: int = 10,
+    gemini_committee_enabled: bool = True,
 ) -> bool:
-    text = build_hourly_report(market_db, ai_macro_db=ai_macro_db, lw_db=lw_db)
+    text = build_hourly_report(
+        market_db,
+        ai_macro_db=ai_macro_db,
+        lw_db=lw_db,
+        gemini_committee_enabled=gemini_committee_enabled,
+    )
     _MAX = 4096
     ok = True
     for chunk in [text[i: i + _MAX] for i in range(0, len(text), _MAX)]:

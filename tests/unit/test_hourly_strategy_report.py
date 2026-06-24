@@ -271,6 +271,30 @@ class BuildHourlyReportTest(unittest.TestCase):
         report = build_hourly_report(self._db)
         self.assertNotIn("Gemini无有效交易", report)
 
+    def test_gemini_committee_disabled_shows_disabled_and_skips_stats(self):
+        from binance_ai_trader.runner.hourly_strategy_report import build_hourly_report
+        con = sqlite3.connect(self._db)
+        from datetime import UTC, datetime
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        # A NO_TRADE review would normally trigger the 0-TRADE alert.
+        con.execute(
+            "INSERT INTO gemini_committee_reviews (review_id, created_at, decision) VALUES (?,?,?)",
+            ("rx1", now, "NO_TRADE"),
+        )
+        con.commit()
+        con.close()
+        report = build_hourly_report(self._db, gemini_committee_enabled=False)
+        self.assertIn("Gemini Committee: DISABLED", report)
+        # Stats and the 0-TRADE alert must be skipped when disabled.
+        self.assertNotIn("Gemini无有效交易", report)
+        # The committee stats line (reviews/TRADE/NO_TRADE/SKIPPED) is gone.
+        self.assertNotIn("SKIPPED", report)
+
+    def test_gemini_committee_enabled_by_default(self):
+        from binance_ai_trader.runner.hourly_strategy_report import build_hourly_report
+        report = build_hourly_report(self._db)
+        self.assertNotIn("Gemini Committee: DISABLED", report)
+
     def test_regime_disabled_strategy_sleeping_no_alert(self):
         from binance_ai_trader.runner.hourly_strategy_report import build_hourly_report
         from datetime import UTC, datetime

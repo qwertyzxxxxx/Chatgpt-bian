@@ -340,11 +340,12 @@ PYTHONPATH=src python -m binance_ai_trader run-loop \
   --database data/market_data.db \
   --enable-hotlist-alerts \
   --enable-hotlist-performance \
-  --enable-gemini-committee \
   --enable-performance-center \
   --enable-leaderboard-watch \
   --enable-strategy-health
 ```
+
+> **Gemini Committee is disabled by default in production.** The recommended command above intentionally omits `--enable-gemini-committee`, so the hourly report shows `Gemini Committee: DISABLED` and skips its stats/alerts. The code remains intact — pass `--enable-gemini-committee` to opt back in.
 
 **Subsystem dependency order (important):**
 

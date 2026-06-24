@@ -451,6 +451,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--leaderboard-watch-database", type=Path, default=Path("data/leaderboard_watch.db"))
     run_loop.add_argument("--leaderboard-watch-hours", type=int, default=24)
     run_loop.add_argument("--leaderboard-watch-top-n", type=int, default=10)
+    run_loop.add_argument(
+        "--leaderboard-gemini-mode",
+        choices=("conservative", "aggressive"),
+        default="conservative",
+        help="排行榜 Gemini 风险偏好模式（默认 conservative，与原行为一致）",
+    )
     run_loop.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
     run_loop.add_argument("--history-days", type=int, default=30)
     run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
@@ -668,6 +674,12 @@ def build_parser() -> argparse.ArgumentParser:
     _lw_gemini_p.add_argument("--base-url", default="https://fapi.binance.com")
     _lw_gemini_p.add_argument("--gemini-timeout", type=float, default=60.0)
     _lw_gemini_p.add_argument("--gemini-retries", type=int, default=2)
+    _lw_gemini_p.add_argument(
+        "--leaderboard-gemini-mode",
+        choices=("conservative", "aggressive"),
+        default="conservative",
+        help="排行榜 Gemini 风险偏好模式（默认 conservative，与原行为一致）",
+    )
     _lw_gemini_p.add_argument("--send-telegram", action="store_true", default=False)
     _add_telegram_arguments(_lw_gemini_p)
     _lw_gemini_p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
@@ -2612,6 +2624,7 @@ def _leaderboard_watch(args: argparse.Namespace) -> int:
                 send_telegram=getattr(args, "send_telegram", False),
                 telegram_bot_token=bot_token,
                 telegram_chat_id=chat_id,
+                gemini_mode=getattr(args, "leaderboard_gemini_mode", "conservative"),
             )
         finally:
             svc.close()
@@ -2700,6 +2713,61 @@ def _leaderboard_watch_diagnostic(args: argparse.Namespace) -> int:
             else:
                 reason_cats["其他"] += 1
 
+    # Per-review breakdown (most recent first): candidate_count, data_quality,
+    # UNKNOWN-field ratio (from stored field_stats), reject-reason count,
+    # risk_level and quality flags. Pure read-only diagnostic.
+    def _is_unknown_val(v: object) -> bool:
+        return v is None or str(v).strip().upper() in ("", "UNKNOWN", "N/A", "NONE", "NULL")
+
+    cand_count_by_review: dict[str, int] = {}
+    for c in candidates:
+        rid = c.get("review_id")
+        if rid:
+            cand_count_by_review[rid] = cand_count_by_review.get(rid, 0) + 1
+
+    per_review_lines: list[str] = []
+    for r in reviews:
+        rid = r["review_id"]
+        try:
+            fs = _json.loads(r.get("field_stats") or "{}")
+        except Exception:
+            fs = {}
+        cand_n = fs.get("candidate_count") or cand_count_by_review.get(rid, 0)
+        ur = fs.get("unknown_ratio")
+        ur_str = f"{ur * 100:.1f}%" if isinstance(ur, (int, float)) else "N/A"
+        # Prefer the persisted per-symbol reject-reason count; fall back to the
+        # generic decision reasons for reviews saved before field_stats existed.
+        reject_n = fs.get("reject_reasons_count")
+        if reject_n is None:
+            try:
+                reject_n = len(_json.loads(r.get("reasons") or "[]"))
+            except Exception:
+                reject_n = 0
+        risk_level = r.get("risk_level") or "UNKNOWN"
+
+        flags: list[str] = []
+        if r["decision"] == "NO_TRADE" or _is_unknown_val(r.get("entry")) or _is_unknown_val(r.get("stop_loss")):
+            flags.append("missing_trade_plan")
+        if str(risk_level).upper() == "HIGH":
+            flags.append("risk-HIGH")
+        rr_val = r.get("rr")
+        rr_low = True
+        if not _is_unknown_val(rr_val):
+            try:
+                rr_low = float(rr_val) < 1.0
+            except (TypeError, ValueError):
+                rr_low = True
+        if not _is_unknown_val(r.get("stop_loss")) and rr_low:
+            flags.append("stop_loss-rr-trend-conflict")
+        flags_str = ", ".join(flags) if flags else "—"
+
+        ts = str(r.get("created_at", ""))[:16]
+        per_review_lines.append(
+            f"• {ts} {r['decision']:<8} "
+            f"候选{cand_n} 质量{r.get('data_quality','?')} "
+            f"UNKNOWN{ur_str} 拒因{reject_n} 风险{risk_level} | {flags_str}"
+        )
+
     latest_review = reviews[0]
     latest_cands = [c for c in candidates if c.get("review_id") == latest_review["review_id"]]
 
@@ -2726,6 +2794,11 @@ def _leaderboard_watch_diagnostic(args: argparse.Namespace) -> int:
         for cat, cnt in reason_cats.items():
             if cnt > 0:
                 lines.append(f"  {cat}: {cnt} 次")
+        lines.append("")
+
+    if per_review_lines:
+        lines.append(f"━━ 逐条审查（最近 {len(per_review_lines)} 次）━━")
+        lines += per_review_lines
         lines.append("")
 
     if latest_cands:
@@ -2873,6 +2946,7 @@ def _run_hourly_strategy_report_task(args: argparse.Namespace) -> int:
         chat_id=chat_id,
         ai_macro_db=ai_macro_db,
         lw_db=lw_db,
+        gemini_committee_enabled=getattr(args, "enable_gemini_committee", False),
     )
     return 0
 
@@ -2923,6 +2997,7 @@ def _run_leaderboard_watch_gemini_task(args: argparse.Namespace) -> int:
             send_telegram=bool(bot_token and chat_id),
             telegram_bot_token=bot_token,
             telegram_chat_id=chat_id,
+            gemini_mode=getattr(args, "leaderboard_gemini_mode", "conservative"),
         )
     finally:
         svc.close()
