@@ -53,6 +53,58 @@ STRATEGY_REGISTRY: dict[str, dict] = {
 _STATUS_ALIVE = "ALIVE"
 _STATUS_WEAK = "WEAK"
 _STATUS_DEAD = "DEAD"
+_STATUS_SLEEPING = "SLEEPING"
+
+# Per-strategy regime gating — mirrors config/strategies/*.json `enabled_regimes`.
+# A strategy absent from this map runs in every regime (e.g. baseline_v1).
+# When the current market regime is NOT in a strategy's set, the strategy is
+# *expected* to produce nothing, so it is reported as SLEEPING [disabled_by_regime]
+# instead of DEAD. This is reporting metadata only — no trading logic is affected.
+STRATEGY_ENABLED_REGIMES: dict[str, tuple[str, ...]] = {
+    "bear_short_space80_v1": ("BEAR",),
+    "range_disabled_v1": ("BULL", "BEAR"),
+}
+
+# Per-strategy minimum directional space score — mirrors config `space_score_min`.
+# When directional space data is missing/insufficient the signal generator falls
+# back to space_score=50, which fails any min > 50, silently filtering out every
+# candidate. Strategies listed here are therefore attributed to missing space
+# data (insufficient_history) rather than a generic "filters_too_strict".
+STRATEGY_SPACE_SCORE_MIN: dict[str, float] = {
+    "breakout_hunter_v1": 80.0,
+    "capital_60_80_space80_v1": 80.0,
+    "bear_short_space80_v1": 80.0,
+}
+
+
+def _normalize_regime(regime: str | None) -> str | None:
+    """Collapse raw regime labels into BULL / BEAR / RANGE (or None if unknown)."""
+    if not regime:
+        return None
+    r = regime.strip().upper()
+    if r in ("BULL", "STRONG_BULL", "WEAK_BULL"):
+        return "BULL"
+    if r in ("BEAR", "STRONG_BEAR", "WEAK_BEAR"):
+        return "BEAR"
+    if r in ("RANGE", "OBSERVE", "NEUTRAL", "SIDEWAYS", "CHOP"):
+        return "RANGE"
+    return r
+
+
+def _regime_disabled(strategy_id: str, regime: str | None) -> bool:
+    """True when the strategy is gated off in the current regime (enabled_regimes mismatch)."""
+    enabled = STRATEGY_ENABLED_REGIMES.get(strategy_id)
+    if not enabled:
+        return False  # runs in every regime
+    norm = _normalize_regime(regime)
+    if norm is None:
+        return False  # unknown regime → don't suppress
+    return norm not in enabled
+
+
+def _space_gated(strategy_id: str) -> bool:
+    """True when the strategy's space_score_min rejects the missing-data fallback (50)."""
+    return STRATEGY_SPACE_SCORE_MIN.get(strategy_id, 0.0) > 50.0
 
 
 @dataclass
@@ -115,6 +167,122 @@ def _latest_combined_regime(con: sqlite3.Connection) -> str | None:
         return None
 
 
+def _latest_run_id(con: sqlite3.Connection, since: str) -> str | None:
+    """Most recent SUCCEEDED collection run id within the window (None if none)."""
+    if not _table_exists(con, "collection_runs"):
+        return None
+    try:
+        row = con.execute(
+            "SELECT id FROM collection_runs WHERE status='SUCCEEDED' AND started_at >= ?"
+            " ORDER BY started_at DESC LIMIT 1",
+            (since,),
+        ).fetchone()
+        return str(row[0]) if row else None
+    except Exception:
+        return None
+
+
+def _space_data_missing(con: sqlite3.Connection, run_id: str | None) -> bool:
+    """True when the run has no COMPLETE directional space data (→ fallback space_score=50)."""
+    if run_id is None or not _table_exists(con, "space_snapshots"):
+        return True
+    complete = _safe_count(
+        con,
+        "SELECT COUNT(*) FROM space_snapshots"
+        " WHERE run_id = ? AND UPPER(data_quality_status) = 'COMPLETE'",
+        (run_id,),
+    )
+    return complete == 0
+
+
+def _paper_account_paused(con: sqlite3.Connection) -> bool:
+    """True when the most recent paper account state is PAUSED."""
+    if not _table_exists(con, "paper_accounts"):
+        return False
+    try:
+        row = con.execute(
+            "SELECT mode FROM paper_accounts ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        return bool(row) and str(row[0]).upper() == "PAUSED"
+    except Exception:
+        return False
+
+
+def _signals_expired_unfilled(con: sqlite3.Connection, strategy_id: str, since: str) -> bool:
+    """True when the strategy's signals were evaluated as EXPIRED (entry never touched)."""
+    if not (
+        _table_exists(con, "signal_evaluations")
+        and _table_exists(con, "signals")
+        and _table_exists(con, "analysis_snapshots")
+    ):
+        return False
+    try:
+        row = con.execute(
+            """
+            SELECT COUNT(*) FROM signal_evaluations se
+            JOIN signals s ON s.run_id = se.signal_run_id AND s.symbol = se.symbol
+            LEFT JOIN analysis_snapshots a ON a.snapshot_id = s.snapshot_id
+            WHERE COALESCE(a.strategy_id, 'baseline_v1') = ?
+              AND se.evaluated_at >= ?
+              AND UPPER(se.result) IN ('EXPIRED', 'TIMEOUT')
+            """,
+            (strategy_id, since),
+        ).fetchone()
+        return bool(row) and int(row[0]) > 0
+    except Exception:
+        return False
+
+
+def _refined_weak_reason(con: sqlite3.Connection, strategy_id: str, since: str) -> str:
+    """Refine the "signals but no executed trades" reason for a scan strategy."""
+    if _paper_account_paused(con):
+        return "paper_account_paused"
+    if _signals_expired_unfilled(con, strategy_id, since):
+        return "entry_not_touched / expired"
+    return "signals_not_traded"
+
+
+def classify_scan_status(
+    con: sqlite3.Connection,
+    strategy_id: str,
+    since: str,
+    *,
+    scored: int,
+    signals: int,
+    trades: int,
+    latest_run: str | None,
+    regime: str | None,
+) -> tuple[str, list[str]]:
+    """Unified status + reason classification for a scan strategy.
+
+    Reporting metadata only — never changes trading thresholds or logic.
+    Precedence: ALIVE → WEAK(signals_not_traded family) → SLEEPING(regime) →
+    no_snapshots → WEAK(space_score_missing) → filters_too_strict / no_market_match.
+    """
+    if signals > 0 and trades > 0:
+        return _STATUS_ALIVE, []
+    if signals > 0 and trades == 0:
+        return _STATUS_WEAK, [_refined_weak_reason(con, strategy_id, since)]
+    if _regime_disabled(strategy_id, regime):
+        return _STATUS_SLEEPING, ["disabled_by_regime"]
+    snapshots = (
+        _safe_count(
+            con,
+            "SELECT COUNT(*) FROM analysis_snapshots WHERE strategy_id = ? AND created_at >= ?",
+            (strategy_id, since),
+        )
+        if _table_exists(con, "analysis_snapshots")
+        else 0
+    )
+    if snapshots <= 0:
+        return _STATUS_DEAD, ["no_snapshots"]
+    if _space_gated(strategy_id) and _space_data_missing(con, latest_run):
+        return _STATUS_WEAK, ["space_score_missing / insufficient_history"]
+    if scored > 0:
+        return _STATUS_DEAD, ["filters_too_strict"]
+    return _STATUS_DEAD, ["no_market_match"]
+
+
 def _result_breakdown(con: sqlite3.Connection, table: str, since: str,
                       strategy_col: str, strategy_val: str,
                       result_col: str = "result",
@@ -146,6 +314,7 @@ def _query_scan_strategy(
     )
 
     # Universe + scored (shared across strategies — use most recent run in window)
+    latest_run: str | None = None
     if _table_exists(con, "collection_runs") and _table_exists(con, "universe_snapshots"):
         row = con.execute(
             "SELECT id FROM collection_runs WHERE status='SUCCEEDED' AND started_at >= ?"
@@ -153,7 +322,7 @@ def _query_scan_strategy(
             (since,),
         ).fetchone()
         if row:
-            latest_run = row[0]
+            latest_run = str(row[0])
             stats.universe = _safe_count(
                 con, "SELECT COUNT(*) FROM universe_snapshots WHERE run_id = ?", (latest_run,)
             )
@@ -242,29 +411,17 @@ def _query_scan_strategy(
         except Exception:
             pass
 
-    # Status + dead reasons
-    if stats.signals > 0 and stats.trades > 0:
-        stats.status = _STATUS_ALIVE
-    elif stats.signals > 0 and stats.trades == 0:
-        stats.status = _STATUS_WEAK
-        stats.dead_reasons = ["signals_not_traded"]
-    elif stats.snapshots > 0 and stats.signals == 0:
-        stats.status = _STATUS_DEAD
-        if stats.scored > 0:
-            regime_bias = meta.get("regime_bias")
-            if regime_bias == "BEAR":
-                regime = _latest_combined_regime(con)
-                if regime and regime.upper() in ("BULL", "STRONG_BULL"):
-                    stats.dead_reasons = ["disabled_by_regime"]
-                else:
-                    stats.dead_reasons = ["filters_too_strict"]
-            else:
-                stats.dead_reasons = ["filters_too_strict"]
-        else:
-            stats.dead_reasons = ["no_market_match"]
-    else:
-        stats.status = _STATUS_DEAD
-        stats.dead_reasons = ["no_snapshots"]
+    # Status + reasons (reporting metadata only — no trading logic affected)
+    stats.status, stats.dead_reasons = classify_scan_status(
+        con,
+        strategy_id,
+        since,
+        scored=stats.scored,
+        signals=stats.signals,
+        trades=stats.trades,
+        latest_run=latest_run,
+        regime=_latest_combined_regime(con),
+    )
 
     return stats
 
@@ -479,7 +636,7 @@ def run_diagnostics(
 # ─────────────────────────── formatters ─────────────────────────────────────
 
 def _status_emoji(status: str) -> str:
-    return {"ALIVE": "✅", "WEAK": "⚠️", "DEAD": "💀"}.get(status, "❓")
+    return {"ALIVE": "✅", "WEAK": "⚠️", "DEAD": "💀", "SLEEPING": "😴"}.get(status, "❓")
 
 
 def _fmt_win_rate(wr: float | None) -> str:
