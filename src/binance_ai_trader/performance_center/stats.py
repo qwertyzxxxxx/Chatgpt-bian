@@ -83,25 +83,6 @@ def compute_all_stats_windowed(
     return [compute_stats(windowed, s) for s in all_strategies]
 
 
-def compute_all_stats_windowed_closed(
-    results: List[StrategyResult],
-    all_strategies: List[str],
-    since_iso: str,
-) -> List[StrategyStats]:
-    """Like compute_all_stats_windowed but filters by closed_at (settled time).
-
-    Excludes OPEN records (no closed_at). Use this for short windows like
-    近24h so the count reflects trades that *resolved* in that window, not
-    trades that were merely *opened* (which can be batch-created and inflate
-    the count misleadingly).
-    """
-    windowed = [
-        r for r in results
-        if r.result != RESULT_OPEN and (r.closed_at or "") >= since_iso
-    ]
-    return [compute_stats(windowed, s) for s in all_strategies]
-
-
 def build_leaderboard(results: List[StrategyResult]) -> Leaderboard:
     core_stats = compute_all_stats(results)
 
