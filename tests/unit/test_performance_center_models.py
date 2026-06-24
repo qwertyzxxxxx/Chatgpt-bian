@@ -1,9 +1,9 @@
 import unittest
 from binance_ai_trader.performance_center.models import (
     StrategyResult, StrategyStats, Leaderboard,
-    RESULT_OPEN, RESULT_TP1, RESULT_SL, RESULT_TIMEOUT,
+    RESULT_OPEN, RESULT_TP1, RESULT_SL, RESULT_TIMEOUT, RESULT_EXPIRED,
     STRATEGY_HOTLIST, STRATEGY_AI_MACRO, STRATEGY_GEMINI,
-    WIN_RESULTS, LOSS_RESULTS,
+    WIN_RESULTS, LOSS_RESULTS, NEUTRAL_RESULTS,
 )
 
 
@@ -52,6 +52,13 @@ class TestStrategyResultModel(unittest.TestCase):
 
     def test_loss_results(self):
         self.assertIn(RESULT_SL, LOSS_RESULTS)
+        self.assertNotIn(RESULT_TIMEOUT, LOSS_RESULTS)
+        self.assertNotIn(RESULT_EXPIRED, LOSS_RESULTS)
+
+    def test_neutral_results(self):
+        self.assertIn(RESULT_TIMEOUT, NEUTRAL_RESULTS)
+        self.assertIn(RESULT_EXPIRED, NEUTRAL_RESULTS)
+        self.assertNotIn(RESULT_SL, NEUTRAL_RESULTS)
 
     def test_strategy_constants(self):
         self.assertEqual(STRATEGY_HOTLIST, "hotlist")

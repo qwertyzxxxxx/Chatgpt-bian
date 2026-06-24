@@ -61,6 +61,31 @@ class TestPerformanceCenterCLI(unittest.TestCase):
         r = _run("performance-center", "settle")
         self.assertEqual(r.returncode, 0)
 
+    def test_strategy_diagnostic_help(self):
+        r = _run("performance-center", "strategy-diagnostic", "--help")
+        self.assertEqual(r.returncode, 0)
+        out = r.stdout + r.stderr
+        self.assertIn("strategy-diagnostic", out)
+
+    def test_strategy_diagnostic_runs_without_crash(self):
+        r = _run("performance-center", "strategy-diagnostic")
+        self.assertEqual(r.returncode, 0)
+
+    def test_strategy_diagnostic_json_output(self):
+        import json
+        r = _run("performance-center", "strategy-diagnostic")
+        self.assertEqual(r.returncode, 0)
+        data = json.loads(r.stdout)
+        self.assertIn("diagnostic", data)
+        self.assertIn("days", data)
+        entries = data["diagnostic"]
+        self.assertIsInstance(entries, list)
+        self.assertGreater(len(entries), 0)
+        for entry in entries:
+            self.assertIn("strategy_id", entry)
+            self.assertIn("bottleneck", entry)
+            self.assertIn("bottleneck_description", entry)
+
 
 if __name__ == "__main__":
     unittest.main()

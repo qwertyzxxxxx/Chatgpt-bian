@@ -88,11 +88,35 @@ class TestComputeStats(unittest.TestCase):
         s = compute_stats(results, STRATEGY_HOTLIST)
         self.assertEqual(s.total, 1)
 
-    def test_timeout_counted_as_loss(self):
+    def test_timeout_is_neutral(self):
         results = [_sr(STRATEGY_HOTLIST, RESULT_TIMEOUT)]
         s = compute_stats(results, STRATEGY_HOTLIST)
         self.assertEqual(s.timeout, 1)
         self.assertEqual(s.win_rate, 0.0)
+        self.assertEqual(s.sl, 0)
+
+    def test_expired_is_neutral(self):
+        from binance_ai_trader.performance_center.models import RESULT_EXPIRED
+        results = [_sr(STRATEGY_HOTLIST, RESULT_EXPIRED)]
+        s = compute_stats(results, STRATEGY_HOTLIST)
+        self.assertEqual(s.expired, 1)
+        self.assertEqual(s.win_rate, 0.0)
+        self.assertEqual(s.sl, 0)
+
+    def test_win_rate_excludes_timeout_and_expired(self):
+        from binance_ai_trader.performance_center.models import RESULT_EXPIRED
+        results = [
+            _sr(STRATEGY_HOTLIST, RESULT_TP1),
+            _sr(STRATEGY_HOTLIST, RESULT_SL),
+            _sr(STRATEGY_HOTLIST, RESULT_TIMEOUT),
+            _sr(STRATEGY_HOTLIST, RESULT_EXPIRED),
+        ]
+        s = compute_stats(results, STRATEGY_HOTLIST)
+        self.assertAlmostEqual(s.win_rate, 50.0)
+        self.assertEqual(s.tp1, 1)
+        self.assertEqual(s.sl, 1)
+        self.assertEqual(s.timeout, 1)
+        self.assertEqual(s.expired, 1)
 
 
 class TestLeaderboard(unittest.TestCase):
