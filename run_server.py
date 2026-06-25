@@ -81,6 +81,7 @@ if __name__ == "__main__":
         "--enable-performance-center",
         "--enable-leaderboard-watch",
         "--enable-strategy-health",
+        "--enable-v2-hotlist",
         "--history-days", "30",
     ] + sys.argv[1:]
 
