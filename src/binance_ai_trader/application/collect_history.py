@@ -21,6 +21,31 @@ _DAY_MS = 86_400_000
 
 
 @dataclass(frozen=True, slots=True)
+class IncrementalCollectionResult:
+    """Result from a single incremental collect run."""
+    total_symbols: int
+    skipped_up_to_date: int
+    incremental_updated: int
+    full_initialized: int
+    downloaded_klines: int
+    failed_symbols: tuple[str, ...]
+    duration_seconds: float
+    timed_out: bool = False
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "total_symbols": self.total_symbols,
+            "skipped_up_to_date": self.skipped_up_to_date,
+            "incremental_updated": self.incremental_updated,
+            "full_initialized": self.full_initialized,
+            "downloaded_klines": self.downloaded_klines,
+            "failed_symbols": list(self.failed_symbols),
+            "duration_seconds": round(self.duration_seconds, 2),
+            "timed_out": self.timed_out,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class HistoricalCollectionResult:
     run_id: str
     symbols: tuple[str, ...]
@@ -30,9 +55,6 @@ class HistoricalCollectionResult:
     capital_observations: int
     universe_snapshots: int
     failures: tuple[str, ...]
-
-
-IncrementalCollectionResult = HistoricalCollectionResult  # alias: class missing from this branch
 
 
 class HistoricalDataCollector:
@@ -53,6 +75,105 @@ class HistoricalDataCollector:
         self._universe_config = universe_config
         self._sector_config = sector_config
         self._request_pause_seconds = request_pause_seconds
+
+    def collect_incremental(
+        self,
+        max_runtime_minutes: float = 10.0,
+        history_days: int = 30,
+        end_ms: int | None = None,
+    ) -> IncrementalCollectionResult:
+        """Incremental kline download: skip up-to-date, fill gaps, full-init only when empty.
+
+        Parameters
+        ----------
+        max_runtime_minutes:
+            Hard timeout.  When elapsed time exceeds this the loop stops early
+            and the result reports ``timed_out=True``.  The next run continues
+            where this one left off.
+        history_days:
+            Number of days used for a full initialisation (when a symbol has no
+            data at all).
+        end_ms:
+            Override for "now" (used in tests).
+        """
+        if max_runtime_minutes <= 0:
+            raise ValueError("max_runtime_minutes must be positive")
+        if not 1 <= history_days <= 3650:
+            raise ValueError("history_days must be between 1 and 3650")
+
+        t_start = time.monotonic()
+        deadline_s = max_runtime_minutes * 60.0
+        cutoff_ms = end_ms if end_ms is not None else time.time_ns() // 1_000_000
+
+        contracts = self._client.exchange_info()
+        tickers = self._client.tickers_24h()
+        members = self._configured_members(contracts, tickers)
+        symbols = tuple(item.symbol for item in members)
+
+        total_symbols = len(symbols)
+        skipped_up_to_date = 0
+        incremental_updated = 0
+        full_initialized = 0
+        downloaded_klines = 0
+        failed_symbols: list[str] = []
+        timed_out = False
+
+        for symbol in symbols:
+            if time.monotonic() - t_start >= deadline_s:
+                timed_out = True
+                LOGGER.info(
+                    "collect_incremental: max runtime %.1f min reached, stopping at %s",
+                    max_runtime_minutes, symbol,
+                )
+                break
+
+            symbol_updated = False
+            symbol_failed = False
+            symbol_was_empty = False  # True if any interval had no prior data
+
+            for interval, interval_ms in _INTERVAL_MS.items():
+                latest_close = self._repository.load_latest_kline_close_ms(symbol, interval)
+
+                if latest_close is not None:
+                    age_ms = cutoff_ms - latest_close
+                    if age_ms <= interval_ms * 2:
+                        skipped_up_to_date += 1
+                        continue
+                    gap_start_ms = latest_close + interval_ms
+                else:
+                    gap_start_ms = cutoff_ms - history_days * _DAY_MS
+                    symbol_was_empty = True
+
+                try:
+                    n = self._collect_klines(symbol, interval, gap_start_ms, cutoff_ms)
+                    downloaded_klines += n
+                    if n > 0:
+                        symbol_updated = True
+                except Exception as exc:
+                    message = f"{symbol}/{interval}: {exc}"
+                    LOGGER.warning("collect_incremental kline failed: %s", message)
+                    symbol_failed = True
+
+            if symbol_updated:
+                if symbol_was_empty:
+                    full_initialized += 1
+                else:
+                    incremental_updated += 1
+
+            if symbol_failed and not symbol_updated:
+                failed_symbols.append(symbol)
+
+        duration = time.monotonic() - t_start
+        return IncrementalCollectionResult(
+            total_symbols=total_symbols,
+            skipped_up_to_date=skipped_up_to_date,
+            incremental_updated=incremental_updated,
+            full_initialized=full_initialized,
+            downloaded_klines=downloaded_klines,
+            failed_symbols=tuple(sorted(set(failed_symbols))),
+            duration_seconds=duration,
+            timed_out=timed_out,
+        )
 
     def collect(self, days: int, end_ms: int | None = None) -> HistoricalCollectionResult:
         if not 1 <= days <= 3650:

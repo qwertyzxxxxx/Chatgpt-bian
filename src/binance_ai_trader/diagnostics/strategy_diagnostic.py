@@ -593,6 +593,279 @@ def _query_gemini_strategy(con: sqlite3.Connection, since: str) -> StrategyStats
 
 # ─────────────────────────── main entry point ───────────────────────────────
 
+@dataclass
+class FunnelLayer:
+    name: str
+    count: int
+    note: str = ""
+
+
+@dataclass
+class FunnelStats:
+    strategy_id: str
+    strategy_name: str
+    layers: list[FunnelLayer] = field(default_factory=list)
+    new_coin_skipped: int = 0
+    space_score_missing: int = 0
+    space_score_ok: int = 0
+
+
+def _count_new_coins_in_universe(con: sqlite3.Connection, run_id: str | None) -> int:
+    """Count universe symbols with < 720 stored 4h klines (new coin criterion)."""
+    if run_id is None or not _table_exists(con, "universe_snapshots"):
+        return 0
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT symbol FROM universe_snapshots WHERE run_id = ?", (run_id,)
+        ).fetchall()
+        symbols = [str(r[0]) for r in rows]
+        new_count = 0
+        for sym in symbols:
+            row = con.execute(
+                "SELECT COUNT(*) FROM klines WHERE symbol=? AND interval='4h'", (sym,)
+            ).fetchone()
+            cnt = int(row[0]) if row else 0
+            if cnt < 720:
+                new_count += 1
+        return new_count
+    except Exception:
+        return 0
+
+
+def _count_space_score_missing(con: sqlite3.Connection, run_id: str | None) -> int:
+    """Universe symbols that lack a COMPLETE space snapshot in this run."""
+    if run_id is None or not _table_exists(con, "space_snapshots"):
+        return 0
+    try:
+        universe_count = _safe_count(
+            con,
+            "SELECT COUNT(DISTINCT symbol) FROM universe_snapshots WHERE run_id = ?",
+            (run_id,),
+        )
+        space_complete = _safe_count(
+            con,
+            "SELECT COUNT(DISTINCT symbol) FROM space_snapshots"
+            " WHERE run_id = ? AND UPPER(data_quality_status) = 'COMPLETE'",
+            (run_id,),
+        )
+        return max(0, universe_count - space_complete)
+    except Exception:
+        return 0
+
+
+def _count_space_score_ok(con: sqlite3.Connection, run_id: str | None, min_score: float) -> int:
+    """Symbols with space_score >= min_score in this run."""
+    if run_id is None or not _table_exists(con, "space_snapshots"):
+        return 0
+    try:
+        return _safe_count(
+            con,
+            "SELECT COUNT(DISTINCT symbol) FROM space_snapshots"
+            " WHERE run_id = ? AND CAST(space_score AS REAL) >= ?",
+            (run_id, min_score),
+        )
+    except Exception:
+        return 0
+
+
+def _count_entry_touched(con: sqlite3.Connection, strategy_id: str, since: str) -> int:
+    """Signals where price reached entry (EXPIRED or better outcome)."""
+    if not (_table_exists(con, "signal_evaluations") and _table_exists(con, "signals")):
+        return 0
+    try:
+        row = con.execute(
+            """
+            SELECT COUNT(*) FROM signal_evaluations se
+            JOIN signals s ON s.run_id = se.signal_run_id AND s.symbol = se.symbol
+            LEFT JOIN analysis_snapshots a ON a.snapshot_id = s.snapshot_id
+            WHERE COALESCE(a.strategy_id, 'baseline_v1') = ?
+              AND se.evaluated_at >= ?
+              AND UPPER(se.result) NOT IN ('EXPIRED', 'TIMEOUT')
+            """,
+            (strategy_id, since),
+        ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def _count_entry_not_touched(con: sqlite3.Connection, strategy_id: str, since: str) -> int:
+    if not (_table_exists(con, "signal_evaluations") and _table_exists(con, "signals")):
+        return 0
+    try:
+        row = con.execute(
+            """
+            SELECT COUNT(*) FROM signal_evaluations se
+            JOIN signals s ON s.run_id = se.signal_run_id AND s.symbol = se.symbol
+            LEFT JOIN analysis_snapshots a ON a.snapshot_id = s.snapshot_id
+            WHERE COALESCE(a.strategy_id, 'baseline_v1') = ?
+              AND se.evaluated_at >= ?
+              AND UPPER(se.result) IN ('EXPIRED', 'TIMEOUT')
+            """,
+            (strategy_id, since),
+        ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def run_funnel_diagnostics(
+    market_db: str,
+    since_hours: int = 24,
+) -> list[FunnelStats]:
+    """Build per-strategy funnel layer counts from the market DB.
+
+    Each strategy gets a ``FunnelStats`` with sequential filter layers showing
+    how many symbols/signals survived each stage of the pipeline.
+    """
+    since = (datetime.now(UTC) - timedelta(hours=since_hours)).isoformat(timespec="seconds")
+    results: list[FunnelStats] = []
+
+    try:
+        con = sqlite3.connect(market_db)
+    except Exception as exc:
+        log.error("Cannot open market_db for funnel: %s: %s", market_db, exc)
+        return results
+
+    try:
+        latest_run = _latest_run_id(con, since)
+        regime = _normalize_regime(_latest_combined_regime(con))
+
+        # Shared universe + scored counts
+        universe_count = (
+            _safe_count(con, "SELECT COUNT(*) FROM universe_snapshots WHERE run_id = ?", (latest_run,))
+            if latest_run else 0
+        )
+        scored_count = (
+            _safe_count(con, "SELECT COUNT(*) FROM scores WHERE run_id = ?", (latest_run,))
+            if latest_run else 0
+        )
+        new_coin_count = _count_new_coins_in_universe(con, latest_run)
+
+        space_strategies = {"breakout_hunter_v1", "capital_60_80_space80_v1", "bear_short_space80_v1"}
+        scan_strategies = [
+            ("baseline_v1", "Baseline V1"),
+            ("breakout_hunter_v1", "Breakout Hunter V1"),
+            ("capital_60_80_space80_v1", "Capital 60-80 Space80"),
+            ("bear_short_space80_v1", "Bear Short Space80"),
+            ("range_disabled_v1", "Range Disabled V1"),
+        ]
+
+        for strategy_id, strategy_name in scan_strategies:
+            fs = FunnelStats(strategy_id=strategy_id, strategy_name=strategy_name)
+            is_space = strategy_id in space_strategies
+            space_min = STRATEGY_SPACE_SCORE_MIN.get(strategy_id, 0.0)
+            regime_allowed = not _regime_disabled(strategy_id, regime)
+
+            signals_n = _safe_count(
+                con,
+                """
+                SELECT COUNT(*) FROM signals s
+                LEFT JOIN analysis_snapshots a ON a.snapshot_id = s.snapshot_id
+                WHERE COALESCE(a.strategy_id, 'baseline_v1') = ? AND s.generated_at >= ?
+                """,
+                (strategy_id, since),
+            ) if (_table_exists(con, "signals") and _table_exists(con, "analysis_snapshots")) else 0
+
+            trades_n = _safe_count(
+                con,
+                """
+                SELECT COUNT(*) FROM paper_trades pt
+                JOIN signals s ON s.run_id = pt.signal_run_id AND s.symbol = pt.symbol
+                LEFT JOIN analysis_snapshots a ON a.snapshot_id = s.snapshot_id
+                WHERE COALESCE(a.strategy_id, 'baseline_v1') = ? AND pt.processed_at >= ?
+                """,
+                (strategy_id, since),
+            ) if (
+                _table_exists(con, "paper_trades")
+                and _table_exists(con, "signals")
+                and _table_exists(con, "analysis_snapshots")
+            ) else 0
+
+            results_n = _safe_count(
+                con,
+                "SELECT COUNT(*) FROM strategy_results WHERE strategy = ? AND opened_at >= ?",
+                (strategy_id, since),
+            ) if _table_exists(con, "strategy_results") else 0
+
+            fs.layers.append(FunnelLayer("Universe", universe_count))
+            fs.layers.append(FunnelLayer("Has enough Kline", scored_count,
+                                         note=f"new_coin_skipped={new_coin_count}"))
+
+            if regime_allowed:
+                fs.layers.append(FunnelLayer("Regime allowed", scored_count))
+            else:
+                fs.layers.append(FunnelLayer("Regime allowed", 0,
+                                             note=f"disabled_by_regime ({regime})"))
+
+            if is_space:
+                sp_missing = _count_space_score_missing(con, latest_run)
+                sp_ok = _count_space_score_ok(con, latest_run, space_min)
+                sp_note = (
+                    f"space_score: MISSING={sp_missing}, reason=insufficient_4h_history"
+                    f" | space_score>={space_min:.0f}: {sp_ok}"
+                )
+                fs.layers.append(FunnelLayer("Space filter", sp_ok, note=sp_note))
+                fs.new_coin_skipped = new_coin_count
+                fs.space_score_missing = sp_missing
+                fs.space_score_ok = sp_ok
+            else:
+                fs.layers.append(FunnelLayer("Space filter", scored_count, note="no space_score_min"))
+
+            fs.layers.append(FunnelLayer("Signals", signals_n))
+            fs.layers.append(FunnelLayer("Paper trades", trades_n))
+            fs.layers.append(FunnelLayer("Results", results_n))
+
+            # baseline: detailed signal evaluation breakdown
+            if strategy_id == "baseline_v1":
+                touched = _count_entry_touched(con, strategy_id, since)
+                not_touched = _count_entry_not_touched(con, strategy_id, since)
+                paused = _paper_account_paused(con)
+                fs.layers.append(FunnelLayer(
+                    "Entry evaluation",
+                    touched,
+                    note=(
+                        f"entry_touched={touched}"
+                        f" | entry_not_touched/expired={not_touched}"
+                        f" | paper_account_paused={paused}"
+                    ),
+                ))
+
+            results.append(fs)
+    finally:
+        con.close()
+
+    return results
+
+
+def format_funnel_text(funnel_list: list[FunnelStats], since_hours: int = 24) -> str:
+    """Format funnel diagnostics for CLI / Telegram."""
+    now = datetime.now(UTC)
+    sep = "─" * 60
+    lines = [
+        sep,
+        f"  策略漏斗诊断  |  过去 {since_hours}h  |  {now.strftime('%Y-%m-%d %H:%M UTC')}",
+        sep,
+    ]
+    for fs in funnel_list:
+        lines.append(f"\n[{fs.strategy_id}]  {fs.strategy_name}")
+        for lyr in fs.layers:
+            note_str = f"  ← {lyr.note}" if lyr.note else ""
+            lines.append(f"  ↓ {lyr.name}: {lyr.count}{note_str}")
+        if fs.new_coin_skipped:
+            lines.append(f"  ★ new_coin_skipped={fs.new_coin_skipped}")
+        if fs.space_score_missing:
+            lines.append(
+                f"  ★ space_score: MISSING={fs.space_score_missing}"
+                f", reason=insufficient_4h_history"
+                f", space_score_ok={fs.space_score_ok}"
+            )
+    lines.append(f"\n{sep}")
+    lines.append("仅供研究 | 不进行实盘交易")
+    lines.append(sep)
+    return "\n".join(lines)
+
+
 def run_diagnostics(
     market_db: str,
     since_hours: int = 24,
