@@ -7,8 +7,9 @@ import HotlistPage from "@/pages/hotlist";
 import LeaderboardPage from "@/pages/leaderboard";
 import StrategyStatusPage from "@/pages/strategy-status";
 import StrategyFunnelPage from "@/pages/strategy-funnel";
+import PaperPortfolioPage from "@/pages/paper-portfolio";
 import { cn } from "@/lib/utils";
-import { BarChart2, Flame, TrendingUp, Filter, Menu, X } from "lucide-react";
+import { BarChart2, Flame, TrendingUp, Filter, Menu, X, BookOpen } from "lucide-react";
 import { useState } from "react";
 
 const queryClient = new QueryClient({
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { path: "/leaderboard", label: "Leaderboard AI", icon: TrendingUp },
   { path: "/strategy-status", label: "Strategy 状态", icon: BarChart2 },
   { path: "/strategy-funnel", label: "Strategy Funnel", icon: Filter },
+  { path: "/paper-portfolio", label: "模拟仓 Portfolio", icon: BookOpen },
 ];
 
 function NavLink({ path, label, icon: Icon, onClick }: { path: string; label: string; icon: React.ElementType; onClick?: () => void }) {
@@ -119,6 +121,7 @@ function Router() {
         <Route path="/leaderboard" component={LeaderboardPage} />
         <Route path="/strategy-status" component={StrategyStatusPage} />
         <Route path="/strategy-funnel" component={StrategyFunnelPage} />
+        <Route path="/paper-portfolio" component={PaperPortfolioPage} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
