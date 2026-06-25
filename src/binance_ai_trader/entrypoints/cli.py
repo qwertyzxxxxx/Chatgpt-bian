@@ -15,7 +15,7 @@ from binance_ai_trader.application.analyze_capital_flow import CapitalFlowAnalyz
 from binance_ai_trader.application.analyze_space import SpaceAnalyzer
 from binance_ai_trader.application.analyze_sector_strength import SectorStrengthAnalyzer
 from binance_ai_trader.application.collect_market_data import MarketDataCollector
-from binance_ai_trader.application.collect_history import HistoricalDataCollector
+from binance_ai_trader.application.collect_history import HistoricalDataCollector, IncrementalCollectionResult
 from binance_ai_trader.application.evaluate_signals import SignalEvaluator
 from binance_ai_trader.application.generate_signals import SignalGenerator
 from binance_ai_trader.application.score_market_data import MarketScorer
@@ -107,6 +107,14 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--timeout", type=float, default=20.0)
     history.add_argument("--max-retries", type=int, default=5)
     history.add_argument("--request-pause", type=float, default=0.05)
+    history.add_argument(
+        "--incremental", action="store_true", default=False,
+        help="增量模式：已有数据只补缺口，无数据才全量初始化",
+    )
+    history.add_argument(
+        "--history-max-runtime-minutes", type=float, default=10.0,
+        help="增量模式最大运行时间（分钟），超时停止，下轮继续（默认10）",
+    )
     history.add_argument(
         "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
     )
@@ -448,6 +456,16 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--enable-leaderboard-watch", action="store_true")
     run_loop.add_argument("--enable-strategy-health", action="store_true")
     run_loop.add_argument("--enable-ops-dashboard", action="store_true")
+    run_loop.add_argument("--enable-v2-hotlist", action="store_true",
+                          help="Enable V2 isolated Hotlist Momentum paper portfolio (default: off)")
+    run_loop.add_argument("--enable-paper-portfolio", action="store_true",
+                          help="Enable unified paper portfolio settle + summary tasks")
+    run_loop.add_argument("--paper-settle-interval-minutes", type=int, default=15,
+                          metavar="N", help="Settle paper_orders every N minutes (default: 15)")
+    run_loop.add_argument("--paper-summary-interval-hours", type=int, default=6,
+                          metavar="N", help="Send paper summary to Telegram every N hours (default: 6)")
+    run_loop.add_argument("--paper-order-expiry-hours", type=int, default=24,
+                          metavar="N", help="Default expiry for paper_orders without expires_at (default: 24)")
     run_loop.add_argument("--leaderboard-watch-database", type=Path, default=Path("data/leaderboard_watch.db"))
     run_loop.add_argument("--leaderboard-watch-hours", type=int, default=24)
     run_loop.add_argument("--leaderboard-watch-top-n", type=int, default=10)
@@ -645,6 +663,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_telegram_arguments(_diag_full)
     _diag_full.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
 
+    _diag_funnel = _diag_cmds.add_parser("funnel", help="策略漏斗诊断 — 每层过滤数量")
+    _diag_funnel.add_argument("--database", type=Path, default=Path("data/market_data.db"))
+    _diag_funnel.add_argument("--since-hours", type=int, default=24,
+                              help="回溯窗口小时数（默认24）")
+    _diag_funnel.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+
     leaderboard_watch = subparsers.add_parser(
         "leaderboard-watch", help="排行榜观察池 — Leaderboard Watch Pool V1"
     )
@@ -679,6 +703,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("conservative", "aggressive"),
         default="conservative",
         help="排行榜 Gemini 风险偏好模式（默认 conservative，与原行为一致）",
+    )
+    _lw_gemini_p.add_argument(
+        "--market-database", type=Path, default=None,
+        help="可选：主行情数据库路径（data/market_data.db），用于 MarketDataCache 复用缓存"
     )
     _lw_gemini_p.add_argument("--send-telegram", action="store_true", default=False)
     _add_telegram_arguments(_lw_gemini_p)
@@ -769,14 +797,28 @@ def main(argv: list[str] | None = None) -> int:
 def _collect_history(args: argparse.Namespace) -> int:
     client = BinancePublicClient(args.base_url, args.timeout, args.max_retries)
     repository = MarketDataRepository(args.database)
+    incremental = getattr(args, "incremental", False)
     try:
-        result = HistoricalDataCollector(
+        collector = HistoricalDataCollector(
             client,
             repository,
             UniverseConfig.load(args.config),
             SectorConfig.load(args.sectors_config),
             args.request_pause,
-        ).collect(args.days, args.end_ms)
+        )
+        if incremental:
+            max_rt = getattr(args, "history_max_runtime_minutes", 10.0)
+            result_inc = collector.collect_incremental(
+                max_runtime_minutes=max_rt,
+                history_days=args.days,
+                end_ms=args.end_ms,
+            )
+            print(json.dumps(
+                {**result_inc.to_dict(), "database": str(args.database)},
+                separators=(",", ":"), sort_keys=True
+            ))
+            return 1 if result_inc.failed_symbols else 0
+        result = collector.collect(args.days, args.end_ms)
     finally:
         repository.close()
     print(json.dumps({
@@ -1662,8 +1704,30 @@ def _run_loop(args: argparse.Namespace) -> int:
             (lambda: _run_hourly_strategy_report_task(args))
             if token and chat_id else None
         ),
+        paper_settle=(
+            (lambda: _run_paper_settle_task(args))
+            if getattr(args, "enable_paper_portfolio", False) else None
+        ),
+        paper_summary=(
+            (lambda: _run_paper_summary_task(args))
+            if (getattr(args, "enable_paper_portfolio", False) and token and chat_id) else None
+        ),
+        paper_settle_interval=timedelta(minutes=getattr(args, "paper_settle_interval_minutes", 15)),
+        paper_summary_interval=timedelta(hours=getattr(args, "paper_summary_interval_hours", 6)),
         history_interval=timedelta(hours=args.history_interval_hours),
     )
+    if getattr(args, "enable_v2_hotlist", False):
+        from binance_ai_trader.v2.runner.tasks import build_v2_tasks
+        universe_config = UniverseConfig.load(args.config)
+        v2_tasks = build_v2_tasks(
+            db_path=database,
+            universe_config=universe_config,
+            base_url=args.base_url,
+            timeout=args.timeout,
+            max_retries=args.max_retries,
+            telegram=notifier,
+        )
+        tasks = tasks + v2_tasks
     repository = MarketDataRepository(database)
     try:
         runner = ProductionRunner(
@@ -2890,12 +2954,20 @@ def _strategy_diagnostic(args: argparse.Namespace) -> int:
         format_telegram,
         format_text,
         run_diagnostics,
+        run_funnel_diagnostics,
+        format_funnel_text,
     )
 
     since_hours = int(getattr(args, "since_hours", 24))
     market_db = str(getattr(args, "database", "data/market_data.db"))
-    ai_macro_db = str(getattr(args, "ai_macro_database", "data/ai_macro.db"))
+    diag_command = getattr(args, "diag_command", "full")
 
+    if diag_command == "funnel":
+        funnel_list = run_funnel_diagnostics(market_db=market_db, since_hours=since_hours)
+        print(format_funnel_text(funnel_list, since_hours=since_hours))
+        return 0
+
+    ai_macro_db = str(getattr(args, "ai_macro_database", "data/ai_macro.db"))
     stats_list = run_diagnostics(
         market_db=market_db,
         since_hours=since_hours,
@@ -2926,6 +2998,49 @@ def _strategy_diagnostic(args: argparse.Namespace) -> int:
                 except Exception as exc:
                     import logging as _logging
                     _logging.getLogger(__name__).warning("Telegram send failed: %s", exc)
+    return 0
+
+
+def _run_paper_settle_task(args: argparse.Namespace) -> RunnerTaskResult:
+    import os as _os
+    from binance_ai_trader.paper.order_repository import PaperOrderRepository
+    from binance_ai_trader.paper.feeder import PaperFeeder
+    from binance_ai_trader.paper.settler import PaperOrderSettler
+
+    database = getattr(args, "database", Path("data/market_data.db"))
+    expiry_hours = getattr(args, "paper_order_expiry_hours", 24)
+    base_url = getattr(args, "base_url", "https://fapi.binance.com")
+    timeout = getattr(args, "timeout", 10.0)
+
+    repo = PaperOrderRepository(database)
+    try:
+        feeder = PaperFeeder(repo, database, expiry_hours=expiry_hours)
+        fed = feeder.feed_all()
+        settler = PaperOrderSettler(repo, base_url=base_url, timeout=timeout)
+        settled = settler.settle_all()
+    finally:
+        repo.close()
+    return RunnerTaskResult(details={"fed": fed, "settled": settled})
+
+
+def _run_paper_summary_task(args: argparse.Namespace) -> int:
+    import os as _os
+    from binance_ai_trader.paper.order_repository import PaperOrderRepository
+    from binance_ai_trader.paper.summary import send_summary
+
+    bot_token = getattr(args, "telegram_bot_token", None) or _os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = getattr(args, "telegram_chat_id", None) or _os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not bot_token or not chat_id:
+        return 0
+
+    database = getattr(args, "database", Path("data/market_data.db"))
+    window_hours = getattr(args, "paper_summary_interval_hours", 6)
+
+    repo = PaperOrderRepository(database)
+    try:
+        send_summary(repo, bot_token, chat_id, window_hours=window_hours)
+    finally:
+        repo.close()
     return 0
 
 
