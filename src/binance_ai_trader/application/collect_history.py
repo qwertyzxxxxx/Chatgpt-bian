@@ -32,7 +32,7 @@ class HistoricalCollectionResult:
     failures: tuple[str, ...]
 
 
-IncrementalCollectionResult = HistoricalCollectionResult
+IncrementalCollectionResult = HistoricalCollectionResult  # alias: class missing from this branch
 
 
 class HistoricalDataCollector:
