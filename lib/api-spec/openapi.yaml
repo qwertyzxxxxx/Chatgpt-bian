@@ -377,6 +377,29 @@ components:
         - layers
         - generated_at
 
+    HotlistSourcePerf:
+      type: object
+      properties:
+        open:
+          type: integer
+        tp1:
+          type: integer
+        tp2:
+          type: integer
+        sl:
+          type: integer
+        total:
+          type: integer
+        win_rate:
+          type: integer
+      required:
+        - open
+        - tp1
+        - tp2
+        - sl
+        - total
+        - win_rate
+
     HotlistPushPerformance:
       type: object
       properties:
@@ -394,6 +417,10 @@ components:
           type: integer
         generated_at:
           type: string
+        by_source:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/HotlistSourcePerf"
       required:
         - open
         - tp1
@@ -402,6 +429,7 @@ components:
         - total
         - win_rate
         - generated_at
+        - by_source
 
     HotlistCandidatePerformance:
       type: object
@@ -420,6 +448,10 @@ components:
           type: integer
         generated_at:
           type: string
+        by_source:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/HotlistSourcePerf"
       required:
         - open
         - tp1
@@ -428,6 +460,7 @@ components:
         - total
         - win_rate
         - generated_at
+        - by_source
 
     HotlistPushedOrderRow:
       type: object
@@ -450,6 +483,8 @@ components:
           type: ["integer", "null"]
         closed_at:
           type: ["string", "null"]
+        rank_type:
+          type: string
       required:
         - symbol
         - direction

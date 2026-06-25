@@ -22,4 +22,5 @@ export interface HotlistPushedOrderRow {
   duration_minutes?: number | null;
   /** @nullable */
   closed_at?: string | null;
+  rank_type?: string;
 }

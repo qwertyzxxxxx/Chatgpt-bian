@@ -68,7 +68,8 @@ def _setup_db_with_alerts_and_results(db_path: str) -> None:
     con = sqlite3.connect(db_path)
     con.execute("""CREATE TABLE IF NOT EXISTS hotlist_alerts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        symbol TEXT, direction TEXT, entry TEXT, level TEXT, created_at TEXT
+        symbol TEXT, direction TEXT, entry TEXT, level TEXT, created_at TEXT,
+        rank_type TEXT DEFAULT 'UNKNOWN'
     )""")
     con.execute("""CREATE TABLE IF NOT EXISTS strategy_results (
         result_id TEXT PRIMARY KEY, strategy TEXT, symbol TEXT, direction TEXT,
@@ -81,8 +82,8 @@ def _setup_db_with_alerts_and_results(db_path: str) -> None:
         opportunity_id INTEGER, horizon_hours INTEGER,
         status TEXT, evaluated_at TEXT, return_pct REAL
     )""")
-    con.execute("INSERT INTO hotlist_alerts VALUES (1,'BTCUSDT','LONG','100','HIGH','2026-06-24T10:00:00')")
-    con.execute("INSERT INTO hotlist_alerts VALUES (2,'ETHUSDT','SHORT','3000','MED','2026-06-24T09:00:00')")
+    con.execute("INSERT INTO hotlist_alerts(id,symbol,direction,entry,level,created_at,rank_type) VALUES (1,'BTCUSDT','LONG','100','HIGH','2026-06-24T10:00:00','GAINER')")
+    con.execute("INSERT INTO hotlist_alerts(id,symbol,direction,entry,level,created_at,rank_type) VALUES (2,'ETHUSDT','SHORT','3000','MED','2026-06-24T09:00:00','LOSER')")
     con.execute("INSERT INTO strategy_results VALUES ('r1','hotlist','BTCUSDT','LONG','100','95','110','120','2026-06-24T10:00:00','2026-06-24T14:00:00','TP1',3.5,2.0,240,'r1')")
     con.execute("INSERT INTO strategy_results VALUES ('r2','hotlist','ETHUSDT','SHORT','3000','3100','2900','2800','2026-06-24T09:00:00','2026-06-24T12:00:00','SL',-2.5,NULL,180,'r2')")
     con.execute("INSERT INTO hotlist_outcomes VALUES (1,1,1,'TP1_HIT','2026-06-24T11:00:00',3.5)")
