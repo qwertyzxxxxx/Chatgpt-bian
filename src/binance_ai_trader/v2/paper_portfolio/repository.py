@@ -163,6 +163,20 @@ class V2PaperOrderRepository:
             ).fetchone()
         return row is not None
 
+    def load_recent_settled(self, limit: int = 7) -> list[V2PaperOrder]:
+        """Return the most recent closed/settled orders (any non-open result)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM v2_paper_orders
+                WHERE closed_at IS NOT NULL
+                ORDER BY closed_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_row_to_order(r) for r in rows]
+
     def update_filled(self, order_id: str, filled_at: str) -> None:
         with self._connect() as conn:
             conn.execute(

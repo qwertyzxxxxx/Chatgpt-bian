@@ -458,6 +458,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--enable-ops-dashboard", action="store_true")
     run_loop.add_argument("--enable-v2-hotlist", action="store_true",
                           help="Enable V2 isolated Hotlist Momentum paper portfolio (default: off)")
+    run_loop.add_argument("--disable-v2-shadow-report", action="store_true",
+                          help="Disable V2 hourly shadow report (default: on when V2 enabled)")
+    run_loop.add_argument("--disable-v2-health-report", action="store_true",
+                          help="Disable V2 6-hour health check report (default: on when V2 enabled)")
+    run_loop.add_argument("--v2-report-interval-hours", type=int, default=1, metavar="N",
+                          help="V2 shadow report interval in hours (default: 1)")
+    run_loop.add_argument("--v2-health-interval-hours", type=int, default=6, metavar="N",
+                          help="V2 health check interval in hours (default: 6)")
     run_loop.add_argument("--enable-paper-portfolio", action="store_true",
                           help="Enable unified paper portfolio settle + summary tasks")
     run_loop.add_argument("--paper-settle-interval-minutes", type=int, default=15,
@@ -1726,6 +1734,10 @@ def _run_loop(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             max_retries=args.max_retries,
             telegram=notifier,
+            report_interval=timedelta(hours=getattr(args, "v2_report_interval_hours", 1)),
+            health_interval=timedelta(hours=getattr(args, "v2_health_interval_hours", 6)),
+            shadow_report_enabled=not getattr(args, "disable_v2_shadow_report", False),
+            health_check_enabled=not getattr(args, "disable_v2_health_report", False),
         )
         tasks = tasks + v2_tasks
     repository = MarketDataRepository(database)
