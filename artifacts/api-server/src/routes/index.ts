@@ -3,6 +3,7 @@ import healthRouter from "./health";
 import hotlistRouter from "./hotlist";
 import leaderboardRouter from "./leaderboard";
 import strategyRouter from "./strategy";
+import paperRouter from "./paper";
 
 const router: IRouter = Router();
 
@@ -10,5 +11,6 @@ router.use(healthRouter);
 router.use(hotlistRouter);
 router.use(leaderboardRouter);
 router.use(strategyRouter);
+router.use(paperRouter);
 
 export default router;
