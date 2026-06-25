@@ -32,6 +32,9 @@ class HistoricalCollectionResult:
     failures: tuple[str, ...]
 
 
+IncrementalCollectionResult = HistoricalCollectionResult
+
+
 class HistoricalDataCollector:
     """Resumable bootstrap using Binance USD-M public market-data endpoints only."""
 
