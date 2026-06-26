@@ -170,6 +170,20 @@ class V2PaperOrderRepository:
                 (filled_at, order_id),
             )
 
+    def load_recent_settled(self, n: int) -> list[V2PaperOrder]:
+        """Return the last *n* closed/settled orders, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM v2_paper_orders
+                WHERE status NOT IN ({','.join('?' for _ in _OPEN_STATUSES)})
+                ORDER BY closed_at DESC
+                LIMIT ?
+                """,
+                (*_OPEN_STATUSES, n),
+            ).fetchall()
+        return [_row_to_order(r) for r in rows]
+
     def update_settled(
         self,
         order_id: str,
