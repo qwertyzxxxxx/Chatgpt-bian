@@ -64,6 +64,178 @@ def _query_hotlist_stats(con: sqlite3.Connection, since: str) -> dict[str, int]:
     return {"alerts": alerts, "open": open_, "tp1": tp1, "tp2": tp2, "sl": sl}
 
 
+def _query_hotlist_candidate_performance(con: sqlite3.Connection, since: str) -> dict[str, int]:
+    """Candidate pool performance: all hotlist_opportunities evaluated via hotlist_outcomes."""
+    open_, tp1, tp2, sl = 0, 0, 0, 0
+    if _table_exists(con, "hotlist_outcomes"):
+        try:
+            rows = con.execute(
+                "SELECT UPPER(status), COUNT(*) FROM hotlist_outcomes"
+                " WHERE evaluated_at >= ? GROUP BY status",
+                (since,),
+            ).fetchall()
+            m: dict[str, int] = {str(s): int(n) for s, n in rows}
+            open_ = m.get("OPEN", 0)
+            tp1 = m.get("TP1_HIT", 0)
+            tp2 = max(m.get("WIN", 0), m.get("TP2_HIT", 0), m.get("WIN_TP2", 0))
+            sl = max(m.get("LOSS", 0), m.get("SL_HIT", 0))
+        except Exception:
+            pass
+    total = tp1 + tp2 + sl
+    wins = tp1 + tp2
+    win_rate = round(wins * 100 // total) if total else 0
+    return {"open": open_, "tp1": tp1, "tp2": tp2, "sl": sl, "total": total, "win_rate": win_rate}
+
+
+def _query_hotlist_push_performance(con: sqlite3.Connection, since: str) -> dict[str, int]:
+    """Push performance: only signals actually sent to Telegram (hotlist_alerts JOIN strategy_results)."""
+    open_, tp1, tp2, sl = 0, 0, 0, 0
+    if _table_exists(con, "hotlist_alerts") and _table_exists(con, "strategy_results"):
+        try:
+            rows = con.execute(
+                """
+                SELECT UPPER(sr.result), COUNT(DISTINCT ha.rowid)
+                FROM hotlist_alerts ha
+                LEFT JOIN strategy_results sr
+                  ON sr.symbol = ha.symbol
+                 AND sr.direction = ha.direction
+                 AND sr.entry = ha.entry
+                 AND sr.strategy = 'hotlist'
+                WHERE ha.created_at >= ?
+                GROUP BY UPPER(sr.result)
+                """,
+                (since,),
+            ).fetchall()
+            m2: dict[str, int] = {str(s): int(n) for s, n in rows}
+            open_ = m2.get("OPEN", 0) + m2.get("NONE", 0)
+            tp1 = m2.get("TP1", 0)
+            tp2 = m2.get("TP2", 0)
+            sl = m2.get("SL", 0)
+        except Exception:
+            pass
+    total = tp1 + tp2 + sl
+    wins = tp1 + tp2
+    win_rate = round(wins * 100 // total) if total else 0
+    return {"open": open_, "tp1": tp1, "tp2": tp2, "sl": sl, "total": total, "win_rate": win_rate}
+
+
+def _query_candidate_perf_by_source(
+    con: sqlite3.Connection, since: str, rank_type: str
+) -> dict[str, int]:
+    """Candidate pool performance for a specific rank_type source."""
+    tp1, tp2, sl = 0, 0, 0
+    if _table_exists(con, "hotlist_outcomes") and _table_exists(con, "hotlist_opportunities"):
+        try:
+            rows = con.execute(
+                """
+                SELECT UPPER(ho.status), COUNT(*)
+                FROM hotlist_outcomes ho
+                JOIN hotlist_opportunities opp ON opp.id = ho.opportunity_id
+                WHERE ho.evaluated_at >= ?
+                  AND UPPER(COALESCE(opp.rank_type, 'UNKNOWN')) = ?
+                GROUP BY UPPER(ho.status)
+                """,
+                (since, rank_type.upper()),
+            ).fetchall()
+            m: dict[str, int] = {str(s): int(n) for s, n in rows}
+            tp1 = m.get("TP1_HIT", 0)
+            tp2 = max(m.get("WIN", 0), m.get("TP2_HIT", 0), m.get("WIN_TP2", 0))
+            sl = max(m.get("LOSS", 0), m.get("SL_HIT", 0))
+        except Exception:
+            pass
+    total = tp1 + tp2 + sl
+    wins = tp1 + tp2
+    win_rate = round(wins * 100 // total) if total else 0
+    return {"tp1": tp1, "tp2": tp2, "sl": sl, "total": total, "win_rate": win_rate}
+
+
+def _query_push_perf_by_source(
+    con: sqlite3.Connection, since: str, rank_type: str
+) -> dict[str, int]:
+    """Push performance for a specific rank_type source."""
+    tp1, tp2, sl, open_ = 0, 0, 0, 0
+    if _table_exists(con, "hotlist_alerts") and _table_exists(con, "strategy_results"):
+        try:
+            rows = con.execute(
+                """
+                SELECT UPPER(sr.result), COUNT(DISTINCT ha.rowid)
+                FROM hotlist_alerts ha
+                LEFT JOIN strategy_results sr
+                  ON sr.symbol = ha.symbol
+                 AND sr.direction = ha.direction
+                 AND sr.entry = ha.entry
+                 AND sr.strategy = 'hotlist'
+                WHERE ha.created_at >= ?
+                  AND UPPER(COALESCE(ha.rank_type, 'UNKNOWN')) = ?
+                GROUP BY UPPER(sr.result)
+                """,
+                (since, rank_type.upper()),
+            ).fetchall()
+            m: dict[str, int] = {str(s): int(n) for s, n in rows}
+            open_ = m.get("OPEN", 0) + m.get("NONE", 0)
+            tp1 = m.get("TP1", 0)
+            tp2 = m.get("TP2", 0)
+            sl = m.get("SL", 0)
+        except Exception:
+            pass
+    total = tp1 + tp2 + sl
+    wins = tp1 + tp2
+    win_rate = round(wins * 100 // total) if total else 0
+    return {"open": open_, "tp1": tp1, "tp2": tp2, "sl": sl, "total": total, "win_rate": win_rate}
+
+
+def _query_last_7_pushed_orders(con: sqlite3.Connection) -> list[dict[str, object]]:
+    """Last 7 Telegram-pushed hotlist alerts with settlement data from strategy_results."""
+    if not _table_exists(con, "hotlist_alerts"):
+        return []
+    try:
+        has_sr = _table_exists(con, "strategy_results")
+        if has_sr:
+            rows = con.execute(
+                """
+                SELECT ha.symbol, ha.direction, ha.entry, ha.created_at AS pushed_at,
+                       sr.result, sr.pnl_pct, sr.rr_realized, sr.duration_minutes, sr.closed_at,
+                       COALESCE(ha.rank_type, 'UNKNOWN') AS rank_type
+                FROM hotlist_alerts ha
+                LEFT JOIN strategy_results sr
+                  ON sr.symbol = ha.symbol
+                 AND sr.direction = ha.direction
+                 AND sr.entry = ha.entry
+                 AND sr.strategy = 'hotlist'
+                ORDER BY ha.created_at DESC
+                LIMIT 7
+                """,
+            ).fetchall()
+        else:
+            rows = con.execute(
+                """
+                SELECT symbol, direction, entry, created_at AS pushed_at,
+                       NULL, NULL, NULL, NULL, NULL,
+                       COALESCE(rank_type, 'UNKNOWN') AS rank_type
+                FROM hotlist_alerts
+                ORDER BY created_at DESC
+                LIMIT 7
+                """,
+            ).fetchall()
+        return [
+            {
+                "symbol": row[0],
+                "direction": row[1],
+                "entry": row[2],
+                "pushed_at": row[3],
+                "result": row[4],
+                "pnl_pct": row[5],
+                "rr_realized": row[6],
+                "duration_minutes": row[7],
+                "closed_at": row[8],
+                "rank_type": row[9],
+            }
+            for row in rows
+        ]
+    except Exception:
+        return []
+
+
 def _query_signals_by_strategy(con: sqlite3.Connection, since: str) -> dict[str, int]:
     if not (_table_exists(con, "signals") and _table_exists(con, "analysis_snapshots")):
         return {}
@@ -229,8 +401,15 @@ def build_hourly_report(
         _latest_run_id,
         classify_scan_status,
     )
+    _SOURCES = ("GAINER", "LOSER", "VOLUME")
+
     try:
         hotlist = _query_hotlist_stats(con, since)
+        hotlist_candidate_perf = _query_hotlist_candidate_performance(con, since)
+        hotlist_push_perf = _query_hotlist_push_performance(con, since)
+        push_by_source = {s: _query_push_perf_by_source(con, since, s) for s in _SOURCES}
+        candidate_by_source = {s: _query_candidate_perf_by_source(con, since, s) for s in _SOURCES}
+        last_7_orders = _query_last_7_pushed_orders(con)
         signals_by_strat = _query_signals_by_strategy(con, since)
         trades_by_strat = _query_trades_by_strategy(con, since)
         gemini = _query_gemini_stats(con, since)
@@ -267,6 +446,27 @@ def build_hourly_report(
 
     alerts: list[str] = []
 
+    _c = hotlist_candidate_perf
+    _p = hotlist_push_perf
+
+    def _src_push_line(src: str) -> str:
+        d = push_by_source[src]
+        if d["total"] == 0 and d["open"] == 0:
+            return f"    {src}: -"
+        return (
+            f"    {src}: {d['total']}结算 胜率{d['win_rate']}%"
+            f"  TP1:{d['tp1']} TP2:{d['tp2']} SL:{d['sl']} open:{d['open']}"
+        )
+
+    def _src_cand_line(src: str) -> str:
+        d = candidate_by_source[src]
+        if d["total"] == 0:
+            return f"    {src}: -"
+        return (
+            f"    {src}: {d['total']}结算 胜率{d['win_rate']}%"
+            f"  TP1:{d['tp1']} TP2:{d['tp2']} SL:{d['sl']}"
+        )
+
     lines: list[str] = [
         "📊 策略自检报告",
         f"{now.strftime('%Y-%m-%d %H:%M UTC')}（过去24小时）",
@@ -275,7 +475,31 @@ def build_hourly_report(
         f"  • alerts: {hotlist['alerts']}",
         f"  • open: {hotlist['open']} | TP1: {hotlist['tp1']}"
         f" | TP2: {hotlist['tp2']} | SL: {hotlist['sl']}",
+        "",
+        "📊 候选池绩效（hotlist_outcomes）",
+        f"  • 结算: {_c['total']}  胜率: {_c['win_rate']}%",
+        f"  • TP1: {_c['tp1']} | TP2: {_c['tp2']} | SL: {_c['sl']} | open: {_c['open']}",
+        _src_cand_line("GAINER"),
+        _src_cand_line("LOSER"),
+        _src_cand_line("VOLUME"),
+        "",
+        "📤 推送绩效（Telegram推送 × strategy_results）",
+        f"  • 结算: {_p['total']}  胜率: {_p['win_rate']}%",
+        f"  • TP1: {_p['tp1']} | TP2: {_p['tp2']} | SL: {_p['sl']} | open: {_p['open']}",
+        _src_push_line("GAINER"),
+        _src_push_line("LOSER"),
+        _src_push_line("VOLUME"),
     ]
+
+    if last_7_orders:
+        lines += ["", "📌 最近7条推送订单结算"]
+        for o in last_7_orders:
+            result_str = str(o["result"]) if o["result"] is not None else "未结算"
+            pnl_str = f"  {o['pnl_pct']:+.2f}%" if o["pnl_pct"] is not None else ""
+            src_tag = f"[{o.get('rank_type', 'UNKNOWN')}] " if o.get("rank_type") else ""
+            lines.append(
+                f"  {src_tag}{o['symbol']} {o['direction']} @{o['entry']}  [{result_str}{pnl_str}]"
+            )
 
     for strategy_id, label in _STRATEGY_ENTRIES:
         sig = signals_by_strat.get(strategy_id, 0)

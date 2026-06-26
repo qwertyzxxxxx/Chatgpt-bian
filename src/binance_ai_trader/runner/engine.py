@@ -235,7 +235,7 @@ def default_tasks(
     if strategy_self_report is not None:
         tasks.append(RunnerTask("strategy_self_report", strategy_self_report, interval=timedelta(hours=1)))
     if paper_settle is not None:
-        tasks.append(RunnerTask("paper_settle", paper_settle, interval=paper_settle_interval))
+        tasks.append(RunnerTask("paper_settle", paper_settle, interval=paper_settle_interval, startup_immediate=True))
     if paper_summary is not None:
         tasks.append(RunnerTask("paper_summary", paper_summary, interval=paper_summary_interval))
     return tuple(tasks)

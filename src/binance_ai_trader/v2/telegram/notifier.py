@@ -25,16 +25,19 @@ class V2TelegramNotifier:
 
     def send_signal(self, signal: V2Signal) -> None:
         direction_emoji = "🟢" if signal.direction == "LONG" else "🔴"
-        msg = (
-            f"[V2] Hotlist Momentum Signal\n"
-            f"{direction_emoji} {signal.symbol} {signal.direction}\n\n"
-            f"📌 Entry:     {signal.entry}\n"
-            f"🛡 Stop Loss: {signal.stop_loss}\n"
-            f"🎯 TP1:       {signal.tp1}\n"
-            f"🎯 TP2:       {signal.tp2}\n"
-            f"📊 RR:        {signal.rr}\n\n"
-            f"💡 {signal.reason}"
-        )
+        msg = "\n".join([
+            f"[V2] Hotlist 信号",
+            "",
+            f"{direction_emoji} {signal.symbol} {signal.direction}",
+            f"买入: {signal.entry}",
+            f"止损: {signal.stop_loss}",
+            f"TP1:  {signal.tp1}",
+            f"TP2:  {signal.tp2}",
+            f"RR:   {signal.rr}",
+            f"理由: {signal.reason}",
+            "",
+            "仅供研究",
+        ])
         try:
             self._notifier.send(msg)
             log.info("[V2] signal alert sent: %s %s", signal.symbol, signal.direction)
