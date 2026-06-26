@@ -458,6 +458,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_loop.add_argument("--enable-ops-dashboard", action="store_true")
     run_loop.add_argument("--enable-v2-hotlist", action="store_true",
                           help="Enable V2 isolated Hotlist Momentum paper portfolio (default: off)")
+    run_loop.add_argument("--disable-v2-shadow-report", action="store_true",
+                          help="Disable V2 hourly shadow report (default: on when V2 enabled)")
+    run_loop.add_argument("--disable-v2-health-report", action="store_true",
+                          help="Disable V2 6-hour health check report (default: on when V2 enabled)")
+    run_loop.add_argument("--v2-report-interval-hours", type=int, default=1, metavar="N",
+                          help="V2 shadow report interval in hours (default: 1)")
+    run_loop.add_argument("--v2-health-interval-hours", type=int, default=6, metavar="N",
+                          help="V2 health check interval in hours (default: 6)")
     run_loop.add_argument("--enable-paper-portfolio", action="store_true",
                           help="Enable unified paper portfolio settle + summary tasks")
     run_loop.add_argument("--paper-settle-interval-minutes", type=int, default=15,
@@ -1718,7 +1726,12 @@ def _run_loop(args: argparse.Namespace) -> int:
     )
     if getattr(args, "enable_v2_hotlist", False):
         from binance_ai_trader.v2.runner.tasks import build_v2_tasks
+        from binance_ai_trader.v2.telegram.startup import send_v2_startup
         universe_config = UniverseConfig.load(args.config)
+        _v2_shadow_enabled = not getattr(args, "disable_v2_shadow_report", False)
+        _v2_health_enabled = not getattr(args, "disable_v2_health_report", False)
+        _v2_report_hours = getattr(args, "v2_report_interval_hours", 1)
+        _v2_health_hours = getattr(args, "v2_health_interval_hours", 6)
         v2_tasks = build_v2_tasks(
             db_path=database,
             universe_config=universe_config,
@@ -1726,8 +1739,24 @@ def _run_loop(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             max_retries=args.max_retries,
             telegram=notifier,
+            report_interval=timedelta(hours=_v2_report_hours),
+            health_interval=timedelta(hours=_v2_health_hours),
+            shadow_report_enabled=_v2_shadow_enabled,
+            health_check_enabled=_v2_health_enabled,
         )
         tasks = tasks + v2_tasks
+        if notifier is not None:
+            try:
+                send_v2_startup(
+                    notifier,
+                    db_path=database,
+                    shadow_report_enabled=_v2_shadow_enabled,
+                    health_check_enabled=_v2_health_enabled,
+                    report_interval_hours=_v2_report_hours,
+                    health_interval_hours=_v2_health_hours,
+                )
+            except Exception:
+                pass
     repository = MarketDataRepository(database)
     try:
         runner = ProductionRunner(
