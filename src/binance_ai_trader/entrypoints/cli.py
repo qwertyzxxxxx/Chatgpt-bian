@@ -483,6 +483,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="conservative",
         help="排行榜 Gemini 风险偏好模式（默认 conservative，与原行为一致）",
     )
+    run_loop.add_argument(
+        "--leaderboard-gemini-max-candidates",
+        type=int,
+        default=3,
+        metavar="N",
+        help="排行榜 Gemini 最多分析 N 个候选（默认 3）",
+    )
     run_loop.add_argument("--ai-macro-database", type=Path, default=Path("data/ai_macro.db"))
     run_loop.add_argument("--history-days", type=int, default=30)
     run_loop.add_argument("--history-interval-hours", type=float, default=24.0)
@@ -3138,6 +3145,7 @@ def _run_leaderboard_watch_gemini_task(args: argparse.Namespace) -> int:
     )
     try:
         svc.gemini_review(
+            max_candidates=int(getattr(args, "leaderboard_gemini_max_candidates", 3)),
             send_telegram=bool(bot_token and chat_id),
             telegram_bot_token=bot_token,
             telegram_chat_id=chat_id,
