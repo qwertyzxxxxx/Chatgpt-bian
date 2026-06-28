@@ -70,6 +70,9 @@ def send_v2_startup(
     health_check_enabled: bool,
     report_interval_hours: int = 1,
     health_interval_hours: int = 6,
+    scan_interval_minutes: int = 15,
+    settle_interval_minutes: int = 15,
+    summary_interval_hours: int = 6,
 ) -> None:
     sha = _git_sha()
     branch = _git_branch()
@@ -91,6 +94,9 @@ def send_v2_startup(
         f"PID:           {pid}\n"
         f"DB:            {db_path}\n"
         f"V2 Hotlist:    ON\n"
+        f"Scan:          每 {scan_interval_minutes} 分钟\n"
+        f"Settle:        每 {settle_interval_minutes} 分钟\n"
+        f"Summary:       每 {summary_interval_hours} 小时\n"
         f"Shadow Report: {shadow_line}\n"
         f"Health Check:  {health_line}"
     )

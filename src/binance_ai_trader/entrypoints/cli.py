@@ -1761,6 +1761,9 @@ def _run_loop(args: argparse.Namespace) -> int:
                     health_check_enabled=_v2_health_enabled,
                     report_interval_hours=_v2_report_hours,
                     health_interval_hours=_v2_health_hours,
+                    scan_interval_minutes=int(getattr(args, "v2_scan_interval_minutes", 15)),
+                    settle_interval_minutes=int(getattr(args, "v2_settle_interval_minutes", 15)),
+                    summary_interval_hours=_v2_report_hours,
                 )
             except Exception:
                 pass
