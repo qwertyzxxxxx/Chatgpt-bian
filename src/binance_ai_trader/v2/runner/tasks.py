@@ -81,13 +81,23 @@ def build_v2_tasks(
     risk_engine = V2RiskEngine(order_repo)
     hotlist_v2  = HotlistMomentumV2(client, universe_config, signal_repo, strategy)
     settler     = V2Settler(order_repo, event_repo, client)
-    perf_calc   = V2PerformanceCalculator(order_repo)
+    perf_calc   = V2PerformanceCalculator(order_repo, signal_repo)
     tracker     = V2HealthTracker()
+
+    _scan_min    = int(scan_interval.total_seconds()   // 60)
+    _settle_min  = int(settle_interval.total_seconds() // 60)
+    _summary_h   = int(report_interval.total_seconds() // 3600)
 
     v2_tg    = V2TelegramNotifier(telegram) if telegram else None
     alerter  = V2AlertSender(telegram) if telegram else None
     reporter = (
-        V2ShadowReporter(telegram, order_repo, perf_calc, _STRATEGY_ID)
+        V2ShadowReporter(
+            telegram, order_repo, perf_calc, _STRATEGY_ID,
+            client=client,
+            scan_interval_minutes=_scan_min,
+            settle_interval_minutes=_settle_min,
+            summary_interval_hours=_summary_h,
+        )
         if (telegram and shadow_report_enabled) else None
     )
     health_reporter = (
