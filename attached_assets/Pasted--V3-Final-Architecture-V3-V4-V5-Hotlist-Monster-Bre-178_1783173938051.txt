@@ -1,0 +1,482 @@
+【V3 最终数据层重构（Final Architecture）】
+
+目标：
+
+这是 V3 最后一次数据库重构。
+
+以后禁止再新增 V4 / V5。
+以后所有策略（Hotlist、Monster、Breakout、AI...）全部使用这一套数据架构。
+
+========================
+一、唯一原则
+========================
+
+SQLite 不再保存任何永久交易数据。
+
+SQLite 以后只负责：
+
+1. Binance K线缓存
+2. Universe缓存
+3. 临时扫描缓存
+4. Runner缓存
+5. Monster Dataset缓存
+
+任何部署后可以重新生成的数据，都放 SQLite。
+
+========================
+二、PostgreSQL 成为唯一永久数据库
+========================
+
+所有需要长期保存的数据全部迁移 PostgreSQL。
+
+包括：
+
+v3_candidates
+
+v3_push_queue
+
+v3_paper_orders
+
+v3_order_events
+
+v3_feature_store
+
+v3_strategies
+
+strategy_weekly_reports
+
+strategy_monthly_reports
+
+strategy_versions
+
+future_ai_training
+
+以后所有统计全部来自 PostgreSQL。
+
+========================
+三、SQLite 删除职责
+========================
+
+禁止再写：
+
+v3_candidates
+
+v3_push_queue
+
+v3_paper_orders
+
+v3_order_events
+
+v3_feature_store
+
+SQLite 中若还有这些表，仅保留兼容读取。
+
+全部改写 PostgreSQL。
+
+========================
+四、Repository 重构
+========================
+
+建立统一 Repository。
+
+禁止业务代码直接访问 SQLite。
+
+所有模块：
+
+Strategy
+
+Risk
+
+Dedup
+
+Telegram
+
+Paper
+
+Settlement
+
+Performance
+
+统一调用：
+
+StorageRepository
+
+StorageRepository 自动决定：
+
+Cache → SQLite
+
+History → PostgreSQL
+
+以后任何策略不用关心数据库类型。
+
+========================
+五、历史数据永久保存
+========================
+
+Publish
+
+Redeploy
+
+Reserved VM 重建
+
+全部不能影响：
+
+历史订单
+
+历史信号
+
+历史候选
+
+历史因子
+
+历史绩效
+
+必须永久保留。
+
+========================
+六、统一 Signal ID
+========================
+
+所有表全部使用：
+
+signal_id
+
+例如：
+
+HOT-20260704-000001
+
+禁止：
+
+symbol+entry
+
+symbol+direction
+
+作为 JOIN。
+
+全部改 signal_id。
+
+========================
+七、统一生命周期
+========================
+
+Candidate
+
+↓
+
+Risk
+
+↓
+
+Dedup
+
+↓
+
+Push
+
+↓
+
+Pending
+
+↓
+
+Filled
+
+↓
+
+TP1
+
+↓
+
+SL
+
+↓
+
+Timeout
+
+↓
+
+Closed
+
+整个生命周期只允许一条记录。
+
+不得重复统计。
+
+========================
+八、统一绩效
+========================
+
+以后唯一绩效来源：
+
+v3_paper_orders
+
+WinRate：
+
+TP1 / (TP1 + SL)
+
+不统计：
+
+未成交
+
+Pending
+
+Timeout
+
+Research
+
+Candidate
+
+Backtest
+
+任何 Horizon
+
+全部剔除。
+
+========================
+九、Feature Store
+========================
+
+每个 Signal 保存完整因子。
+
+包括：
+
+change24h
+
+quote_volume
+
+volume_ratio
+
+ATR
+
+EMA20
+
+EMA60
+
+EMA200
+
+RSI
+
+MACD
+
+ADX
+
+BBW
+
+Funding
+
+OI
+
+MarketRegime
+
+Sector
+
+Rank
+
+RepeatCount
+
+全部保存 PostgreSQL。
+
+以后 AI 自动分析：
+
+成功因子
+
+失败因子
+
+最佳参数
+
+全部基于这里。
+
+========================
+十、自动复盘
+========================
+
+新增：
+
+Weekly Strategy Review
+
+每周自动运行。
+
+输出：
+
+成交数
+
+胜率
+
+PnL
+
+RR
+
+最长连赢
+
+最长连亏
+
+Top Symbol
+
+Worst Symbol
+
+LONG
+
+SHORT
+
+各因子贡献
+
+策略建议
+
+只生成建议。
+
+绝不自动修改参数。
+
+========================
+十一、Telegram
+========================
+
+只保留四类：
+
+①
+
+[V3] Started
+
+②
+
+Signal
+
+③
+
+Paper Portfolio
+
+④
+
+Health
+
+其它全部删除。
+
+========================
+十二、Web Dashboard
+========================
+
+以后 Web 全部读取 PostgreSQL。
+
+包括：
+
+订单
+
+统计
+
+排行榜
+
+历史
+
+走势图
+
+全部统一。
+
+========================
+十三、迁移要求
+========================
+
+1.
+
+自动迁移 SQLite 历史数据（若存在）
+
+导入 PostgreSQL。
+
+2.
+
+迁移完成后验证：
+
+订单数量一致
+
+Signal 数一致
+
+事件数一致
+
+3.
+
+输出：
+
+Migration Report
+
+包括：
+
+SQLite：
+
+Candidates
+
+Orders
+
+Events
+
+↓
+
+PostgreSQL：
+
+Candidates
+
+Orders
+
+Events
+
+校验：
+
+100% 一致。
+
+========================
+十四、上线要求
+========================
+
+完成后：
+
+重新 Publish。
+
+Telegram 推送：
+
+[V3] PostgreSQL Migration Completed
+
+包含：
+
+数据库版本
+
+迁移耗时
+
+迁移数量
+
+校验结果
+
+========================
+十五、重要要求
+========================
+
+这是 V3 最后一版架构。
+
+以后禁止再次重构数据库。
+
+未来新增任何策略：
+
+Hotlist
+
+Monster
+
+Breakout
+
+AI
+
+全部直接接入 V3 Pipeline。
+
+不得再次建立新的订单表、绩效表、候选表。
+
+所有模块必须复用 V3。
+
+如发现重复架构，请先重构到 V3，而不是新增 V4。
+
+完成后输出：
+
+《V3 Final Architecture Completion Report》
+
+确认：
+
+① PostgreSQL 已成为唯一永久数据库
+
+② SQLite 已退化为 Cache
+
+③ V3 成为唯一正式交易流水线
+
+④ 后续所有开发均基于 V3，不再重构数据库。

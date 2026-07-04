@@ -1,18 +1,19 @@
 """V3 runner task factory — builds RunnerTask objects for the V3 pipeline.
 
 Tasks (returned by build_v3_tasks):
-  v3_hotlist_scan   — every 15min: generate candidates → pipeline → paper orders
-  v3_paper_settle   — every 15min: settle open V3 orders
-  v3_shadow_report  — every 1h:    📊 V3 Paper Portfolio
-  v3_health_check   — every 6h:    health ping (future)
+  v3_hotlist_scan    — every 15min: generate candidates → pipeline → paper orders
+  v3_paper_settle    — every 15min: settle open V3 orders
+  v3_shadow_report   — every 1h:   📊 V3 Paper Portfolio
+  v3_weekly_review   — every 7d:   📋 Weekly Strategy Review
+  v3_health_check    — every 6h:   health ping
 
-Startup notification:
-  send_v3_startup() is called from cli.py before the runner loop starts.
+All permanent data stored in PostgreSQL via PG repositories.
 """
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from binance_ai_trader.config import UniverseConfig
@@ -35,6 +36,7 @@ from binance_ai_trader.v3.settlement.settler import V3Settler
 from binance_ai_trader.v3.strategies.hotlist import HotlistStrategyV3
 from binance_ai_trader.v3.telegram.notifier import V3TelegramNotifier
 from binance_ai_trader.v3.telegram.shadow_report import V3ShadowReporter
+from binance_ai_trader.v3.telegram.weekly_review import send_weekly_review
 
 log = logging.getLogger(__name__)
 
@@ -53,21 +55,22 @@ def build_v3_tasks(
     settle_interval: timedelta = timedelta(minutes=15),
     report_interval: timedelta = timedelta(hours=1),
     health_interval: timedelta = timedelta(hours=6),
+    weekly_review_interval: timedelta = timedelta(days=7),
     shadow_report_enabled: bool = True,
     health_check_enabled: bool = True,
     dedup_hours: int = 24,
     max_open_orders: int = 5,
 ) -> tuple[RunnerTask, ...]:
-    """Bootstrap V3 tables and return runner tasks."""
+    """Bootstrap V3 repos (PostgreSQL) and return runner tasks."""
     client = BinancePublicClient(
         base_url=base_url,
         timeout_seconds=timeout,
         max_retries=max_retries,
     )
 
-    cand_repo  = V3CandidateRepository(db_path)
-    push_repo  = V3PushQueueRepository(db_path)
-    order_repo = V3PaperOrderRepository(db_path)
+    cand_repo  = V3CandidateRepository()
+    push_repo  = V3PushQueueRepository()
+    order_repo = V3PaperOrderRepository()
     perf_calc  = V3PerformanceCalculator(order_repo)
 
     strategy   = HotlistStrategyV3(client, universe_config)
@@ -91,7 +94,6 @@ def build_v3_tasks(
         now = datetime.now(UTC)
         result = pipeline.run(strategy, now=now)
 
-        # convert pushed candidates → paper orders
         orders_created = 0
         for candidate in result.candidates:
             if order_repo.exists_open_for_symbol_direction(
@@ -100,7 +102,6 @@ def build_v3_tasks(
                 continue
 
             expires_at = (now + timedelta(hours=_HOLD_HOURS)).isoformat(timespec="seconds")
-            from decimal import Decimal
             order = V3PaperOrder(
                 order_id=make_order_id(),
                 signal_id=candidate.signal_id,
@@ -141,7 +142,6 @@ def build_v3_tasks(
             if v3_tg:
                 v3_tg.send_candidate(candidate, hold_hours=_HOLD_HOURS)
 
-            # Mark push_queue entry as SENT (pipeline already set candidate status=PUSHED)
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
                 push_repo.mark_sent(push_id=push_items[0].push_id)
@@ -151,31 +151,38 @@ def build_v3_tasks(
             result.pushed, orders_created, result.total_blocked,
         )
         return RunnerTaskResult("SUCCEEDED", {
-            "scanned":       result.scanned,
-            "pushed":        result.pushed,
+            "event_type":     "v3_hotlist_scan",
+            "scanned":        result.scanned,
+            "pushed":         result.pushed,
             "orders_created": orders_created,
-            "blocked_risk":  result.blocked_risk,
-            "blocked_dedup": result.blocked_dedup,
+            "blocked_risk":   result.blocked_risk,
+            "blocked_dedup":  result.blocked_dedup,
         })
 
     def _settle_task() -> RunnerTaskResult:
         updated = settler.settle_all()
-        return RunnerTaskResult("SUCCEEDED", {"settled": updated})
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_paper_settle", "settled": updated})
 
     def _report_task() -> RunnerTaskResult:
         if reporter:
             reporter.send_report()
-        return RunnerTaskResult("SUCCEEDED", {})
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_shadow_report"})
+
+    def _weekly_review_task() -> RunnerTaskResult:
+        if telegram:
+            send_weekly_review(telegram, order_repo, perf_calc, _STRATEGY_ID)
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_weekly_review"})
 
     def _health_task() -> RunnerTaskResult:
-        return RunnerTaskResult("SUCCEEDED", {})
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_health_check"})
 
     tasks: list[RunnerTask] = [
-        RunnerTask("v3_hotlist_scan", _scan_task,   interval=scan_interval,   startup_immediate=True),
-        RunnerTask("v3_paper_settle", _settle_task, interval=settle_interval, startup_immediate=True),
+        RunnerTask("v3_hotlist_scan",  _scan_task,   interval=scan_interval,   startup_immediate=True),
+        RunnerTask("v3_paper_settle",  _settle_task, interval=settle_interval, startup_immediate=True),
     ]
     if reporter:
         tasks.append(RunnerTask("v3_shadow_report", _report_task, interval=report_interval, startup_immediate=True))
+    tasks.append(RunnerTask("v3_weekly_review", _weekly_review_task, interval=weekly_review_interval))
     if health_check_enabled:
         tasks.append(RunnerTask("v3_health_check", _health_task, interval=health_interval))
 

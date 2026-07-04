@@ -1,19 +1,16 @@
-"""V3 Dedup Engine — prevents duplicate signals across all strategies.
+"""V3 Dedup Engine — prevents duplicate signals (PostgreSQL backend).
 
-Dedup is checked against v3_candidates (symbol + direction within window).
-Each strategy can configure its own window (4h / 12h / 24h / 48h).
-
+Checks v3_candidates in PostgreSQL for recent same-symbol+direction signals.
 Default window: 24h.
-
-Returns DedupDecision(is_dup, reason).
 """
 from __future__ import annotations
 
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+from binance_ai_trader.v3.storage.pg import get_conn
 
 log = logging.getLogger(__name__)
 
@@ -28,10 +25,8 @@ class DedupDecision:
 
 
 class V3DedupEngine:
-    """Stateless dedup gate.  Checks v3_candidates for recent same-symbol+direction."""
-
-    def __init__(self, db_path: Path | str) -> None:
-        self._db = str(db_path)
+    def __init__(self, db_path: Path | str = None) -> None:
+        pass
 
     def check(
         self,
@@ -41,47 +36,35 @@ class V3DedupEngine:
         window_hours: int = _DEFAULT_WINDOW_HOURS,
         cross_strategy: bool = False,
     ) -> DedupDecision:
-        """Check if a duplicate candidate exists within the dedup window.
-
-        Args:
-            strategy_id:   Strategy that generated the candidate.
-            symbol:        Trading pair.
-            direction:     'LONG' or 'SHORT'.
-            window_hours:  Lookback window (4 / 12 / 24 / 48).
-            cross_strategy: If True, dedup across ALL strategies (not just this one).
-        """
         if window_hours not in _VALID_WINDOWS_HOURS:
-            log.warning(
-                "[V3Dedup] invalid window_hours=%d, defaulting to %d",
-                window_hours, _DEFAULT_WINDOW_HOURS,
-            )
+            log.warning("[V3Dedup] invalid window_hours=%d → default %d", window_hours, _DEFAULT_WINDOW_HOURS)
             window_hours = _DEFAULT_WINDOW_HOURS
 
-        cutoff = (datetime.now(UTC) - timedelta(hours=window_hours)).isoformat(
-            timespec="seconds"
-        )
+        cutoff = (datetime.now(UTC) - timedelta(hours=window_hours)).isoformat(timespec="seconds")
 
-        with sqlite3.connect(self._db) as conn:
-            if not _table_exists(conn, "v3_candidates"):
-                return DedupDecision(False, "ok")
-
-            if cross_strategy:
-                row = conn.execute(
-                    """SELECT signal_id FROM v3_candidates
-                       WHERE symbol=? AND direction=? AND created_at>=?
-                         AND status NOT IN ('BLOCKED','DEDUP')
-                       LIMIT 1""",
-                    (symbol, direction, cutoff),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    """SELECT signal_id FROM v3_candidates
-                       WHERE strategy_id=? AND symbol=? AND direction=?
-                         AND created_at>=?
-                         AND status NOT IN ('BLOCKED','DEDUP')
-                       LIMIT 1""",
-                    (strategy_id, symbol, direction, cutoff),
-                ).fetchone()
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                if cross_strategy:
+                    cur.execute(
+                        """SELECT signal_id FROM v3_candidates
+                           WHERE symbol=%s AND direction=%s AND created_at>=%s
+                             AND status NOT IN ('BLOCKED','DEDUP')
+                           LIMIT 1""",
+                        (symbol, direction, cutoff),
+                    )
+                else:
+                    cur.execute(
+                        """SELECT signal_id FROM v3_candidates
+                           WHERE strategy_id=%s AND symbol=%s AND direction=%s
+                             AND created_at>=%s
+                             AND status NOT IN ('BLOCKED','DEDUP')
+                           LIMIT 1""",
+                        (strategy_id, symbol, direction, cutoff),
+                    )
+                row = cur.fetchone()
+        finally:
+            conn.close()
 
         if row is None:
             return DedupDecision(False, "ok")
@@ -89,13 +72,5 @@ class V3DedupEngine:
         scope = "cross-strategy" if cross_strategy else strategy_id
         return DedupDecision(
             True,
-            f"duplicate {symbol}/{direction} within {window_hours}h ({scope}), "
-            f"existing signal_id={row[0]}",
+            f"duplicate {symbol}/{direction} within {window_hours}h ({scope}), existing={row[0]}",
         )
-
-
-def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone()
-    return row is not None

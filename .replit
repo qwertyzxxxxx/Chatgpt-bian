@@ -2,6 +2,7 @@ modules = ["python-3.11", "bash"]
 [agent]
 expertMode = true
 stack = "BEST_EFFORT_FALLBACK"
+integrations = ["python_database:1.0.0"]
 
 [nix]
 channel = "stable-25_05"

@@ -1,2 +1,3 @@
 - [Git sync under sandbox](git-sandbox-sync.md) — when git pull merge is blocked, read fetched objects via `git show <sha>:path` and cp into working tree; deploys snapshot working tree.
 - [GitHub → production sync & deploy](github-sync-deploy.md) — prod Replit pulls dev's GitHub via zip; copy only `src/`, never clobber local-only `run_server.py` / `pyproject.toml`.
+- [V3 PostgreSQL Final Architecture](v3-pg-architecture.md) — all V3 permanent data in PG; SQLite=cache only; no V4/V5 ever; 4 Telegram types only.
