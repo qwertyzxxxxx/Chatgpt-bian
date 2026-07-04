@@ -52,6 +52,7 @@ class BinancePublicClient:
                     quote_volume=Decimal(item["quoteVolume"]),
                     price_change_percent=Decimal(item["priceChangePercent"]),
                     close_time_ms=int(item["closeTime"]),
+                    last_price=Decimal(item.get("lastPrice") or "0"),
                 ))
             except (KeyError, TypeError, ValueError, InvalidOperation):
                 skipped += 1

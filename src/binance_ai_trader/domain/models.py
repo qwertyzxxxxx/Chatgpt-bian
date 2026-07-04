@@ -24,6 +24,7 @@ class Ticker24h:
     quote_volume: Decimal
     price_change_percent: Decimal
     close_time_ms: int
+    last_price: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True, slots=True)
