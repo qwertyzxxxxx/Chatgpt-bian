@@ -136,7 +136,7 @@ if __name__ == "__main__":
         shadow_report_enabled=True,
         health_check_enabled=True,
         dedup_hours=24,
-        max_open_orders=5,
+        max_open_orders=10,
     )
     _log.info("[startup] V3 tasks: %s", [t.event_type for t in tasks])
 
