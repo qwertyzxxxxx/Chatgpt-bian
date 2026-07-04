@@ -1,0 +1,266 @@
+任务：生产环境正式切换到 V3。
+
+目标：
+停止所有 V1/V2 运行链路，只保留 V3。
+不是并行，不是兼容，而是正式切换。
+
+========================
+一、停止 V1
+========================
+
+停止所有 V1 Runner Task：
+
+- Hotlist Alert
+- Hotlist Performance
+- Hotlist Outcomes
+- strategy_results
+- signal_evaluations
+- performance_center
+- V1 Shadow Report
+- V1 Summary
+- Baseline V1
+- Breakout Hunter V1
+- Bear Short
+- Capital 60-80
+- Range Disabled
+- 所有 V1 scheduler
+
+停止后确认：
+
+生产日志不能再出现：
+
+Baseline V1
+Breakout Hunter
+Bear Short
+strategy_results
+signal_evaluations
+
+========================
+二、停止 V2
+========================
+
+V2 Paper 全部清空即可。
+
+不要迁移。
+
+不要保留订单。
+
+删除：
+
+v2_signals
+v2_paper_orders
+v2_order_events
+
+关闭：
+
+V2 Hotlist
+V2 Settler
+V2 Shadow Report
+V2 Health Report
+V2 Summary
+
+生产日志不能再出现：
+
+[V2] Started
+V2 Hotlist Paper
+
+========================
+三、只启动 V3
+========================
+
+启动后唯一允许运行：
+
+V3 Hotlist Strategy
+
+流程：
+
+Hotlist
+↓
+
+Candidate Pool
+
+↓
+
+Risk Engine
+
+↓
+
+Dedup
+
+↓
+
+Telegram
+
+↓
+
+Paper
+
+↓
+
+Settlement
+
+↓
+
+Performance
+
+其它任何旧流水线全部关闭。
+
+========================
+四、Telegram 推送精简
+========================
+
+删除所有重复推送。
+
+最终保留：
+
+① Startup（启动一次）
+
+[V3] Started
+
+版本
+Git SHA
+Branch
+PID
+DB
+
+==================
+
+② Hotlist Signal
+
+最多 Top3
+
+Signal ID
+
+Strategy
+
+Entry
+
+SL
+
+TP1
+
+RR
+
+Reason
+
+==================
+
+③ Shadow Report（1小时）
+
+累计
+
+今日
+
+挂单
+
+持仓
+
+最近结算
+
+==================
+
+④ Health（6小时）
+
+只保留：
+
+Scan
+
+Paper
+
+Settlement
+
+DB
+
+Binance
+
+Errors
+
+==================
+
+删除以下所有消息：
+
+策略自检报告
+
+策略绩效
+
+Hotlist Candidate
+
+Hotlist Outcomes
+
+Leaderboard Watch
+
+Gemini Report
+
+Baseline
+
+Breakout
+
+Capital
+
+Range
+
+AI Macro
+
+任何 V1/V2 调试信息
+
+Runner task failed（单独推送）
+
+========================
+五、统一绩效
+========================
+
+以后只有一个绩效来源：
+
+v3_paper_orders
+
+WinRate
+
+=
+
+TP1
+
+/
+
+(TP1+SL)
+
+只统计：
+
+真正创建订单
+
+↓
+
+真正成交
+
+↓
+
+真正结算
+
+禁止再读取：
+
+hotlist_outcomes
+
+strategy_results
+
+signal_evaluations
+
+任何 Horizon Backtest
+
+========================
+六、验证
+========================
+
+完成后输出：
+
+① 当前 Runner 正在运行哪些 Task
+
+② 当前 Telegram 会发送哪些消息
+
+③ 当前数据库哪些表仍在写入
+
+④ 当前启动参数
+
+⑤ 确认：
+
+生产系统不存在任何 V1/V2 Scheduler。
+
+如果还有任何 V1/V2 Task、Report、Scheduler、Performance、Telegram 消息，请继续清理，直到生产环境完全只有 V3。
