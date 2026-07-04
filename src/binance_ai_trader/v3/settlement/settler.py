@@ -172,10 +172,7 @@ class V3Settler:
     def _fetch_klines(self, symbol: str) -> list[dict]:
         try:
             raw = self._client.klines(symbol, _INTERVAL, limit=_KLINE_LIMIT)
-            return [
-                {"high": Decimal(str(k[2])), "low": Decimal(str(k[3]))}
-                for k in raw
-            ]
+            return [{"high": k.high, "low": k.low} for k in raw]
         except Exception as exc:
             log.warning("[V3] kline fetch failed for %s: %s", symbol, exc)
             return []
