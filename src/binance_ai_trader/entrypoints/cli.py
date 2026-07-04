@@ -466,6 +466,20 @@ def build_parser() -> argparse.ArgumentParser:
                           help="V2 shadow report interval in hours (default: 1)")
     run_loop.add_argument("--v2-health-interval-hours", type=int, default=6, metavar="N",
                           help="V2 health check interval in hours (default: 6)")
+    run_loop.add_argument("--enable-v3-hotlist", action="store_true",
+                          help="Enable V3 unified Hotlist pipeline (default: off)")
+    run_loop.add_argument("--disable-v3-shadow-report", action="store_true",
+                          help="Disable V3 hourly shadow report (default: on when V3 enabled)")
+    run_loop.add_argument("--disable-v3-health-report", action="store_true",
+                          help="Disable V3 6-hour health check (default: on when V3 enabled)")
+    run_loop.add_argument("--v3-report-interval-hours", type=int, default=1, metavar="N",
+                          help="V3 shadow report interval in hours (default: 1)")
+    run_loop.add_argument("--v3-health-interval-hours", type=int, default=6, metavar="N",
+                          help="V3 health check interval in hours (default: 6)")
+    run_loop.add_argument("--v3-dedup-hours", type=int, default=24, metavar="N",
+                          help="V3 dedup window in hours (default: 24)")
+    run_loop.add_argument("--v3-max-open-orders", type=int, default=5, metavar="N",
+                          help="V3 max open paper orders per strategy (default: 5)")
     run_loop.add_argument("--enable-paper-portfolio", action="store_true",
                           help="Enable unified paper portfolio settle + summary tasks")
     run_loop.add_argument("--paper-settle-interval-minutes", type=int, default=15,
@@ -1764,6 +1778,46 @@ def _run_loop(args: argparse.Namespace) -> int:
                     scan_interval_minutes=int(getattr(args, "v2_scan_interval_minutes", 15)),
                     settle_interval_minutes=int(getattr(args, "v2_settle_interval_minutes", 15)),
                     summary_interval_hours=_v2_report_hours,
+                )
+            except Exception:
+                pass
+    if getattr(args, "enable_v3_hotlist", False):
+        from binance_ai_trader.v3.runner.tasks import build_v3_tasks
+        from binance_ai_trader.v3.telegram.startup import send_v3_startup
+        universe_config_v3 = UniverseConfig.load(args.config)
+        _v3_shadow_enabled = not getattr(args, "disable_v3_shadow_report", False)
+        _v3_health_enabled = not getattr(args, "disable_v3_health_report", False)
+        _v3_report_hours   = getattr(args, "v3_report_interval_hours", 1)
+        _v3_health_hours   = getattr(args, "v3_health_interval_hours", 6)
+        _v3_dedup_hours    = getattr(args, "v3_dedup_hours", 24)
+        _v3_max_open       = getattr(args, "v3_max_open_orders", 5)
+        v3_tasks = build_v3_tasks(
+            db_path=database,
+            universe_config=universe_config_v3,
+            base_url=args.base_url,
+            timeout=args.timeout,
+            max_retries=args.max_retries,
+            telegram=notifier,
+            report_interval=timedelta(hours=_v3_report_hours),
+            health_interval=timedelta(hours=_v3_health_hours),
+            shadow_report_enabled=_v3_shadow_enabled,
+            health_check_enabled=_v3_health_enabled,
+            dedup_hours=_v3_dedup_hours,
+            max_open_orders=_v3_max_open,
+        )
+        tasks = tasks + v3_tasks
+        if notifier is not None:
+            try:
+                send_v3_startup(
+                    notifier,
+                    strategy_id="hotlist_momentum_v3",
+                    db_path=str(database),
+                    scan_interval_minutes=15,
+                    settle_interval_minutes=15,
+                    report_interval_hours=_v3_report_hours,
+                    health_interval_hours=_v3_health_hours,
+                    shadow_report_enabled=_v3_shadow_enabled,
+                    health_check_enabled=_v3_health_enabled,
                 )
             except Exception:
                 pass
