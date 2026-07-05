@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
+from binance_ai_trader.notifications import TelegramNotifier
 from binance_ai_trader.v3.paper.repository import (
     V3OrderEvent,
     V3PaperOrder,
@@ -33,9 +34,11 @@ class V3Settler:
         self,
         order_repo: V3PaperOrderRepository,
         client: BinancePublicClient,
+        notifier: TelegramNotifier | None = None,
     ) -> None:
         self._order_repo = order_repo
         self._client = client
+        self._notifier = notifier
 
     def settle_all(self) -> int:
         open_orders = self._order_repo.load_open()
@@ -167,6 +170,11 @@ class V3Settler:
             "[V3] %s %s %s pnl=%s rr=%s",
             order.order_id, order.symbol, result, pnl_pct, rr_realized,
         )
+        if self._notifier is not None:
+            try:
+                self._notifier.send(_fmt_settlement_msg(order, result, pnl_pct, rr_realized, closed_at))
+            except Exception:
+                log.exception("[V3] failed to send settlement notification for %s", order.order_id)
         return True
 
     def _fetch_klines(self, symbol: str) -> list[dict]:
@@ -176,6 +184,56 @@ class V3Settler:
         except Exception as exc:
             log.warning("[V3] kline fetch failed for %s: %s", symbol, exc)
             return []
+
+
+def _sdt(iso: str | None) -> str:
+    """Format ISO timestamp as MM-DD HH:MM (UTC)."""
+    if not iso:
+        return "—"
+    s = iso.replace("Z", "").replace("+00:00", "")
+    return s[5:16].replace("T", " ")
+
+
+def _holding(filled_at: str | None, closed_at: str | None) -> str:
+    if not filled_at or not closed_at:
+        return "—"
+    try:
+        fmt = "%Y-%m-%dT%H:%M:%S"
+        s = datetime.strptime(filled_at[:19], fmt)
+        e = datetime.strptime(closed_at[:19], fmt)
+        secs = int((e - s).total_seconds())
+        h, rem = divmod(max(0, secs), 3600)
+        m = rem // 60
+        return f"{h}h{m:02d}m" if h else f"{m}m"
+    except Exception:
+        return "—"
+
+
+def _fmt_settlement_msg(
+    order: V3PaperOrder,
+    result: str,
+    pnl_pct: Decimal,
+    rr_realized: Decimal,
+    closed_at: str,
+) -> str:
+    _EMOJI = {"TP1": "✅", "SL": "❌", "TIMEOUT": "⏰"}
+    emoji = _EMOJI.get(result, "📋")
+    sign = "+" if pnl_pct >= 0 else ""
+    pnl_str = f"{sign}{pnl_pct:.2f}%"
+    sl_pct = abs(order.entry - order.stop_loss) / order.entry * Decimal("100")
+    sl_sign = "-" if order.direction == "LONG" else "+"
+    return (
+        f"[V3] {emoji} 结算 {result}  {pnl_str}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"{order.signal_id}\n"
+        f"{order.symbol}  {order.direction}\n"
+        f"买入价  {order.entry}\n"
+        f"止损价  {order.stop_loss}  ({sl_sign}{sl_pct:.1f}%)\n"
+        f"TP1    {order.tp1}  RR {rr_realized}\n"
+        f"入场    {_sdt(order.filled_at)}\n"
+        f"平仓    {_sdt(closed_at)}\n"
+        f"持仓    {_holding(order.filled_at, closed_at)}"
+    )
 
 
 def _calc_pnl(order: V3PaperOrder, result: str) -> tuple[Decimal, Decimal]:

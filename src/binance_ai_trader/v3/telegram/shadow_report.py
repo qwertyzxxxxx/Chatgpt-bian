@@ -218,7 +218,9 @@ def _settled_section(orders: list[V3PaperOrder]) -> str:
         dur = _between(o.filled_at, o.closed_at)
         rows.append(
             f"  {o.signal_id}  {o.symbol} {o.direction}"
-            f"  {o.result}  {_pnl_str(o.pnl_pct)}  {dur}"
+            f"  {o.result}  {_pnl_str(o.pnl_pct)}  {dur}\n"
+            f"  买入 {o.entry}  止损 {o.stop_loss}\n"
+            f"  入场 {_short_dt(o.filled_at)}  平仓 {_short_dt(o.closed_at)}"
         )
     return "\n".join(rows)
 

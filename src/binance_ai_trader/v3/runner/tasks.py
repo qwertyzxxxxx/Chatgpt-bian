@@ -76,7 +76,7 @@ def build_v3_tasks(
     strategy   = HotlistStrategyV3(client, universe_config)
     risk_cfg   = RiskConfig(strategy_id=_STRATEGY_ID, max_open_orders=max_open_orders)
     pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
-    settler    = V3Settler(order_repo, client)
+    settler    = V3Settler(order_repo, client, notifier=telegram)
 
     v3_tg    = V3TelegramNotifier(telegram) if telegram else None
     reporter = (
