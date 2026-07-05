@@ -29,7 +29,7 @@ _DEFAULT_MIN_MOVE_PCT    = Decimal("15")
 _DEFAULT_MIN_VOL_USDT    = Decimal("5000000")
 _DEFAULT_MAX_SIGNALS     = 3
 _DEFAULT_MIN_RR          = Decimal("2")
-_DEFAULT_MAX_STOP_PCT    = Decimal("20")
+_DEFAULT_MAX_STOP_PCT    = Decimal("8")
 _DEFAULT_HOLD_HOURS      = 24
 
 
