@@ -18,7 +18,7 @@ build = ["bash", "-c", "pip install psycopg2-binary && uv sync --no-editable"]
 
 [userenv.shared]
 LIVE_TRADING_ENABLED = "true"
-ORDER_NOTIONAL_USDT = "1000"
+ORDER_NOTIONAL_USDT = "2000"
 MAX_PENDING_ORDERS = "10"
 MAX_OPEN_POSITIONS = "5"
 LIVE_SYNC_INTERVAL_MIN = "15"
