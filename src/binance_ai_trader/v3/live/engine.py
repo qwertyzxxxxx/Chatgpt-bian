@@ -73,6 +73,7 @@ class LiveMirrorEngine:
             sl    = Decimal(candidate.sl)
             tp    = Decimal(candidate.tp1)
             side  = "BUY" if candidate.direction == "LONG" else "SELL"
+            pos_side = candidate.direction  # "LONG" or "SHORT"
 
             leverage = self._choose_leverage(candidate.symbol)
             try:
@@ -87,7 +88,7 @@ class LiveMirrorEngine:
                 return PlaceResult(ok=False, reason=reason, live_order_id=live_order_id)
 
             entry_r = self._client.round_price(candidate.symbol, entry)
-            resp = self._client.place_limit(candidate.symbol, side, entry_r, qty)
+            resp = self._client.place_limit(candidate.symbol, side, entry_r, qty, position_side=pos_side)
             bn_order_id = str(resp.get("orderId", ""))
 
             order = LiveOrder(
@@ -234,7 +235,9 @@ class LiveMirrorEngine:
             sl_price = Decimal(order.sl)
             close_side = "BUY" if order.direction == "SHORT" else "SELL"
             sl_price_r = self._client.round_price(order.symbol, sl_price)
-            resp = self._client.place_stop_market(order.symbol, close_side, sl_price_r, qty)
+            resp = self._client.place_stop_market(
+                order.symbol, close_side, sl_price_r, qty, position_side=order.direction
+            )
             sl_id = str(resp.get("orderId", ""))
             self._event(order.live_order_id, order.signal_id, "SL_PLACED",
                         {"sl_order_id": sl_id, "stop_price": str(sl_price_r)})
@@ -249,7 +252,9 @@ class LiveMirrorEngine:
             tp_price = Decimal(order.tp)
             close_side = "BUY" if order.direction == "SHORT" else "SELL"
             tp_price_r = self._client.round_price(order.symbol, tp_price)
-            resp = self._client.place_take_profit_market(order.symbol, close_side, tp_price_r, qty)
+            resp = self._client.place_take_profit_market(
+                order.symbol, close_side, tp_price_r, qty, position_side=order.direction
+            )
             tp_id = str(resp.get("orderId", ""))
             self._event(order.live_order_id, order.signal_id, "TP_PLACED",
                         {"tp_order_id": tp_id, "stop_price": str(tp_price_r)})

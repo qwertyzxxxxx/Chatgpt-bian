@@ -204,10 +204,14 @@ class BinanceFuturesClient:
 
     # ── Orders ────────────────────────────────────────────────────────────────
 
-    def place_limit(self, symbol: str, side: str, price: Decimal, quantity: Decimal) -> dict:
+    def place_limit(
+        self, symbol: str, side: str, price: Decimal, quantity: Decimal,
+        position_side: str = "BOTH",
+    ) -> dict:
         return self._post("/fapi/v1/order", {  # type: ignore[return-value]
             "symbol": symbol,
             "side": side,
+            "positionSide": position_side,
             "type": "LIMIT",
             "timeInForce": "GTC",
             "price": str(price),
@@ -215,28 +219,36 @@ class BinanceFuturesClient:
         })
 
     def place_stop_market(
-        self, symbol: str, side: str, stop_price: Decimal, quantity: Decimal
+        self, symbol: str, side: str, stop_price: Decimal, quantity: Decimal,
+        position_side: str = "BOTH",
     ) -> dict:
-        return self._post("/fapi/v1/order", {  # type: ignore[return-value]
+        params: dict = {
             "symbol": symbol,
             "side": side,
+            "positionSide": position_side,
             "type": "STOP_MARKET",
             "stopPrice": str(stop_price),
             "quantity": str(quantity),
-            "reduceOnly": "true",
-        })
+        }
+        if position_side == "BOTH":
+            params["reduceOnly"] = "true"
+        return self._post("/fapi/v1/order", params)  # type: ignore[return-value]
 
     def place_take_profit_market(
-        self, symbol: str, side: str, stop_price: Decimal, quantity: Decimal
+        self, symbol: str, side: str, stop_price: Decimal, quantity: Decimal,
+        position_side: str = "BOTH",
     ) -> dict:
-        return self._post("/fapi/v1/order", {  # type: ignore[return-value]
+        params: dict = {
             "symbol": symbol,
             "side": side,
+            "positionSide": position_side,
             "type": "TAKE_PROFIT_MARKET",
             "stopPrice": str(stop_price),
             "quantity": str(quantity),
-            "reduceOnly": "true",
-        })
+        }
+        if position_side == "BOTH":
+            params["reduceOnly"] = "true"
+        return self._post("/fapi/v1/order", params)  # type: ignore[return-value]
 
     def cancel_order(self, symbol: str, order_id: str) -> dict:
         return self._delete("/fapi/v1/order", {"symbol": symbol, "orderId": order_id})  # type: ignore[return-value]
@@ -244,12 +256,17 @@ class BinanceFuturesClient:
     def cancel_all_orders(self, symbol: str) -> dict:
         return self._delete("/fapi/v1/allOpenOrders", {"symbol": symbol})  # type: ignore[return-value]
 
-    def close_position_market(self, symbol: str, side: str, quantity: Decimal) -> dict:
+    def close_position_market(
+        self, symbol: str, side: str, quantity: Decimal, position_side: str = "BOTH"
+    ) -> dict:
         """Market-close a position. side should be opposite of position side."""
-        return self._post("/fapi/v1/order", {  # type: ignore[return-value]
+        params: dict = {
             "symbol": symbol,
             "side": side,
+            "positionSide": position_side,
             "type": "MARKET",
             "quantity": str(quantity),
-            "reduceOnly": "true",
-        })
+        }
+        if position_side == "BOTH":
+            params["reduceOnly"] = "true"
+        return self._post("/fapi/v1/order", params)  # type: ignore[return-value]
