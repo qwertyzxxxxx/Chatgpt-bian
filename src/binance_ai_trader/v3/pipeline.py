@@ -123,7 +123,7 @@ class V3Pipeline:
             market_regime=market_regime,
         )
         if not risk_dec.allowed:
-            log.debug("[V3] BLOCKED(risk) %s/%s: %s", inp.symbol, inp.direction, risk_dec.reason)
+            log.info("[V3] BLOCKED(risk) %s/%s: %s", inp.symbol, inp.direction, risk_dec.reason)
             signal_id = self._candidate_repo.generate_signal_id(inp.strategy_id, now=now)
             self._candidate_repo.save(inp, signal_id, status="BLOCKED")
             result.blocked_risk += 1
