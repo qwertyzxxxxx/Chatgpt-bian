@@ -32,6 +32,8 @@ from binance_ai_trader.v3.performance.calculator import V3PerformanceCalculator
 from binance_ai_trader.v3.pipeline import V3Pipeline
 from binance_ai_trader.v3.push_queue.repository import V3PushQueueRepository
 from binance_ai_trader.v3.risk.engine import RiskConfig
+from binance_ai_trader.v3.live.engine import LiveMirrorEngine
+from binance_ai_trader.v3.live.reporter import LiveHourlyReporter
 from binance_ai_trader.v3.settlement.settler import V3Settler
 from binance_ai_trader.v3.strategies.hotlist import HotlistStrategyV3
 from binance_ai_trader.v3.telegram.notifier import V3TelegramNotifier
@@ -60,6 +62,9 @@ def build_v3_tasks(
     health_check_enabled: bool = True,
     dedup_hours: int = 24,
     max_open_orders: int = 5,
+    live_mirror: LiveMirrorEngine | None = None,
+    live_sync_interval: timedelta = timedelta(minutes=15),
+    live_report_interval: timedelta = timedelta(hours=1),
 ) -> tuple[RunnerTask, ...]:
     """Bootstrap V3 repos (PostgreSQL) and return runner tasks."""
     client = BinancePublicClient(
@@ -79,6 +84,10 @@ def build_v3_tasks(
     settler    = V3Settler(order_repo, client, notifier=telegram)
 
     v3_tg    = V3TelegramNotifier(telegram) if telegram else None
+    live_reporter = (
+        LiveHourlyReporter(live_mirror, live_mirror._repo, telegram)
+        if live_mirror and telegram else None
+    )
     reporter = (
         V3ShadowReporter(
             telegram, order_repo, perf_calc, _STRATEGY_ID,
@@ -139,8 +148,17 @@ def build_v3_tasks(
             ))
             orders_created += 1
 
+            live_prefix: str | None = None
+            if live_mirror and live_mirror.is_enabled():
+                try:
+                    live_result = live_mirror.try_place(candidate)
+                    live_prefix = live_result.prefix()
+                except Exception:
+                    log.exception("[V3] live mirror try_place failed for %s", candidate.signal_id)
+                    live_prefix = "【实盘未下单：内部错误】"
+
             if v3_tg:
-                v3_tg.send_candidate(candidate, hold_hours=_HOLD_HOURS)
+                v3_tg.send_candidate(candidate, hold_hours=_HOLD_HOURS, live_prefix=live_prefix)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
@@ -163,6 +181,17 @@ def build_v3_tasks(
         updated = settler.settle_all()
         return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_paper_settle", "settled": updated})
 
+    def _live_sync_task() -> RunnerTaskResult:
+        if live_mirror and live_mirror.is_enabled():
+            updated = live_mirror.sync_all()
+            return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_live_sync", "updated": updated})
+        return RunnerTaskResult("SKIPPED")
+
+    def _live_report_task() -> RunnerTaskResult:
+        if live_mirror and live_mirror.is_enabled() and live_reporter:
+            live_reporter.send_report()
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_live_report"})
+
     def _report_task() -> RunnerTaskResult:
         if reporter:
             reporter.send_report()
@@ -180,6 +209,9 @@ def build_v3_tasks(
         RunnerTask("v3_hotlist_scan",  _scan_task,   interval=scan_interval,   startup_immediate=True),
         RunnerTask("v3_paper_settle",  _settle_task, interval=settle_interval, startup_immediate=True),
     ]
+    if live_mirror:
+        tasks.append(RunnerTask("v3_live_sync",   _live_sync_task,   interval=live_sync_interval,   startup_immediate=True))
+        tasks.append(RunnerTask("v3_live_report", _live_report_task, interval=live_report_interval))
     if reporter:
         tasks.append(RunnerTask("v3_shadow_report", _report_task, interval=report_interval, startup_immediate=True))
     tasks.append(RunnerTask("v3_weekly_review", _weekly_review_task, interval=weekly_review_interval))

@@ -1,0 +1,256 @@
+[Binance V3 Live Mirror Simple]
+
+目标：
+V3 现有信号不改任何策略逻辑。
+实盘模块只做一件事：
+
+V3 推送什么信号，就 1:1 同步到 Binance Futures 实盘挂单。
+
+并且在原 Telegram 推送内容最前面加：
+【已实盘】
+
+每小时额外推送一次实盘账户状态。
+
+━━━━━━━━━━━━━━
+一、核心原则
+━━━━━━━━━━━━━━
+
+不要修改 V3 策略。
+不要修改 V3 信号生成。
+不要修改 V3 Paper 逻辑。
+不要新增策略。
+不要重构 V3。
+只增加 Live Mirror 模块。
+
+━━━━━━━━━━━━━━
+二、实盘配置
+━━━━━━━━━━━━━━
+
+环境变量：
+
+BINANCE_API_KEY
+BINANCE_API_SECRET
+LIVE_TRADING_ENABLED=true
+LIVE_MODE=real
+
+ORDER_NOTIONAL_USDT=1000
+可改为：
+ORDER_NOTIONAL_USDT=2000
+
+MAX_PENDING_ORDERS=10
+MAX_OPEN_POSITIONS=5
+
+LIVE_SYNC_INTERVAL_MIN=15
+LIVE_REPORT_INTERVAL_MIN=60
+
+━━━━━━━━━━━━━━
+三、杠杆规则
+━━━━━━━━━━━━━━
+
+每个 symbol 下单前读取 Binance 最大杠杆。
+
+如果最大杠杆 >=10：
+使用 10x
+
+如果最大杠杆 <10：
+使用该 symbol 最大杠杆。
+
+例：
+支持20x → 用10x
+支持10x → 用10x
+支持4x → 用4x
+
+━━━━━━━━━━━━━━
+四、1:1 实盘镜像规则
+━━━━━━━━━━━━━━
+
+当 V3 产生并准备推送信号时：
+
+1. 先执行实盘挂单
+2. 如果实盘挂单成功：
+   在原 Telegram 信号最前面加：
+
+【已实盘】
+
+3. 如果实盘拒绝：
+   在原 Telegram 信号最前面加：
+
+【实盘未下单：原因】
+
+4. 原信号内容保持不变。
+
+━━━━━━━━━━━━━━
+五、下单规则
+━━━━━━━━━━━━━━
+
+Entry：
+LIMIT 挂单，价格使用 V3 signal entry。
+
+SL：
+使用 V3 signal SL。
+必须同时挂止损单。
+
+TP：
+使用 V3 signal TP1。
+必须同时挂止盈单。
+
+订单数量：
+按 ORDER_NOTIONAL_USDT / Entry 计算。
+
+注意：
+ORDER_NOTIONAL_USDT 是名义仓位。
+例如：
+1000U 名义仓位，10x 杠杆，保证金约100U。
+1000U 名义仓位，4x 杠杆，保证金约250U。
+
+━━━━━━━━━━━━━━
+六、风控限制
+━━━━━━━━━━━━━━
+
+实盘下单前必须检查：
+
+1. 当前挂单数 < 10
+2. 当前持仓数 < 5
+3. 同 symbol 没有挂单
+4. 同 symbol 没有持仓
+5. 信号必须有 entry / SL / TP1
+6. SL 距 Entry 不得超过 10%
+7. Entry 距当前价格不得超过 5%
+8. 余额不足不下单
+9. Binance 下单失败不影响 V3 推送，但必须标注失败原因
+
+━━━━━━━━━━━━━━
+七、挂单与止损止盈
+━━━━━━━━━━━━━━
+
+下 Entry LIMIT 后：
+
+同时创建：
+
+SL：
+STOP_MARKET
+reduceOnly=true
+
+TP：
+TAKE_PROFIT_MARKET 或 LIMIT reduceOnly
+reduceOnly=true
+
+如果 Binance 不允许未成交前挂 reduceOnly TP/SL：
+则先记录保护单计划。
+每 15 分钟同步时，如果 Entry 已成交，立即补挂 SL/TP。
+
+重点：
+不能出现成交后无 SL 的裸仓。
+如果检测到裸仓：
+Telegram 立即报警。
+
+━━━━━━━━━━━━━━
+八、手动管理命令
+━━━━━━━━━━━━━━
+
+增加 CLI：
+
+查看实盘：
+python -m binance_ai_trader live status
+
+查看挂单：
+python -m binance_ai_trader live orders
+
+查看持仓：
+python -m binance_ai_trader live positions
+
+取消单币挂单：
+python -m binance_ai_trader live cancel --symbol XXXUSDT
+
+取消全部挂单：
+python -m binance_ai_trader live cancel-all
+
+市价平某个持仓：
+python -m binance_ai_trader live close --symbol XXXUSDT
+
+市价平全部持仓：
+python -m binance_ai_trader live close-all
+
+━━━━━━━━━━━━━━
+九、每小时实盘报告
+━━━━━━━━━━━━━━
+
+每 1 小时推送：
+
+[V3 LIVE HOURLY]
+余额：
+可用余额：
+当前挂单数：
+当前持仓数：
+今日已实现PnL：
+未实现PnL：
+今日下单数：
+今日成交数：
+今日止盈：
+今日止损：
+手动平仓：
+风险状态：
+
+━━━━━━━━━━━━━━
+十、数据库
+
+新增简单表：
+
+live_orders
+live_events
+
+live_orders 记录：
+signal_id
+symbol
+side
+entry
+sl
+tp
+notional
+leverage
+quantity
+status
+entry_order_id
+sl_order_id
+tp_order_id
+created_at
+updated_at
+
+状态：
+PENDING
+FILLED
+CLOSED_TP
+CLOSED_SL
+CANCELED
+REJECTED
+MANUAL_CLOSED
+
+━━━━━━━━━━━━━━
+十一、测试
+
+必须测试：
+
+1. V3 原信号内容不变，只在前面加【已实盘】或失败原因
+2. 超过10个挂单不下单
+3. 超过5个持仓不下单
+4. 同symbol重复不下单
+5. 无SL/TP不下单
+6. SL>10%不下单
+7. 杠杆选择正确
+8. Entry成交后能补挂SL/TP
+9. 每小时报告能生成
+10. 手动 cancel/close 命令可用
+
+━━━━━━━━━━━━━━
+十二、交付
+
+交付：
+live mirror 模块
+CLI 手动命令
+每小时实盘报告
+测试
+.env.example 配置说明
+
+不要改策略。
+不要改信号。
+只做 1:1 实盘镜像。

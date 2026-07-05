@@ -49,8 +49,13 @@ class V3TelegramNotifier:
     def __init__(self, notifier: TelegramNotifier) -> None:
         self._notifier = notifier
 
-    def send_candidate(self, candidate: V3Candidate, hold_hours: int = 24) -> None:
-        msg = _format_candidate(candidate, hold_hours)
+    def send_candidate(
+        self,
+        candidate: V3Candidate,
+        hold_hours: int = 24,
+        live_prefix: str | None = None,
+    ) -> None:
+        msg = _format_candidate(candidate, hold_hours, live_prefix=live_prefix)
         try:
             self._notifier.send(msg)
             log.info("[V3] candidate sent: %s", candidate.signal_id)
@@ -62,13 +67,19 @@ class V3TelegramNotifier:
         self._notifier.send(text)
 
 
-def _format_candidate(c: V3Candidate, hold_hours: int) -> str:
+def _format_candidate(
+    c: V3Candidate,
+    hold_hours: int,
+    live_prefix: str | None = None,
+) -> str:
     sl_pct  = _pct(c.sl,  c.entry)
     tp1_pct = _pct(c.tp1, c.entry)
     regime  = f"\nRegime   {c.market_regime}" if c.market_regime else ""
     reason  = f"\nReason   {c.reason}"        if c.reason        else ""
+    prefix  = f"{live_prefix}\n" if live_prefix else ""
 
     return (
+        f"{prefix}"
         f"[V3] {_label(c.strategy_id)}\n"
         f"━━━━━━━━━━━━━━\n"
         f"Signal   {c.signal_id}\n"

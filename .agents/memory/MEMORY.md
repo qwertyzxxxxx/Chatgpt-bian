@@ -1,3 +1,4 @@
 - [Git sync under sandbox](git-sandbox-sync.md) — when git pull merge is blocked, read fetched objects via `git show <sha>:path` and cp into working tree; deploys snapshot working tree.
 - [GitHub → production sync & deploy](github-sync-deploy.md) — prod Replit pulls dev's GitHub via zip; copy only `src/`, never clobber local-only `run_server.py` / `pyproject.toml`.
 - [V3 PostgreSQL Final Architecture](v3-pg-architecture.md) — all V3 permanent data in PG; SQLite=cache only; no V4/V5 ever; 4 Telegram types only.
+- [Live Mirror architecture](live-mirror-arch.md) — v3/live/ module; enabled via LIVE_TRADING_ENABLED=true; live_mirror wired into build_v3_tasks(); tasks: v3_live_sync (15m) + v3_live_report (1h).

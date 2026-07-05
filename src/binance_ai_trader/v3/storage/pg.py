@@ -129,6 +129,46 @@ CREATE TABLE IF NOT EXISTS v3_feature_store (
 );
 CREATE INDEX IF NOT EXISTS idx_pg_feat_strategy
     ON v3_feature_store(strategy_id, created_at);
+
+CREATE TABLE IF NOT EXISTS live_orders (
+    live_order_id   TEXT PRIMARY KEY,
+    signal_id       TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    direction       TEXT NOT NULL,
+    entry           TEXT NOT NULL,
+    sl              TEXT NOT NULL,
+    tp              TEXT NOT NULL,
+    notional        TEXT NOT NULL,
+    leverage        INTEGER NOT NULL DEFAULT 10,
+    quantity        TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'PENDING',
+    entry_order_id  TEXT,
+    sl_order_id     TEXT,
+    tp_order_id     TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    reject_reason   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_live_orders_status
+    ON live_orders(status);
+CREATE INDEX IF NOT EXISTS idx_live_orders_symbol
+    ON live_orders(symbol, status);
+CREATE INDEX IF NOT EXISTS idx_live_orders_signal
+    ON live_orders(signal_id);
+
+CREATE TABLE IF NOT EXISTS live_events (
+    event_id        TEXT PRIMARY KEY,
+    live_order_id   TEXT NOT NULL,
+    signal_id       TEXT NOT NULL,
+    event_type      TEXT NOT NULL,
+    details_json    TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_live_events_order
+    ON live_events(live_order_id);
+CREATE INDEX IF NOT EXISTS idx_live_events_type
+    ON live_events(event_type, created_at);
 """
 
 

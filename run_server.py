@@ -122,6 +122,46 @@ if __name__ == "__main__":
     # ── One-time V2 SQLite cleanup ────────────────────────────────────────────
     _drop_v2_tables()
 
+    # ── Live Mirror (optional) ────────────────────────────────────────────────
+    live_mirror = None
+    _live_enabled = os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
+    if _live_enabled:
+        _api_key    = os.environ.get("BINANCE_API_KEY", "")
+        _api_secret = os.environ.get("BINANCE_API_SECRET", "")
+        if _api_key and _api_secret:
+            try:
+                from decimal import Decimal as _Dec
+                from binance_ai_trader.v3.live.client import BinanceFuturesClient
+                from binance_ai_trader.v3.live.engine import LiveMirrorEngine
+                from binance_ai_trader.v3.live.repository import LiveOrderRepository
+                _live_client = BinanceFuturesClient(_api_key, _api_secret)
+                _live_repo   = LiveOrderRepository()
+                _notional    = _Dec(os.environ.get("ORDER_NOTIONAL_USDT", "1000"))
+                _max_pending = int(os.environ.get("MAX_PENDING_ORDERS", "10"))
+                _max_pos     = int(os.environ.get("MAX_OPEN_POSITIONS", "5"))
+                live_mirror  = LiveMirrorEngine(
+                    _live_client, _live_repo, notifier,
+                    notional_usdt=_notional,
+                    max_pending=_max_pending,
+                    max_positions=_max_pos,
+                )
+                _log.info("[startup] Live Mirror initialised — notional=%sU max_pending=%d max_pos=%d",
+                          _notional, _max_pending, _max_pos)
+                if notifier:
+                    notifier.send(
+                        "[V3 LIVE] 实盘模块启动\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"名义仓位  {_notional} USDT\n"
+                        f"最大挂单  {_max_pending}\n"
+                        f"最大持仓  {_max_pos}\n"
+                        f"止损上限  10%\n"
+                        f"Entry偏移 5%"
+                    )
+            except Exception as exc:
+                _log.error("[startup] Live Mirror init failed: %s", exc)
+        else:
+            _log.warning("[startup] LIVE_TRADING_ENABLED=true but BINANCE_API_KEY/SECRET missing")
+
     # ── Build V3 tasks ────────────────────────────────────────────────────────
     universe_config = UniverseConfig.load(_CONFIG)
     tasks = build_v3_tasks(
@@ -137,6 +177,9 @@ if __name__ == "__main__":
         health_check_enabled=True,
         dedup_hours=24,
         max_open_orders=10,
+        live_mirror=live_mirror,
+        live_sync_interval=timedelta(minutes=int(os.environ.get("LIVE_SYNC_INTERVAL_MIN", "15"))),
+        live_report_interval=timedelta(minutes=int(os.environ.get("LIVE_REPORT_INTERVAL_MIN", "60"))),
     )
     _log.info("[startup] V3 tasks: %s", [t.event_type for t in tasks])
 
