@@ -17,6 +17,12 @@ build = ["bash", "-c", "pip install psycopg2-binary && uv sync --no-editable"]
 [userenv]
 
 [userenv.shared]
+LIVE_TRADING_ENABLED = "true"
+ORDER_NOTIONAL_USDT = "1000"
+MAX_PENDING_ORDERS = "10"
+MAX_OPEN_POSITIONS = "5"
+LIVE_SYNC_INTERVAL_MIN = "15"
+LIVE_REPORT_INTERVAL_MIN = "60"
 
 [[ports]]
 localPort = 8080
