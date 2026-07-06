@@ -30,7 +30,6 @@ from binance_ai_trader.v3.live.repository import LiveOrderRepository
 
 log = logging.getLogger(__name__)
 
-_MAX_ENTRY_DRIFT_PCT = Decimal("5")   # entry must be within 5% of current price
 _MAX_SL_PCT          = Decimal("10")  # SL must be ≤10% from entry
 
 
@@ -276,14 +275,6 @@ class LiveMirrorEngine:
         sl_pct = abs(entry - sl) / entry * 100
         if sl_pct > _MAX_SL_PCT:
             return f"SL距离{sl_pct:.1f}%>10%"
-
-        try:
-            current = self._client.get_ticker_price(candidate.symbol)
-            drift = abs(current - entry) / current * 100
-            if drift > _MAX_ENTRY_DRIFT_PCT:
-                return f"Entry偏离当前价{drift:.1f}%>5%"
-        except Exception as exc:
-            log.warning("[Live] price check failed: %s", exc)
 
         try:
             open_orders = self._client.get_open_orders()
