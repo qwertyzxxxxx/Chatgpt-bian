@@ -1,0 +1,207 @@
+FINAL PERFORMANCE ANALYTICS MODULE
+
+Goal:
+
+Determine which strategy actually makes money.
+
+==================================================
+PART 1
+PERFORMANCE COMMAND
+
+Create:
+
+python main.py performance
+
+Generate:
+
+For each strategy:
+
+MA60回踩反转
+
+主升浪回踩
+
+52周新高突破
+
+==================================================
+
+Metrics:
+
+signal_count
+
+win_rate_5d
+win_rate_10d
+win_rate_20d
+
+avg_return_5d
+avg_return_10d
+avg_return_20d
+
+average_win
+
+average_loss
+
+reward_risk_ratio
+
+profit_factor
+
+max_drawdown
+
+max_gain
+
+==================================================
+
+Formula:
+
+reward_risk_ratio =
+abs(average_win / average_loss)
+
+profit_factor =
+gross_profit / gross_loss
+
+==================================================
+PART 2
+STRATEGY RANKING
+
+Generate:
+
+🥇 Strategy Rank
+
+Rank by:
+
+1. Profit Factor
+2. Avg Return 20D
+3. Win Rate 20D
+
+Example:
+
+🥇 主升浪回踩
+
+PF:
+2.15
+
+20D Return:
++8.2%
+
+Win Rate:
+68%
+
+================================
+
+🥈 MA60回踩反转
+
+PF:
+1.54
+
+20D Return:
++4.6%
+
+Win Rate:
+58%
+
+================================
+
+==================================================
+PART 3
+SECTOR ANALYTICS
+
+Create:
+
+python main.py sector-report
+
+Output:
+
+sector
+
+signal_count
+
+win_rate_20d
+
+avg_return_20d
+
+profit_factor
+
+Rank all sectors.
+
+==================================================
+PART 4
+TOP SIGNALS REPORT
+
+Create:
+
+python main.py best-signals
+
+Output:
+
+Top 20 best trades ever generated.
+
+Fields:
+
+symbol
+
+strategy
+
+signal_date
+
+20D return
+
+max_gain
+
+max_drawdown
+
+==================================================
+PART 5
+ACTIONABLE QUALITY REPORT
+
+Create:
+
+python main.py quality-report
+
+Output:
+
+Total signals
+
+Actionable signals
+
+Observation signals
+
+High risk signals
+
+Average RR
+
+Average risk %
+
+Average volume ratio
+
+==================================================
+PART 6
+READINESS REPORT
+
+After implementation run:
+
+python main.py performance
+
+python main.py sector-report
+
+python main.py quality-report
+
+Generate:
+
+PRODUCTION_READINESS.md
+
+Answer:
+
+1. Can system be deployed?
+2. Which strategy is strongest?
+3. Which strategy should receive highest priority?
+4. Which strategy should be disabled if performance is poor?
+
+==================================================
+NO NEW STRATEGIES
+
+Do not add indicators.
+
+Do not add AI.
+
+Do not add news.
+
+Focus only on measurement and ranking.

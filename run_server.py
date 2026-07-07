@@ -18,12 +18,26 @@ Startup sequence
 import logging
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+_US_STOCK_HUNTER_DIR = Path(__file__).parent / "us-stock-hunter"
+
+
+def _start_stock_hunter() -> None:
+    if not _US_STOCK_HUNTER_DIR.exists():
+        return
+    subprocess.Popen(
+        [sys.executable, "main.py", "schedule"],
+        cwd=str(_US_STOCK_HUNTER_DIR),
+    )
+    _log_early = logging.getLogger(__name__)
+    _log_early.info("[startup] us-stock-hunter scheduler started")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +82,8 @@ def _drop_v2_tables() -> None:
 
 
 if __name__ == "__main__":
+    _start_stock_hunter()
+
     from binance_ai_trader.config import UniverseConfig
     from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
     from binance_ai_trader.notifications.telegram import TelegramNotifier
@@ -154,8 +170,7 @@ if __name__ == "__main__":
                         f"名义仓位  {_notional} USDT\n"
                         f"最大挂单  {_max_pending}\n"
                         f"最大持仓  {_max_pos}\n"
-                        f"止损上限  10%\n"
-                        f"Entry偏移 5%"
+                        f"止损上限  10%"
                     )
             except Exception as exc:
                 _log.error("[startup] Live Mirror init failed: %s", exc)

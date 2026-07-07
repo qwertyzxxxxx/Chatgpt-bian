@@ -1,0 +1,3 @@
+- [V1.2 Architecture](v12-architecture.md) — record_push only on notify=True; scanner.py is the orchestrator; action_status via compute_trade_readiness in entry_engine.py
+- [V2 Paper Fund Architecture](v2-paper-fund.md) — market_hunter/paper_fund/; 5 tables; run_daily called after scan in scheduler; buy requires ★★★★+ (score≥85, RR≥2.0, risk≤6%)
+- [GitHub push blocked](github-push.md) — HTTPS push requires PAT; git remote origin set but no credential configured; Replit Git UI or PAT in URL needed

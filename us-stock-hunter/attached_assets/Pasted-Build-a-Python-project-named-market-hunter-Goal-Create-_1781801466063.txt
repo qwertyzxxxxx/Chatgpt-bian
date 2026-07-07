@@ -1,0 +1,90 @@
+Build a Python project named market-hunter.
+
+Goal:
+Create a US stock daily scanner system.
+
+Requirements:
+1. Use yfinance for daily OHLCV data.
+2. Use Financial Modeling Prep API for US stock universe, market cap, sector and industry.
+3. Filter stocks:
+   - US listed common stocks only
+   - market cap >= 10 billion USD
+   - average daily dollar volume >= 50 million USD
+   - exclude ETF, warrants, units, preferred shares, ADR if possible
+
+4. Implement 3 strategy modules:
+   A. ma60_reclaim_pullback:
+      - stock had a downtrend
+      - price broke above MA60
+      - price pulled back near MA60 within 15 trading days
+      - close not badly below MA60
+
+   B. strong_trend_pullback:
+      - MA20 > MA50 > MA200
+      - price above MA50
+      - price pulled back near MA20 or MA50
+      - 52-week high distance <= 15%
+
+   C. new_high_breakout:
+      - price breaks 52-week high
+      - volume >= 1.5x 20-day average volume
+      - price above MA20 and MA50
+
+5. Add unified scoring:
+   - trend_score 0-30
+   - relative_strength_score 0-25 versus SPY over 20 and 60 trading days
+   - volume_score 0-20
+   - pullback_risk_score 0-15
+   - sector_score 0-10
+   Total score 0-100.
+
+6. Output:
+   - Top20 strongest stocks
+   - Top5 MA60 reclaim pullback
+   - Top5 strong trend pullback
+   - Top5 new high breakout
+
+7. Add Telegram notification.
+   Environment variables:
+   - TELEGRAM_BOT_TOKEN
+   - TELEGRAM_CHAT_ID
+   - FMP_API_KEY
+
+8. Add SQLite database:
+   tables:
+   - signals
+   - scan_runs
+   - strategy_results
+
+9. Add backtest/evaluation:
+   For each signal, later evaluate:
+   - 5 trading day return
+   - 10 trading day return
+   - 20 trading day return
+   - max drawdown after signal
+   - max gain after signal
+
+10. Add CLI commands:
+   python main.py scan-us
+   python main.py evaluate-us
+   python main.py report-us
+
+11. Add scheduler:
+   run US scan once per day after US market close.
+   Default time: 06:30 Malaysia time.
+
+12. Add README.md with setup steps for Replit and Linux VPS.
+
+13. Keep code modular:
+   market_hunter/
+     config.py
+     data/
+     strategies/
+     scoring/
+     telegram/
+     database/
+     scheduler/
+     main.py
+
+Do not implement auto trading.
+This is scanner and research system only.

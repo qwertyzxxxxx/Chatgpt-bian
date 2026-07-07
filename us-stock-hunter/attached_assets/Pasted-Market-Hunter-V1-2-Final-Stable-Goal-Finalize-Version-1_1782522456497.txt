@@ -1,0 +1,499 @@
+Market Hunter V1.2 Final Stable
+
+Goal
+
+Finalize Version 1.
+
+Focus on stability.
+
+No new strategies.
+
+No AI.
+
+No intraday trading.
+
+No strategy optimization.
+
+Only improve usability, signal quality and reporting.
+
+==========================================================
+
+PART 1
+
+Trade Readiness
+
+Improve action_status only.
+
+Rules
+
+①
+
+If
+
+Current Price >
+
+Entry Zone High × 1.02
+
+↓
+
+Action Status
+
+观察，等待回踩
+
+Reason
+
+当前价格已明显高于买入区
+
+⸻
+
+②
+
+If
+
+Current Price
+
+< Entry Zone Low
+
+↓
+
+Action Status
+
+观察，等待进入买入区
+
+Reason
+
+当前价格尚未进入买入区
+
+⸻
+
+③
+
+Only mark
+
+✅ 可关注买点
+
+when ALL are true
+
+• Current Price inside Entry Zone
+
+OR
+
+Current Price <= Trigger × 1.01
+
+AND
+
+• RR >= 1.8
+
+• Risk <= 8%
+
+• Volume Ratio >= 1.2
+
+• Score >= 70
+
+⸻
+
+④
+
+52 Week Breakout
+
+Trigger Price
+
+must never be lower
+
+than Entry Zone Low.
+
+If
+
+Current Price
+
+< Entry Zone Low
+
+↓
+
+Never mark Triggered.
+
+==========================================================
+
+PART 2
+
+Telegram Optimization
+
+Top5
+
+Only contains
+
+Action Status
+
+==
+
+可关注买点
+
+⸻
+
+Every signal shows
+
+★★★★★ Recommendation
+
+Rules
+
+★★★★★
+
+Score>=90
+
+RR>=2.5
+
+Risk<=5
+
+Volume>=1.5
+
+★★★★
+
+Score>=85
+
+RR>=2
+
+Risk<=6
+
+★★★
+
+Observation
+
+★★
+
+Risk High
+
+★
+
+Ignore
+
+⸻
+
+Show
+
+Distance To Entry
+
+Examples
+
+Inside Buy Zone
+
+Above Buy Zone
+
++3.4%
+
+Below Buy Zone
+
+-2.1%
+
+⸻
+
+Show
+
+Trading Suggestion
+
+One line only
+
+Examples
+
+建议：
+
+今日可挂单
+
+等待回踩
+
+等待突破
+
+已错过本次机会
+
+==========================================================
+
+PART 3
+
+Telegram Summary
+
+Replace
+
+Signal Count
+
+with
+
+真正可交易数量
+
+Summary
+
+今日扫描
+
+新增信号
+
+可关注买点
+
+观察
+
+风险过高
+
+Cooldown
+
+重复过滤
+
+持仓过滤
+
+==========================================================
+
+PART 4
+
+Duplicate Prevention
+
+Same Symbol
+
+Same Strategy
+
+Same Signal Date
+
+↓
+
+Only one record
+
+⸻
+
+Cooldown
+
+MA60
+
+15 Days
+
+Trend Pullback
+
+10 Days
+
+52 Week
+
+20 Days
+
+⸻
+
+Cooldown
+
+↓
+
+Store Database
+
+↓
+
+No Telegram
+
+==========================================================
+
+PART 5
+
+Holding Filter
+
+If Paper Fund
+
+already holds symbol
+
+↓
+
+No BUY signal
+
+Store Database only
+
+==========================================================
+
+PART 6
+
+Telegram Re-Push
+
+Only push again when
+
+First Appearance
+
+OR
+
+Action Status changed
+
+OR
+
+Score +10
+
+OR
+
+Strategy changed
+
+Otherwise
+
+Database only
+
+==========================================================
+
+PART 7
+
+Scheduler
+
+Keep current schedule.
+
+One scan
+
+per trading day.
+
+US Market Close
+
+↓
+
+Wait about one hour
+
+↓
+
+Scan
+
+↓
+
+Telegram
+
+↓
+
+Finish
+
+No second scan.
+
+No intraday scan.
+
+==========================================================
+
+PART 8
+
+Paper Fund Preparation
+
+Do NOT build yet.
+
+Only prepare fields
+
+action_status
+
+risk_pct
+
+rr_ratio
+
+holding_candidate
+
+No trading logic.
+
+==========================================================
+
+PART 9
+
+Reporting Preparation
+
+Prepare report framework only.
+
+No automatic reports yet.
+
+Reserve:
+
+Daily Report
+
+Weekly Report
+
+Monthly Report
+
+Strategy Ranking
+
+Sector Ranking
+
+Performance
+
+Enable after enough historical data.
+
+==========================================================
+
+PART 10
+
+Validation Rules
+
+Freeze strategy development.
+
+Run continuously
+
+30~60 days.
+
+Collect
+
+Signals
+
+Scores
+
+RR
+
+Risk
+
+Volume
+
+Sector
+
+After enough samples
+
+Only then
+
+enable
+
+Win Rate
+
+Profit Factor
+
+Average Return
+
+Maximum Drawdown
+
+Alpha vs SPY
+
+==========================================================
+
+PART 11
+
+Testing
+
+Run
+
+compileall
+
+pytest
+
+One live scan
+
+Verify
+
+✓ Correct Action Status
+
+✓ Correct Recommendation
+
+✓ Correct Distance
+
+✓ Telegram Top5
+
+✓ Cooldown
+
+✓ Duplicate Prevention
+
+✓ Holding Filter
+
+✓ Scheduler
+
+Commit
+
+Push GitHub
+
+==========================================================
+
+IMPORTANT
+
+No more strategy changes.
+
+No more indicators.
+
+No more AI.
+
+Version 1 enters validation mode.
+
+The next development phase will be
+
+Paper Fund (V2)
+
+only after enough historical data has been collected.

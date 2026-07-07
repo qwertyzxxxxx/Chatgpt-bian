@@ -1,0 +1,478 @@
+Market Hunter V2 - Paper Fund (Final)
+
+Goal
+
+Build a simple Paper Fund to verify whether Market Hunter can outperform SPY.
+
+Keep the implementation simple.
+
+No broker.
+
+No real trading.
+
+No AI.
+
+No intraday.
+
+Use daily data only.
+
+====================================================
+
+PART 1
+
+Paper Fund
+
+Initial Capital
+
+100,000 USD
+
+Maximum Positions
+
+5
+
+Maximum New Positions Per Day
+
+2
+
+Maximum Position Size
+
+20%
+
+Minimum Cash
+
+10%
+
+No leverage.
+
+No short.
+
+No averaging down.
+
+No adding to existing positions.
+
+====================================================
+
+PART 2
+
+Buy Rules
+
+Run immediately after Daily Scan.
+
+Only buy when ALL are true:
+
+• Action Status = 可关注买点
+
+• Recommendation >= ★★★★
+
+• Score >= 85
+
+• RR >= 2.0
+
+• Risk <= 6%
+
+• Volume Ratio >= 1.2
+
+• Cooldown inactive
+
+• Not currently holding
+
+Sort candidates by
+
+1. Recommendation
+2. Score
+3. RR
+4. Volume Ratio
+
+Buy at next trading day’s OPEN.
+
+If
+
+Open Price >
+
+Trigger Price × 1.02
+
+↓
+
+Cancel Order
+
+Reason:
+
+开盘跳空过高，放弃追高
+
+====================================================
+
+PART 3
+
+Sell Rules
+
+Run once every day.
+
+Only after market close.
+
+Sell when
+
+Close <= Stop Loss
+
+Reason
+
+止损
+
+OR
+
+Target1 reached
+
+↓
+
+Sell 50%
+
+OR
+
+Target1 reached
+
+AND
+
+Close < MA20
+
+↓
+
+Sell remaining
+
+OR
+
+Holding Days >=30
+
+↓
+
+Sell
+
+====================================================
+
+PART 4
+
+Database
+
+Create independent tables only.
+
+paper_fund
+
+paper_positions
+
+paper_orders
+
+paper_trades
+
+paper_equity
+
+Never modify scanner tables.
+
+====================================================
+
+PART 5
+
+Scheduler
+
+Current Flow
+
+US Market Close
+
+↓
+
+Wait about 1 hour
+
+↓
+
+Scan
+
+↓
+
+Generate Signals
+
+↓
+
+Paper Fund Daily
+
+↓
+
+Telegram
+
+↓
+
+Finish
+
+Only ONE run every trading day.
+
+====================================================
+
+PART 6
+
+Telegram First Design
+
+User only reads Telegram.
+
+Everything important must appear there.
+
+No need to open Replit.
+
+No need to read database.
+
+====================================================
+
+Daily Telegram Report
+
+📊 Market Hunter 模拟基金
+
+⸻
+
+账户
+
+初始资金
+
+100000 USD
+
+当前资产
+
+现金
+
+持仓市值
+
+今日收益
+
+累计收益
+
+SPY同期
+
+Alpha
+
+⸻
+
+今日操作
+
+今日新增挂单
+
+今日成交
+
+今日卖出
+
+今日取消挂单
+
+⸻
+
+当前持仓
+
+For every position
+
+股票
+
+策略
+
+成本
+
+现价
+
+仓位
+
+盈利%
+
+盈利$
+
+持仓天数
+
+止损
+
+目标1
+
+状态
+
+⸻
+
+明日挂单
+
+股票
+
+策略
+
+计划挂单价
+
+触发价
+
+止损
+
+目标1
+
+RR
+
+风险%
+
+⸻
+
+操作建议
+
+挂限价单
+
+等待回踩
+
+等待突破
+
+放弃追高
+
+⸻
+
+今日卖出
+
+股票
+
+卖出价
+
+收益%
+
+收益$
+
+卖出原因
+
+⸻
+
+系统提醒
+
+数据缺失
+
+仓位已满
+
+现金不足
+
+重复持仓
+
+价格跳空取消
+
+今日无可买股票
+
+====================================================
+
+PART 7
+
+Reports
+
+Prepare framework only.
+
+Do NOT enable automatically yet.
+
+Reserve
+
+Daily Report
+
+Weekly Report
+
+Monthly Report
+
+Strategy Ranking
+
+Sector Ranking
+
+====================================================
+
+PART 8
+
+Validation
+
+Keep scanner unchanged.
+
+Keep strategy unchanged.
+
+Paper Fund reads signals only.
+
+After enough history
+
+Later enable
+
+Win Rate
+
+Profit Factor
+
+Average Return
+
+Max Drawdown
+
+Alpha vs SPY
+
+====================================================
+
+PART 9
+
+Development Check
+
+Before Commit
+
+Run
+
+compileall
+
+pytest
+
+paper-init
+
+scan-us
+
+paper-daily
+
+paper-report
+
+Verify
+
+✓ Scanner still works
+
+✓ Telegram works
+
+✓ Paper Fund initialized
+
+✓ Max positions <=5
+
+✓ Max new buys <=2
+
+✓ No duplicate positions
+
+✓ Cash never negative
+
+✓ Orders created correctly
+
+✓ Daily report sent
+
+====================================================
+
+PART 10
+
+Commit
+
+Commit Message
+
+V2 Paper Fund
+
+Push GitHub
+
+Return
+
+Files Changed
+
+Test Results
+
+Commit Hash
+
+Push Status
+
+====================================================
+
+Important
+
+This is the final feature before validation.
+
+After deployment
+
+Freeze development.
+
+Run continuously for at least 30 days.
+
+No more strategies.
+
+No more indicators.
+
+No AI.
+
+Only verify whether the Paper Fund outperforms SPY.

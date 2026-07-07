@@ -10,7 +10,12 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Proprietary"}
 authors = [{name = "Binance AI Trader"}]
-dependencies = []
+dependencies = [
+    "yfinance>=1.4.1",
+    "requests>=2.31.0",
+    "APScheduler>=3.10.0",
+    "pytz>=2024.1",
+]
 
 [project.scripts]
 binance-ai-trader = "binance_ai_trader.entrypoints.cli:main"
