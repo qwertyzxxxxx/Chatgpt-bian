@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -8,6 +9,8 @@ from typing import Protocol
 from binance_ai_trader.config import UniverseConfig
 from binance_ai_trader.domain.models import Contract, Kline, Ticker24h
 from binance_ai_trader.hotlist.models import HotlistCandidate, HotlistEntryPlan
+
+log = logging.getLogger(__name__)
 
 
 class PublicMarketData(Protocol):
