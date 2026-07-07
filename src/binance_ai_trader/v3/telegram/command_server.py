@@ -1,0 +1,528 @@
+"""Telegram command server — interactive bot commands for system diagnostics.
+
+Runs as a daemon thread, polling getUpdates every few seconds.
+Dispatches /command messages to handler functions and replies inline.
+
+Security: only responds to user IDs listed in TELEGRAM_ADMIN_USER_ID env var.
+Safety:   all exceptions are caught at every level; never crashes run_server.py.
+
+Available commands:
+  /help    — show all commands
+  /status  — task health check (last run times, recent errors)
+  /market  — live market snapshot (top movers + filter pass/fail)
+  /debug   — deep diagnosis (why no signals? market or bug?)
+  /signals — last 10 pushed signals (V3 + V66)
+  /orders  — current open paper orders + last 5 closed
+  /perf    — paper trading performance (V3 + V66)
+  /v66     — V66 watchlist pool status
+"""
+from __future__ import annotations
+
+import logging
+import os
+import threading
+import time
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+_POLL_INTERVAL = 3.0
+_COMMANDS = {
+    "/help", "/status", "/market", "/debug",
+    "/signals", "/orders", "/perf", "/v66",
+}
+
+
+def _ago(iso: str | None) -> str:
+    """Return human-readable 'X min ago' string from ISO timestamp."""
+    if not iso:
+        return "从未"
+    try:
+        ts = datetime.fromisoformat(iso.replace("Z", "+00:00")).replace(tzinfo=UTC)
+        delta = datetime.now(UTC) - ts
+        secs = int(delta.total_seconds())
+        if secs < 120:
+            return f"{secs}秒前"
+        if secs < 7200:
+            return f"{secs // 60}分钟前"
+        return f"{secs // 3600}小时前"
+    except Exception:
+        return iso[:16] if iso else "—"
+
+
+def _fmt_price(v) -> str:
+    try:
+        d = Decimal(str(v))
+        if d >= 1000:
+            return f"{d:,.2f}"
+        if d >= 1:
+            return f"{d:.4f}"
+        return f"{d:.6f}"
+    except Exception:
+        return str(v)
+
+
+def _fmt_vol(v) -> str:
+    try:
+        f = float(v)
+        if f >= 1e9:
+            return f"{f/1e9:.1f}B"
+        if f >= 1e6:
+            return f"{f/1e6:.0f}M"
+        if f >= 1e3:
+            return f"{f/1e3:.0f}K"
+        return str(int(f))
+    except Exception:
+        return str(v)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Command handlers — each returns a plain-text string
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _cmd_help() -> str:
+    return (
+        "📖 可用指令\n"
+        "━━━━━━━━━━━━━━\n"
+        "/status  🩺 系统健康检查\n"
+        "/market  📊 当前行情快照\n"
+        "/debug   🔧 为何无信号（深度诊断）\n"
+        "/signals 📋 最近10条推送信号\n"
+        "/orders  📂 当前模拟单 + 最近成交\n"
+        "/perf    🏆 模拟盘绩效统计\n"
+        "/v66     📡 V66 监控池状态\n"
+        "/help    📖 显示此帮助"
+    )
+
+
+def _cmd_status(db_path: Path) -> str:
+    lines = ["🩺 系统健康检查", "━━━━━━━━━━━━━━"]
+
+    # PostgreSQL connectivity
+    try:
+        from binance_ai_trader.v3.storage.pg import get_conn
+        conn = get_conn()
+        conn.close()
+        lines.append("PostgreSQL     ✅ 正常")
+    except Exception as exc:
+        lines.append(f"PostgreSQL     ❌ {exc}")
+
+    # Binance API
+    try:
+        from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
+        BinancePublicClient().tickers_24h()
+        lines.append("Binance API    ✅ 正常")
+    except Exception as exc:
+        lines.append(f"Binance API    ❌ {exc}")
+
+    # Task run times from SQLite runner_events
+    lines.append("")
+    task_groups = {
+        "V3 任务": ["v3_hotlist_scan", "v3_paper_settle", "v3_shadow_report"],
+        "V66 任务": ["v66_scan", "v66_settle", "v66_report"],
+        "其他": ["v3_live_sync", "v3_health_check"],
+    }
+    try:
+        from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
+        repo = MarketDataRepository(db_path)
+        for group, task_ids in task_groups.items():
+            summaries = {}
+            for tid in task_ids:
+                summaries[tid] = repo.load_runner_task_summary(tid)
+            if any(v is not None for v in summaries.values()):
+                lines.append(f"[{group}]")
+                for tid, s in summaries.items():
+                    if s is None:
+                        continue
+                    status_icon = "✅" if s["status"] == "SUCCEEDED" else "❌"
+                    lines.append(f"  {tid:<22} {_ago(s['started_at'])}  {status_icon}")
+        # Recent errors
+        err = repo.load_latest_runner_error()
+        if err:
+            lines.append(f"\n⚠️  最近错误: {err['event_type']} @ {_ago(err['started_at'])}")
+            lines.append(f"   {str(err.get('error_message',''))[:80]}")
+        repo.close()
+    except Exception as exc:
+        lines.append(f"[任务状态查询失败: {exc}]")
+
+    return "\n".join(lines)
+
+
+def _cmd_market(universe_config) -> str:
+    from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
+    client = BinancePublicClient()
+    tickers = client.tickers_24h()
+    info = client.exchange_info()
+
+    valid_syms = {
+        item.symbol
+        for item in info
+        if item.quote_asset == "USDT"
+        and item.margin_asset == "USDT"
+        and item.contract_type == "PERPETUAL"
+        and item.status == "TRADING"
+        and item.base_asset not in universe_config.stablecoin_base_assets
+        and item.symbol not in universe_config.denied_symbols
+        and not item.base_asset.endswith(universe_config.leveraged_token_suffixes)
+    }
+
+    min_vol = Decimal("5_000_000")
+    eligible = [t for t in tickers if t.symbol in valid_syms and t.quote_volume >= min_vol]
+    gainers = sorted(eligible, key=lambda t: -t.price_change_percent)[:6]
+    losers  = sorted(eligible, key=lambda t:  t.price_change_percent)[:6]
+
+    v3_eligible   = [t for t in eligible if abs(t.price_change_percent) >= 15]
+    v66_eligible  = eligible  # no move requirement
+
+    lines = ["📊 当前行情快照", "━━━━━━━━━━━━━━"]
+    lines.append("涨幅榜 TOP6 (成交量≥500万):")
+    for t in gainers:
+        pct = float(t.price_change_percent)
+        flag = "✅" if pct >= 15 else "  "
+        lines.append(f"  {flag}{t.symbol:<14} {pct:+.1f}%  {_fmt_vol(t.quote_volume)}")
+    lines.append("跌幅榜 TOP6:")
+    for t in losers:
+        pct = float(t.price_change_percent)
+        flag = "✅" if pct <= -15 else "  "
+        lines.append(f"  {flag}{t.symbol:<14} {pct:+.1f}%  {_fmt_vol(t.quote_volume)}")
+    lines.append("")
+    lines.append(f"[V3] ≥15%涨跌 + 成交量≥500万: {len(v3_eligible)} 个币")
+    lines.append(f"[V66] 成交量≥500万 (无涨跌要求): {len(v66_eligible)} 个币")
+    if len(v3_eligible) == 0:
+        lines.append("⚠️  V3 无符合条件行情 → 正常无信号")
+    return "\n".join(lines)
+
+
+def _cmd_debug(universe_config) -> str:
+    from binance_ai_trader.v3.candidates.repository import V3CandidateRepository
+    from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
+
+    lines = ["🔧 深度诊断 — 为何无信号", "━━━━━━━━━━━━━━"]
+
+    # Recent candidates from DB
+    try:
+        repo = V3CandidateRepository(None)
+        recent = repo.load_recent(hours=24)
+        pushed   = [c for c in recent if c.status == "PUSHED"]
+        blocked  = [c for c in recent if c.status == "BLOCKED"]
+        deduped  = [c for c in recent if c.status == "DEDUP"]
+        v3_all   = [c for c in recent if c.strategy_id == "hotlist_momentum_v3"]
+        v66_all  = [c for c in recent if c.strategy_id == "hotlist_v66"]
+
+        lines.append(f"[过去24h 候选统计]")
+        lines.append(f"  V3  扫描: {len(v3_all)}  推送: {len([c for c in v3_all if c.status=='PUSHED'])}  "
+                     f"风控拦: {len([c for c in v3_all if c.status=='BLOCKED'])}  去重: {len([c for c in v3_all if c.status=='DEDUP'])}")
+        lines.append(f"  V66 扫描: {len(v66_all)}  推送: {len([c for c in v66_all if c.status=='PUSHED'])}  "
+                     f"风控拦: {len([c for c in v66_all if c.status=='BLOCKED'])}  去重: {len([c for c in v66_all if c.status=='DEDUP'])}")
+
+        if blocked:
+            lines.append("")
+            lines.append(f"[被风控拦截 — 最近10条, 止损距离]")
+            for c in sorted(blocked, key=lambda x: x.created_at or "", reverse=True)[:10]:
+                stop_pct = c.stop_pct or 0.0
+                limit = 20.0 if c.strategy_id == "hotlist_momentum_v3" else 5.0
+                lines.append(f"  {c.symbol:<14} {c.direction:<5} stop={stop_pct:.1f}%  限={limit:.0f}%  {_ago(c.created_at)}")
+        else:
+            lines.append("")
+            lines.append("过去24h 无被拦截记录（可能扫描未生成候选）")
+    except Exception as exc:
+        lines.append(f"[DB查询失败: {exc}]")
+
+    # Live market check
+    lines.append("")
+    lines.append("[当前行情 — TOP5 涨跌幅]")
+    try:
+        client = BinancePublicClient()
+        tickers = client.tickers_24h()
+        info = client.exchange_info()
+        valid = {
+            i.symbol for i in info
+            if i.quote_asset == "USDT" and i.margin_asset == "USDT"
+            and i.contract_type == "PERPETUAL" and i.status == "TRADING"
+            and i.base_asset not in universe_config.stablecoin_base_assets
+            and i.symbol not in universe_config.denied_symbols
+        }
+        eligible = sorted(
+            [t for t in tickers if t.symbol in valid and t.quote_volume >= Decimal("5000000")],
+            key=lambda t: -abs(float(t.price_change_percent))
+        )[:10]
+        for t in eligible:
+            pct = float(t.price_change_percent)
+            v3ok = "✅V3" if abs(pct) >= 15 else "  "
+            lines.append(f"  {v3ok} {t.symbol:<14} {pct:+.1f}%  {_fmt_vol(t.quote_volume)}")
+    except Exception as exc:
+        lines.append(f"  [获取行情失败: {exc}]")
+
+    return "\n".join(lines)
+
+
+def _cmd_signals() -> str:
+    from binance_ai_trader.v3.candidates.repository import V3CandidateRepository
+    repo = V3CandidateRepository(None)
+    candidates = repo.load_recent(hours=72)
+    pushed = [c for c in candidates if c.status == "PUSHED"]
+    pushed.sort(key=lambda c: c.created_at or "", reverse=True)
+    pushed = pushed[:10]
+
+    if not pushed:
+        return "📋 最近72h 无推送信号"
+
+    lines = [f"📋 最近推送信号 ({len(pushed)}条)", "━━━━━━━━━━━━━━"]
+    for i, c in enumerate(pushed, 1):
+        strat = "V3" if c.strategy_id == "hotlist_momentum_v3" else "V66"
+        rr = f"RR:{c.rr}" if c.rr else ""
+        stop = f"止损:{c.stop_pct:.1f}%" if c.stop_pct else ""
+        lines.append(
+            f"{i}. [{strat}] {c.signal_id or '—'}\n"
+            f"   {c.symbol} {c.direction}  {_ago(c.created_at)}\n"
+            f"   Entry:{_fmt_price(c.entry)}  {stop}  {rr}"
+        )
+    return "\n".join(lines)
+
+
+def _cmd_orders() -> str:
+    from binance_ai_trader.v3.paper.repository import V3PaperOrderRepository
+    repo = V3PaperOrderRepository()
+    open_orders = repo.load_open()
+    closed = repo.load_recent_settled(n=5)
+
+    lines = ["📂 模拟单状态", "━━━━━━━━━━━━━━"]
+
+    if not open_orders:
+        lines.append("[当前无开仓单]")
+    else:
+        lines.append(f"[开仓中 — {len(open_orders)}单]")
+        for o in open_orders:
+            strat = "V3" if o.strategy_id == "hotlist_momentum_v3" else "V66"
+            sl_pct = abs(Decimal(o.entry) - o.stop_loss) / Decimal(o.entry) * 100
+            lines.append(
+                f"[{strat}] {o.symbol} {o.direction}  {o.status}\n"
+                f"  Entry:{_fmt_price(o.entry)}  SL:{_fmt_price(o.stop_loss)}({sl_pct:.1f}%)  "
+                f"TP1:{_fmt_price(o.tp1)}\n"
+                f"  建仓:{_ago(o.created_at)}"
+            )
+
+    if closed:
+        lines.append(f"\n[最近结算 — {len(closed)}条]")
+        _RESULT_ICON = {"TP1": "✅", "TP2": "✅", "SL": "❌", "TIMEOUT": "⏰"}
+        for o in closed:
+            icon = _RESULT_ICON.get(o.result or "", "📋")
+            pnl = f"{float(o.pnl_pct):+.2f}%" if o.pnl_pct else ""
+            lines.append(f"  {icon} {o.symbol} {o.direction} {o.result}  {pnl}  {_ago(o.closed_at)}")
+
+    return "\n".join(lines)
+
+
+def _cmd_perf() -> str:
+    from binance_ai_trader.v3.paper.repository import V3PaperOrderRepository
+    repo = V3PaperOrderRepository()
+    all_orders = repo.load_all()
+
+    def _stats(orders):
+        closed = [o for o in orders if o.status == "CLOSED" and o.result in ("TP1", "TP2", "SL", "TIMEOUT")]
+        if not closed:
+            return None
+        wins    = [o for o in closed if o.result in ("TP1", "TP2")]
+        filled  = [o for o in orders if o.status in ("FILLED", "CLOSED") and o.filled_at]
+        pnls    = [float(o.pnl_pct) for o in closed if o.pnl_pct]
+        open_n  = len([o for o in orders if o.status in ("OPEN", "FILLED")])
+        return {
+            "total":      len(orders),
+            "closed":     len(closed),
+            "open":       open_n,
+            "win_rate":   len(wins) / len(closed) * 100 if closed else 0,
+            "tp1_rate":   len([o for o in closed if o.result == "TP1"]) / len(closed) * 100 if closed else 0,
+            "fill_rate":  len(filled) / len(orders) * 100 if orders else 0,
+            "avg_pnl":    sum(pnls) / len(pnls) if pnls else 0,
+        }
+
+    lines = ["🏆 模拟盘绩效", "━━━━━━━━━━━━━━"]
+
+    for strat_id, label in [("hotlist_momentum_v3", "V3"), ("hotlist_v66", "V66")]:
+        orders = [o for o in all_orders if o.strategy_id == strat_id]
+        s = _stats(orders)
+        lines.append(f"[{label} — {strat_id}]")
+        if s is None:
+            lines.append("  暂无数据")
+            continue
+        lines.append(f"  总信号: {s['total']}  开仓率: {s['fill_rate']:.0f}%  当前开仓: {s['open']}")
+        lines.append(f"  胜率:   {s['win_rate']:.0f}%  TP1率: {s['tp1_rate']:.0f}%")
+        lines.append(f"  已结算: {s['closed']}  平均收益: {s['avg_pnl']:+.2f}%")
+
+    return "\n".join(lines)
+
+
+def _cmd_v66() -> str:
+    from binance_ai_trader.hotlist.pg_watchlist_repo import V66WatchlistPgRepository
+    repo = V66WatchlistPgRepository()
+    active = repo.active()
+
+    lines = ["📡 V66 监控池状态", "━━━━━━━━━━━━━━"]
+    if not active:
+        lines.append("监控池为空（等待下次扫描填充）")
+        return "\n".join(lines)
+
+    lines.append(f"活跃币: {len(active)} 个")
+    now_iso = datetime.now(UTC).isoformat(timespec="seconds")
+    for item in active:
+        try:
+            exp = datetime.fromisoformat(item.expires_at.replace("Z", "+00:00"))
+            remaining_min = int((exp - datetime.now(UTC)).total_seconds() // 60)
+            remaining = f"{remaining_min}min" if remaining_min > 0 else "即将过期"
+        except Exception:
+            remaining = "—"
+        lines.append(
+            f"  {item.source:<6} rank:{item.last_rank}  {item.symbol:<14} "
+            f"观测:{item.observation_count}次  剩余:{remaining}"
+        )
+
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Command server
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TelegramCommandServer:
+    """Polls Telegram for /commands and dispatches to handler functions.
+
+    Runs as a daemon thread — never crashes run_server.py.
+    Only responds to user IDs in TELEGRAM_ADMIN_USER_ID env var.
+    """
+
+    def __init__(
+        self,
+        notifier,
+        db_path: Path,
+        universe_config,
+        admin_user_ids: set[int],
+    ) -> None:
+        self._notifier      = notifier
+        self._db_path       = db_path
+        self._universe_cfg  = universe_config
+        self._admin_ids     = admin_user_ids
+        self._offset        = 0
+        self._running       = False
+
+    # ------------------------------------------------------------------
+    def start(self) -> None:
+        """Launch polling as a background daemon thread."""
+        t = threading.Thread(target=self._safe_loop, name="tg-cmd-server", daemon=True)
+        t.start()
+        log.info("[CmdServer] started — admin_ids=%s", self._admin_ids)
+
+    # ------------------------------------------------------------------
+    def _safe_loop(self) -> None:
+        """Outer loop: catches all exceptions so the thread never dies silently."""
+        while True:
+            try:
+                self._poll_loop()
+            except Exception:
+                log.exception("[CmdServer] poll loop crashed, restarting in 30s")
+                time.sleep(30)
+
+    def _poll_loop(self) -> None:
+        self._running = True
+        while True:
+            try:
+                updates = self._notifier.get_updates(offset=self._offset, timeout=5)
+            except Exception:
+                log.debug("[CmdServer] getUpdates failed, will retry")
+                time.sleep(_POLL_INTERVAL)
+                continue
+
+            for update in updates:
+                self._offset = update.get("update_id", self._offset) + 1
+                try:
+                    self._handle_update(update)
+                except Exception:
+                    log.exception("[CmdServer] error handling update %s", update.get("update_id"))
+
+            time.sleep(_POLL_INTERVAL)
+
+    def _handle_update(self, update: dict) -> None:
+        msg = update.get("message") or update.get("edited_message")
+        if not msg:
+            return
+
+        chat_id  = msg.get("chat", {}).get("id")
+        user_id  = msg.get("from", {}).get("id")
+        text     = (msg.get("text") or "").strip().lower()
+
+        if not chat_id or not text.startswith("/"):
+            return
+
+        # Strip bot username suffix (e.g. /status@MyBot → /status)
+        cmd = text.split("@")[0].split()[0]
+        if cmd not in _COMMANDS:
+            return
+
+        # Permission check
+        if user_id not in self._admin_ids:
+            log.warning("[CmdServer] denied %s from user_id=%s", cmd, user_id)
+            return
+
+        log.info("[CmdServer] %s from user_id=%s", cmd, user_id)
+        reply = self._dispatch(cmd)
+        try:
+            self._notifier.reply(chat_id, reply)
+        except Exception:
+            log.exception("[CmdServer] failed to send reply for %s", cmd)
+
+    def _dispatch(self, cmd: str) -> str:
+        try:
+            if cmd == "/help":
+                return _cmd_help()
+            if cmd == "/status":
+                return _cmd_status(self._db_path)
+            if cmd == "/market":
+                return _cmd_market(self._universe_cfg)
+            if cmd == "/debug":
+                return _cmd_debug(self._universe_cfg)
+            if cmd == "/signals":
+                return _cmd_signals()
+            if cmd == "/orders":
+                return _cmd_orders()
+            if cmd == "/perf":
+                return _cmd_perf()
+            if cmd == "/v66":
+                return _cmd_v66()
+            return "❓ 未知指令，发送 /help 查看列表"
+        except Exception as exc:
+            log.exception("[CmdServer] command %s failed", cmd)
+            return f"❌ {cmd} 执行出错: {type(exc).__name__}: {exc}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Factory helper — called from run_server.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+def start_command_server(
+    notifier,
+    db_path: Path,
+    universe_config,
+) -> TelegramCommandServer | None:
+    """Read TELEGRAM_ADMIN_USER_ID from env and start command server.
+
+    Returns None (silently) if notifier is None or no admin IDs configured.
+    Safe to call unconditionally — never raises.
+    """
+    if notifier is None:
+        return None
+    try:
+        raw = os.environ.get("TELEGRAM_ADMIN_USER_ID", "").strip()
+        if not raw:
+            log.info("[CmdServer] TELEGRAM_ADMIN_USER_ID not set — command server disabled")
+            return None
+        admin_ids = {int(uid.strip()) for uid in raw.split(",") if uid.strip()}
+        if not admin_ids:
+            log.warning("[CmdServer] no valid admin IDs parsed — command server disabled")
+            return None
+        server = TelegramCommandServer(notifier, db_path, universe_config, admin_ids)
+        server.start()
+        return server
+    except Exception:
+        log.exception("[CmdServer] failed to start — continuing without command server")
+        return None

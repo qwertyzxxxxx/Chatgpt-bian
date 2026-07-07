@@ -92,6 +92,7 @@ if __name__ == "__main__":
     from binance_ai_trader.v3.storage.migration import run_migration
     from binance_ai_trader.v3.storage.pg import init_schema
     from binance_ai_trader.v3.telegram.startup import send_v3_startup
+    from binance_ai_trader.v3.telegram.command_server import start_command_server
 
     # ── Telegram ──────────────────────────────────────────────────────────────
     _token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -227,6 +228,9 @@ if __name__ == "__main__":
             )
         except Exception as exc:
             _log.warning("[startup] send_v3_startup failed: %s", exc)
+
+    # ── Telegram command server (interactive diagnostics) ─────────────────────
+    start_command_server(notifier, _DB_PATH, universe_config)
 
     # ── Run forever with lock-retry ───────────────────────────────────────────
     repository = MarketDataRepository(_DB_PATH)
