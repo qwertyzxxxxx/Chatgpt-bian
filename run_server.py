@@ -169,8 +169,7 @@ if __name__ == "__main__":
                         f"━━━━━━━━━━━━━━\n"
                         f"名义仓位  {_notional} USDT\n"
                         f"最大挂单  {_max_pending}\n"
-                        f"最大持仓  {_max_pos}\n"
-                        f"止损上限  10%"
+                        f"最大持仓  {_max_pos}"
                     )
             except Exception as exc:
                 _log.error("[startup] Live Mirror init failed: %s", exc)
