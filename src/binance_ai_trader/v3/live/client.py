@@ -234,7 +234,7 @@ class BinanceFuturesClient:
             "quantity": str(quantity),
         })
 
-    def place_otoco(
+    def place_entry_with_sltp(
         self,
         symbol: str,
         side: str,
@@ -244,62 +244,76 @@ class BinanceFuturesClient:
         sl_price: Decimal,
         position_side: str = "BOTH",
     ) -> dict:
-        """Place OTOCO order: LIMIT entry + TAKE_PROFIT_MARKET (TP) + STOP_MARKET (SL).
+        """Place entry LIMIT + SL + TP via batchOrders (3 independent orders in one call).
 
-        For LONG (side=BUY):  TP is above entry → pendingAbove, SL below → pendingBelow.
-        For SHORT (side=SELL): SL is above entry → pendingAbove, TP below → pendingBelow.
-
-        Returns dict with entry_order_id, tp_order_id, sl_order_id, list_order_id.
+        Returns dict with entry_order_id, tp_order_id, sl_order_id.
+        Raises BinanceFuturesError only if the ENTRY order itself fails.
+        SL/TP partial failures are returned as empty strings (naked position fallback handles them).
         """
         close_side = "SELL" if side == "BUY" else "BUY"
 
-        if side == "BUY":
-            above_type      = "TAKE_PROFIT_MARKET"
-            above_stop      = tp_price
-            below_type      = "STOP_MARKET"
-            below_stop      = sl_price
-        else:
-            above_type      = "STOP_MARKET"
-            above_stop      = sl_price
-            below_type      = "TAKE_PROFIT_MARKET"
-            below_stop      = tp_price
-
-        params: dict = {
-            "symbol":                   symbol,
-            "workingType":              "LIMIT",
-            "workingSide":              side,
-            "workingPrice":             str(entry_price),
-            "workingQuantity":          str(quantity),
-            "workingTimeInForce":       "GTC",
-            "pendingAboveType":         above_type,
-            "pendingAboveSide":         close_side,
-            "pendingAboveStopPrice":    str(above_stop),
-            "pendingBelowType":         below_type,
-            "pendingBelowSide":         close_side,
-            "pendingBelowStopPrice":    str(below_stop),
+        entry_order: dict = {
+            "symbol":       symbol,
+            "side":         side,
+            "type":         "LIMIT",
+            "price":        str(entry_price),
+            "quantity":     str(quantity),
+            "timeInForce":  "GTC",
+        }
+        sl_order: dict = {
+            "symbol":    symbol,
+            "side":      close_side,
+            "type":      "STOP_MARKET",
+            "stopPrice": str(sl_price),
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+        }
+        tp_order: dict = {
+            "symbol":    symbol,
+            "side":      close_side,
+            "type":      "TAKE_PROFIT_MARKET",
+            "stopPrice": str(tp_price),
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
         }
         if position_side != "BOTH":
-            params["workingPositionSide"]       = position_side
-            params["pendingAbovePositionSide"]  = position_side
-            params["pendingBelowPositionSide"]  = position_side
+            entry_order["positionSide"] = position_side
+            sl_order["positionSide"]    = position_side
+            tp_order["positionSide"]    = position_side
+            # In hedge mode closePosition=true is not allowed; use quantity instead
+            sl_order.pop("closePosition")
+            tp_order.pop("closePosition")
+            sl_order["quantity"] = str(quantity)
+            tp_order["quantity"] = str(quantity)
         else:
-            params["pendingAboveReduceOnly"]    = "true"
-            params["pendingBelowReduceOnly"]    = "true"
+            entry_order["reduceOnly"] = "false"
 
-        resp = self._post("/fapi/v1/order/list/otoco", params)  # type: ignore[assignment]
-        orders = resp.get("orders", [])  # type: ignore[union-attr]
-        entry_id = str(orders[0].get("orderId", "")) if len(orders) > 0 else ""
-        above_id = str(orders[1].get("orderId", "")) if len(orders) > 1 else ""
-        below_id = str(orders[2].get("orderId", "")) if len(orders) > 2 else ""
+        batch = json.dumps([entry_order, sl_order, tp_order], separators=(",", ":"))
+        params: dict = {"batchOrders": batch}
+        results: list = self._post("/fapi/v1/batchOrders", params)  # type: ignore[assignment]
 
-        tp_id = above_id if side == "BUY" else below_id
-        sl_id = below_id if side == "BUY" else above_id
+        entry_id = sl_id = tp_id = ""
+        for i, r in enumerate(results):
+            if not isinstance(r, dict):
+                continue
+            if r.get("code", 0) < 0:
+                err_msg = f"batchOrders[{i}] failed: {r.get('msg', r)}"
+                if i == 0:
+                    raise BinanceFuturesError(r["code"], err_msg)
+                log.warning("[client] %s %s — SL/TP will be attached by sync fallback", symbol, err_msg)
+                continue
+            oid = str(r.get("orderId", ""))
+            if i == 0:
+                entry_id = oid
+            elif i == 1:
+                sl_id = oid
+            elif i == 2:
+                tp_id = oid
 
         return {
             "entry_order_id": entry_id,
             "tp_order_id":    tp_id,
             "sl_order_id":    sl_id,
-            "list_order_id":  str(resp.get("orderListId", "")),  # type: ignore[union-attr]
         }
 
     def place_stop_market(

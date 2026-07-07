@@ -91,26 +91,27 @@ class LiveMirrorEngine:
             sl_r    = self._client.round_price(candidate.symbol, sl)
             tp_r    = self._client.round_price(candidate.symbol, tp)
 
-            # Try OTOCO first (entry + SL + TP in one call → zero naked-position window)
+            # Try batch (entry + SL + TP in one call → minimal naked-position window)
             bn_order_id: str = ""
             sl_order_id: str | None = None
             tp_order_id: str | None = None
-            otoco_ok = False
+            batch_ok = False
             try:
-                otoco = self._client.place_otoco(
+                batch = self._client.place_entry_with_sltp(
                     candidate.symbol, side, entry_r, qty, tp_r, sl_r, position_side=pos_side
                 )
-                bn_order_id = otoco["entry_order_id"]
-                sl_order_id = otoco["sl_order_id"] or None
-                tp_order_id = otoco["tp_order_id"] or None
-                otoco_ok = True
-                log.info("[Live] OTOCO placed %s %s %s entry=%s sl=%s tp=%s",
-                         live_order_id, candidate.symbol, side, entry_r, sl_r, tp_r)
+                bn_order_id = batch["entry_order_id"]
+                sl_order_id = batch["sl_order_id"] or None
+                tp_order_id = batch["tp_order_id"] or None
+                batch_ok = True
+                log.info("[Live] batch placed %s %s %s entry=%s sl=%s tp=%s sl_id=%s tp_id=%s",
+                         live_order_id, candidate.symbol, side, entry_r, sl_r, tp_r,
+                         sl_order_id, tp_order_id)
             except BinanceFuturesError as exc:
-                log.warning("[Live] OTOCO failed for %s (%s), falling back to plain LIMIT: %s",
+                log.warning("[Live] batch failed for %s (%s), falling back to plain LIMIT: %s",
                             candidate.symbol, exc.code, exc.msg)
 
-            if not otoco_ok:
+            if not batch_ok:
                 resp = self._client.place_limit(candidate.symbol, side, entry_r, qty, position_side=pos_side)
                 bn_order_id = str(resp.get("orderId", ""))
 
