@@ -236,25 +236,36 @@ class LiveMirrorEngine:
 
         if needs_sl or needs_tp:
             # Query actual position from Binance for real qty (not stored qty)
+            # In hedge mode match both symbol AND positionSide to avoid cross-side false positives
             real_qty: Decimal | None = None
+            get_pos_failed = False
             try:
                 positions = self._client.get_positions()
                 for p in positions:
-                    if p.get("symbol") == order.symbol:
+                    sym_match  = p.get("symbol") == order.symbol
+                    side_match = p.get("positionSide", "BOTH") == order.direction
+                    if sym_match and side_match:
                         amt = Decimal(str(p.get("positionAmt", "0")))
                         real_qty = abs(amt) if amt != 0 else None
                         break
             except Exception as exc:
                 log.warning("[Live] get_positions failed during naked check %s: %s",
                             order.live_order_id, exc)
+                get_pos_failed = True
+
             # If position no longer exists on Binance, it was closed externally — mark CLOSED
-            if real_qty is None:
+            # (skip this conclusion if the API call itself failed, to avoid false closures)
+            if real_qty is None and not get_pos_failed:
                 log.info("[Live] %s %s has no open position on Binance — marking CLOSED",
                          order.live_order_id, order.symbol)
                 self._repo.update_status(order.live_order_id, "CLOSED")
                 self._event(order.live_order_id, order.signal_id, "CLOSED_EXTERNAL",
                             {"reason": "no_open_position"})
                 return True
+
+            if real_qty is None:
+                # API failed; fall back to stored quantity so SL/TP attachment can still be attempted
+                real_qty = Decimal(order.quantity)
 
             qty = real_qty
 
