@@ -78,14 +78,15 @@ class HotlistStrategyV3(V3Strategy):
 
         candidates: list[CandidateInput] = []
         for plan in plans:
-            if plan.rr < self._min_rr:
-                log.debug("[V3/Hotlist] %s skipped: rr=%.2f < %.2f", plan.symbol, plan.rr, self._min_rr)
-                continue
-
             entry = plan.suggested_limit_entry
             stop_pct = abs(entry - plan.stop_loss) / entry * 100
+
+            if plan.rr < self._min_rr:
+                log.info("[V3/Hotlist] %s SKIP rr=%.2f<%.2f stop=%.1f%%", plan.symbol, plan.rr, self._min_rr, stop_pct)
+                continue
+
             if stop_pct > self._max_stop_pct:
-                log.debug("[V3/Hotlist] %s skipped: stop_pct=%.1f%%", plan.symbol, stop_pct)
+                log.info("[V3/Hotlist] %s SKIP stop=%.1f%%>%.1f%%", plan.symbol, stop_pct, self._max_stop_pct)
                 continue
 
             candidates.append(CandidateInput(
