@@ -40,8 +40,11 @@ class V3Settler:
         self._client = client
         self._notifier = notifier
 
-    def settle_all(self) -> int:
-        open_orders = self._order_repo.load_open()
+    def settle_all(self, strategy_id: str | None = None) -> int:
+        if strategy_id is not None:
+            open_orders = self._order_repo.load_open_by_strategy(strategy_id)
+        else:
+            open_orders = self._order_repo.load_open()
         if not open_orders:
             return 0
 
@@ -56,7 +59,7 @@ class V3Settler:
             except Exception:
                 log.exception("[V3] settle error for order %s", order.order_id)
 
-        log.info("[V3] settlement pass done: %d updated", updated)
+        log.info("[V3] settlement pass done (strategy=%s): %d updated", strategy_id or "all", updated)
         return updated
 
     def _settle_one(self, order: V3PaperOrder, now: datetime) -> bool:

@@ -136,6 +136,25 @@ class V3PaperOrderRepository:
             conn.close()
         return [_row_to_order(r) for r in rows]
 
+    def load_open_by_strategy(self, strategy_id: str) -> list[V3PaperOrder]:
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT order_id, signal_id, strategy_id, symbol, direction,
+                              entry, stop_loss, tp1, tp2, rr, status, result,
+                              created_at, filled_at, closed_at, expires_at,
+                              pnl_pct, rr_realized, pushed, metadata_json
+                       FROM v3_paper_orders
+                       WHERE strategy_id=%s AND status IN ('OPEN','FILLED')
+                       ORDER BY created_at""",
+                    (strategy_id,),
+                )
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+        return [_row_to_order(r) for r in rows]
+
     def load_all(self) -> list[V3PaperOrder]:
         conn = get_conn()
         try:

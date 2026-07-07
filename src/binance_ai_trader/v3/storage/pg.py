@@ -157,6 +157,19 @@ CREATE INDEX IF NOT EXISTS idx_live_orders_symbol
 CREATE INDEX IF NOT EXISTS idx_live_orders_signal
     ON live_orders(signal_id);
 
+CREATE TABLE IF NOT EXISTS v66_watchlist (
+    symbol             TEXT PRIMARY KEY,
+    source             TEXT NOT NULL,
+    first_seen_at      TEXT NOT NULL,
+    last_seen_at       TEXT NOT NULL,
+    expires_at         TEXT NOT NULL,
+    observation_count  INTEGER NOT NULL,
+    last_rank          INTEGER NOT NULL,
+    status             TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_v66_watchlist_status
+    ON v66_watchlist(status, expires_at);
+
 CREATE TABLE IF NOT EXISTS live_events (
     event_id        TEXT PRIMARY KEY,
     live_order_id   TEXT NOT NULL,

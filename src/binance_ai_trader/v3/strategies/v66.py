@@ -14,10 +14,9 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 
 from binance_ai_trader.config import UniverseConfig
-from binance_ai_trader.hotlist.repository import HotlistWatchlistRepository
+from binance_ai_trader.hotlist.pg_watchlist_repo import V66WatchlistPgRepository
 from binance_ai_trader.hotlist.watchlist import HotlistWatchlist, HotlistWatchlistPolicy
 from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
 from binance_ai_trader.v3.candidates.repository import CandidateInput
@@ -48,11 +47,10 @@ class HotlistStrategyV66(V3Strategy):
         self,
         client: BinancePublicClient,
         universe_config: UniverseConfig,
-        watchlist_db: Path,
     ) -> None:
         self._client          = client
         self._universe_config = universe_config
-        self._repo            = HotlistWatchlistRepository(watchlist_db)
+        self._repo            = V66WatchlistPgRepository()
 
     @property
     def strategy_id(self) -> str:

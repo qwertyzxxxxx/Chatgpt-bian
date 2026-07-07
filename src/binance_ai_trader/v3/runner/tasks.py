@@ -184,7 +184,7 @@ def build_v3_tasks(
         })
 
     def _settle_task() -> RunnerTaskResult:
-        updated = settler.settle_all()
+        updated = settler.settle_all(strategy_id=_STRATEGY_ID)
         return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_paper_settle", "settled": updated})
 
     def _live_sync_task() -> RunnerTaskResult:
@@ -255,9 +255,7 @@ def build_v66_tasks(
         max_retries=max_retries,
     )
 
-    watchlist_db = db_path.parent / "v66_watchlist.db"
-
-    strategy   = HotlistStrategyV66(client, universe_config, watchlist_db)
+    strategy   = HotlistStrategyV66(client, universe_config)
     risk_cfg   = RiskConfig(strategy_id=_V66_STRATEGY_ID, max_open_orders=max_open_orders)
     pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
     order_repo = V3PaperOrderRepository()
@@ -347,7 +345,7 @@ def build_v66_tasks(
         })
 
     def _v66_settle_task() -> RunnerTaskResult:
-        updated = settler.settle_all()
+        updated = settler.settle_all(strategy_id=_V66_STRATEGY_ID)
         return RunnerTaskResult("SUCCEEDED", {"event_type": "v66_settle", "settled": updated})
 
     def _v66_report_task() -> RunnerTaskResult:
