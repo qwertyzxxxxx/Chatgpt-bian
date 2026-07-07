@@ -11,8 +11,8 @@ channel = "stable-25_05"
 
 [deployment]
 deploymentTarget = "vm"
-run = ["python", "run_server.py"]
-build = ["bash", "-c", "pip install psycopg2-binary && uv sync --no-editable"]
+run = [".venv/bin/python", "run_server.py"]
+build = ["bash", "-c", "pip install psycopg2-binary && uv venv && uv sync --no-editable"]
 
 [userenv]
 
