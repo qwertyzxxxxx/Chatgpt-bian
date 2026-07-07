@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 
 _STRATEGY_LABELS: dict[str, str] = {
     "hotlist_momentum_v3": "🔥 Hotlist",
+    "hotlist_v66":         "📡 V66 Watchlist",
     "monster_v3":          "👾 Monster",
     "breakout_v3":         "📈 Breakout",
     "bear_v3":             "🐻 Bear",

@@ -88,7 +88,7 @@ if __name__ == "__main__":
     from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
     from binance_ai_trader.notifications.telegram import TelegramNotifier
     from binance_ai_trader.runner.engine import ProductionRunner, RunnerLockError
-    from binance_ai_trader.v3.runner.tasks import build_v3_tasks
+    from binance_ai_trader.v3.runner.tasks import build_v3_tasks, build_v66_tasks
     from binance_ai_trader.v3.storage.migration import run_migration
     from binance_ai_trader.v3.storage.pg import init_schema
     from binance_ai_trader.v3.telegram.startup import send_v3_startup
@@ -178,7 +178,7 @@ if __name__ == "__main__":
 
     # ── Build V3 tasks ────────────────────────────────────────────────────────
     universe_config = UniverseConfig.load(_CONFIG)
-    tasks = build_v3_tasks(
+    tasks = list(build_v3_tasks(
         db_path=_DB_PATH,
         universe_config=universe_config,
         telegram=notifier,
@@ -194,8 +194,22 @@ if __name__ == "__main__":
         live_mirror=live_mirror,
         live_sync_interval=timedelta(minutes=int(os.environ.get("LIVE_SYNC_INTERVAL_MIN", "3"))),
         live_report_interval=timedelta(minutes=int(os.environ.get("LIVE_REPORT_INTERVAL_MIN", "60"))),
+    ))
+
+    # ── Build V66 tasks (V1-style watchlist, paper only) ──────────────────────
+    v66_tasks = build_v66_tasks(
+        db_path=_DB_PATH,
+        universe_config=universe_config,
+        telegram=notifier,
+        scan_interval=timedelta(minutes=15),
+        settle_interval=timedelta(minutes=15),
+        report_interval=timedelta(hours=1),
+        dedup_hours=24,
+        max_open_orders=5,
     )
-    _log.info("[startup] V3 tasks: %s", [t.event_type for t in tasks])
+    tasks.extend(v66_tasks)
+
+    _log.info("[startup] All tasks: %s", [t.event_type for t in tasks])
 
     # ── Telegram: [V3] Started ────────────────────────────────────────────────
     if notifier is not None:
