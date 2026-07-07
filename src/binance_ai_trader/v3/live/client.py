@@ -234,6 +234,74 @@ class BinanceFuturesClient:
             "quantity": str(quantity),
         })
 
+    def place_otoco(
+        self,
+        symbol: str,
+        side: str,
+        entry_price: Decimal,
+        quantity: Decimal,
+        tp_price: Decimal,
+        sl_price: Decimal,
+        position_side: str = "BOTH",
+    ) -> dict:
+        """Place OTOCO order: LIMIT entry + TAKE_PROFIT_MARKET (TP) + STOP_MARKET (SL).
+
+        For LONG (side=BUY):  TP is above entry → pendingAbove, SL below → pendingBelow.
+        For SHORT (side=SELL): SL is above entry → pendingAbove, TP below → pendingBelow.
+
+        Returns dict with entry_order_id, tp_order_id, sl_order_id, list_order_id.
+        """
+        close_side = "SELL" if side == "BUY" else "BUY"
+
+        if side == "BUY":
+            above_type      = "TAKE_PROFIT_MARKET"
+            above_stop      = tp_price
+            below_type      = "STOP_MARKET"
+            below_stop      = sl_price
+        else:
+            above_type      = "STOP_MARKET"
+            above_stop      = sl_price
+            below_type      = "TAKE_PROFIT_MARKET"
+            below_stop      = tp_price
+
+        params: dict = {
+            "symbol":                   symbol,
+            "workingType":              "LIMIT",
+            "workingSide":              side,
+            "workingPrice":             str(entry_price),
+            "workingQuantity":          str(quantity),
+            "workingTimeInForce":       "GTC",
+            "pendingAboveType":         above_type,
+            "pendingAboveSide":         close_side,
+            "pendingAboveStopPrice":    str(above_stop),
+            "pendingBelowType":         below_type,
+            "pendingBelowSide":         close_side,
+            "pendingBelowStopPrice":    str(below_stop),
+        }
+        if position_side != "BOTH":
+            params["workingPositionSide"]       = position_side
+            params["pendingAbovePositionSide"]  = position_side
+            params["pendingBelowPositionSide"]  = position_side
+        else:
+            params["pendingAboveReduceOnly"]    = "true"
+            params["pendingBelowReduceOnly"]    = "true"
+
+        resp = self._post("/fapi/v1/order/list/otoco", params)  # type: ignore[assignment]
+        orders = resp.get("orders", [])  # type: ignore[union-attr]
+        entry_id = str(orders[0].get("orderId", "")) if len(orders) > 0 else ""
+        above_id = str(orders[1].get("orderId", "")) if len(orders) > 1 else ""
+        below_id = str(orders[2].get("orderId", "")) if len(orders) > 2 else ""
+
+        tp_id = above_id if side == "BUY" else below_id
+        sl_id = below_id if side == "BUY" else above_id
+
+        return {
+            "entry_order_id": entry_id,
+            "tp_order_id":    tp_id,
+            "sl_order_id":    sl_id,
+            "list_order_id":  str(resp.get("orderListId", "")),  # type: ignore[union-attr]
+        }
+
     def place_stop_market(
         self, symbol: str, side: str, stop_price: Decimal, quantity: Decimal,
         position_side: str = "BOTH",
@@ -255,23 +323,44 @@ class BinanceFuturesClient:
         except BinanceFuturesError as exc:
             if exc.code != -4120:
                 raise
-            # -4120: order type not supported via regular endpoint; retry with closePosition
-            log.warning("[client] STOP_MARKET qty-mode rejected for %s (-4120), retrying with closePosition=true", symbol)
-            fallback: dict = {
-                "symbol": symbol,
-                "side": side,
-                "positionSide": position_side,
-                "type": "STOP_MARKET",
-                "stopPrice": str(stop_price),
-                "closePosition": "true",
-            }
-            return self._post("/fapi/v1/order", fallback)  # type: ignore[return-value]
+        # -4120 attempt 2: closePosition=true (no qty)
+        log.warning("[client] STOP_MARKET qty-mode rejected for %s (-4120), retrying with closePosition=true", symbol)
+        fallback2: dict = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": "STOP_MARKET",
+            "stopPrice": str(stop_price),
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+            "priceProtect": "true",
+        }
+        try:
+            return self._post("/fapi/v1/order", fallback2)  # type: ignore[return-value]
+        except BinanceFuturesError as exc2:
+            if exc2.code != -4120:
+                raise
+        # -4120 attempt 3: MARK_PRICE + qty (no closePosition)
+        log.warning("[client] STOP_MARKET closePosition-mode rejected for %s (-4120), retrying with MARK_PRICE+qty", symbol)
+        fallback3: dict = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": "STOP_MARKET",
+            "stopPrice": str(stop_price),
+            "quantity": str(quantity),
+            "workingType": "MARK_PRICE",
+            "priceProtect": "true",
+        }
+        if position_side == "BOTH":
+            fallback3["reduceOnly"] = "true"
+        return self._post("/fapi/v1/order", fallback3)  # type: ignore[return-value]
 
     def place_take_profit_market(
         self, symbol: str, side: str, stop_price: Decimal, quantity: Decimal,
         position_side: str = "BOTH",
     ) -> dict:
-        """Place TAKE_PROFIT_MARKET.  Falls back to closePosition=true on -4120."""
+        """Place TAKE_PROFIT_MARKET.  Falls back to closePosition / MARK_PRICE on -4120."""
         params: dict = {
             "symbol": symbol,
             "side": side,
@@ -287,16 +376,36 @@ class BinanceFuturesClient:
         except BinanceFuturesError as exc:
             if exc.code != -4120:
                 raise
-            log.warning("[client] TAKE_PROFIT_MARKET qty-mode rejected for %s (-4120), retrying with closePosition=true", symbol)
-            fallback: dict = {
-                "symbol": symbol,
-                "side": side,
-                "positionSide": position_side,
-                "type": "TAKE_PROFIT_MARKET",
-                "stopPrice": str(stop_price),
-                "closePosition": "true",
-            }
-            return self._post("/fapi/v1/order", fallback)  # type: ignore[return-value]
+        log.warning("[client] TAKE_PROFIT_MARKET qty-mode rejected for %s (-4120), retrying with closePosition=true", symbol)
+        fallback2: dict = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": "TAKE_PROFIT_MARKET",
+            "stopPrice": str(stop_price),
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+            "priceProtect": "true",
+        }
+        try:
+            return self._post("/fapi/v1/order", fallback2)  # type: ignore[return-value]
+        except BinanceFuturesError as exc2:
+            if exc2.code != -4120:
+                raise
+        log.warning("[client] TAKE_PROFIT_MARKET closePosition-mode rejected for %s (-4120), retrying with MARK_PRICE+qty", symbol)
+        fallback3: dict = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": "TAKE_PROFIT_MARKET",
+            "stopPrice": str(stop_price),
+            "quantity": str(quantity),
+            "workingType": "MARK_PRICE",
+            "priceProtect": "true",
+        }
+        if position_side == "BOTH":
+            fallback3["reduceOnly"] = "true"
+        return self._post("/fapi/v1/order", fallback3)  # type: ignore[return-value]
 
     def cancel_order(self, symbol: str, order_id: str) -> dict:
         return self._delete("/fapi/v1/order", {"symbol": symbol, "orderId": order_id})  # type: ignore[return-value]

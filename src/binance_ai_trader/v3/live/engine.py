@@ -88,8 +88,31 @@ class LiveMirrorEngine:
                 return PlaceResult(ok=False, reason=reason, live_order_id=live_order_id)
 
             entry_r = self._client.round_price(candidate.symbol, entry)
-            resp = self._client.place_limit(candidate.symbol, side, entry_r, qty, position_side=pos_side)
-            bn_order_id = str(resp.get("orderId", ""))
+            sl_r    = self._client.round_price(candidate.symbol, sl)
+            tp_r    = self._client.round_price(candidate.symbol, tp)
+
+            # Try OTOCO first (entry + SL + TP in one call → zero naked-position window)
+            bn_order_id: str = ""
+            sl_order_id: str | None = None
+            tp_order_id: str | None = None
+            otoco_ok = False
+            try:
+                otoco = self._client.place_otoco(
+                    candidate.symbol, side, entry_r, qty, tp_r, sl_r, position_side=pos_side
+                )
+                bn_order_id = otoco["entry_order_id"]
+                sl_order_id = otoco["sl_order_id"] or None
+                tp_order_id = otoco["tp_order_id"] or None
+                otoco_ok = True
+                log.info("[Live] OTOCO placed %s %s %s entry=%s sl=%s tp=%s",
+                         live_order_id, candidate.symbol, side, entry_r, sl_r, tp_r)
+            except BinanceFuturesError as exc:
+                log.warning("[Live] OTOCO failed for %s (%s), falling back to plain LIMIT: %s",
+                            candidate.symbol, exc.code, exc.msg)
+
+            if not otoco_ok:
+                resp = self._client.place_limit(candidate.symbol, side, entry_r, qty, position_side=pos_side)
+                bn_order_id = str(resp.get("orderId", ""))
 
             order = LiveOrder(
                 live_order_id  = live_order_id,
@@ -105,16 +128,18 @@ class LiveMirrorEngine:
                 quantity       = str(qty),
                 status         = "PENDING",
                 entry_order_id = bn_order_id,
-                sl_order_id    = None,
-                tp_order_id    = None,
+                sl_order_id    = sl_order_id,
+                tp_order_id    = tp_order_id,
                 created_at     = now,
                 updated_at     = now,
                 reject_reason  = None,
             )
             self._repo.save(order)
             self._event(live_order_id, candidate.signal_id, "PLACED",
-                        {"entry_order_id": bn_order_id, "qty": str(qty), "leverage": leverage})
-            log.info("[Live] placed %s %s %s qty=%s lev=%sx", live_order_id, candidate.symbol, side, qty, leverage)
+                        {"entry_order_id": bn_order_id, "qty": str(qty), "leverage": leverage,
+                         "sl_order_id": sl_order_id, "tp_order_id": tp_order_id, "otoco": otoco_ok})
+            log.info("[Live] placed %s %s %s qty=%s lev=%sx otoco=%s",
+                     live_order_id, candidate.symbol, side, qty, leverage, otoco_ok)
             return PlaceResult(ok=True, live_order_id=live_order_id)
 
         except BinanceFuturesError as exc:
@@ -157,6 +182,26 @@ class LiveMirrorEngine:
         if status == "FILLED":
             qty = Decimal(str(bn.get("executedQty", order.quantity)))
             avg_price = Decimal(str(bn.get("avgPrice", order.entry)))
+
+            # OTOCO order: SL/TP already placed at order time — just update status
+            if order.sl_order_id and order.tp_order_id:
+                self._repo.update_status(order.live_order_id, "FILLED")
+                self._event(order.live_order_id, order.signal_id, "FILLED",
+                            {"avg_price": str(avg_price), "qty": str(qty)})
+                self._notify(
+                    f"[Live] ✅ 入场成交 (OTOCO)\n"
+                    f"━━━━━━━━━━━━━\n"
+                    f"{order.symbol}  {order.direction}\n"
+                    f"成交价  {avg_price}\n"
+                    f"数量    {qty}\n"
+                    f"SL      {order.sl}  ✅\n"
+                    f"TP      {order.tp}  ✅"
+                )
+                log.info("[Live] OTOCO entry filled %s, sl=%s tp=%s (pre-attached)",
+                         order.live_order_id, order.sl_order_id, order.tp_order_id)
+                return True
+
+            # Plain LIMIT order: attach SL/TP now
             sl_id = self._attach_sl_with_retry(order, qty)
             tp_id = self._attach_tp_with_retry(order, qty)
             self._repo.update_status(order.live_order_id, "FILLED", sl_order_id=sl_id, tp_order_id=tp_id)
@@ -225,9 +270,11 @@ class LiveMirrorEngine:
                     updated = True
                 else:
                     self._notify(
-                        f"[Live] 🚨 止损补挂失败！请手动处理！\n"
-                        f"{order.symbol}  {order.direction}\n"
-                        f"live_order_id: {order.live_order_id}"
+                        f"[Live] 🚨 止损自动补挂失败（该币种不支持独立止损单）\n"
+                        f"{order.symbol}  {order.direction}  SL @ {order.sl}\n"
+                        f"live_order_id: {order.live_order_id}\n"
+                        f"👉 请在 Binance App → 持仓 → 该仓位右侧 TP/SL 按钮手动设置\n"
+                        f"    止损: {order.sl}  止盈: {order.tp}"
                     )
 
             if needs_tp:
