@@ -193,7 +193,7 @@ if __name__ == "__main__":
         dedup_hours=24,
         max_open_orders=10,
         live_mirror=live_mirror,
-        live_sync_interval=timedelta(minutes=int(os.environ.get("LIVE_SYNC_INTERVAL_MIN", "15"))),
+        live_sync_interval=timedelta(minutes=int(os.environ.get("LIVE_SYNC_INTERVAL_MIN", "3"))),
         live_report_interval=timedelta(minutes=int(os.environ.get("LIVE_REPORT_INTERVAL_MIN", "60"))),
     )
     _log.info("[startup] V3 tasks: %s", [t.event_type for t in tasks])

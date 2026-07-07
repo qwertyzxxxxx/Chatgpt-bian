@@ -63,7 +63,7 @@ def build_v3_tasks(
     dedup_hours: int = 24,
     max_open_orders: int = 5,
     live_mirror: LiveMirrorEngine | None = None,
-    live_sync_interval: timedelta = timedelta(minutes=15),
+    live_sync_interval: timedelta = timedelta(minutes=3),
     live_report_interval: timedelta = timedelta(hours=1),
 ) -> tuple[RunnerTask, ...]:
     """Bootstrap V3 repos (PostgreSQL) and return runner tasks."""

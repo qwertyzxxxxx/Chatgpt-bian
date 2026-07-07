@@ -3,16 +3,17 @@
 Flow per signal:
   1. try_place(candidate) — risk check → set leverage → place LIMIT entry
   2. Return PlaceResult(ok, reason) used to prefix Telegram message
-  3. Sync task (every 15 min):
-       PENDING order: check if entry filled → if yes, place SL + TP
+  3. Sync task (every 3 min):
+       PENDING order: check if entry filled → if yes, place SL + TP (with retry)
        FILLED order:  check if SL/TP triggered → close DB record
-       Naked position check: alert if FILLED with no SL
+       Naked position check: re-attach SL/TP using real Binance position qty
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -156,20 +157,25 @@ class LiveMirrorEngine:
         if status == "FILLED":
             qty = Decimal(str(bn.get("executedQty", order.quantity)))
             avg_price = Decimal(str(bn.get("avgPrice", order.entry)))
-            sl_id = self._attach_sl(order, qty)
-            tp_id = self._attach_tp(order, qty)
+            sl_id = self._attach_sl_with_retry(order, qty)
+            tp_id = self._attach_tp_with_retry(order, qty)
             self._repo.update_status(order.live_order_id, "FILLED", sl_order_id=sl_id, tp_order_id=tp_id)
             self._event(order.live_order_id, order.signal_id, "FILLED",
                         {"avg_price": str(avg_price), "qty": str(qty)})
+            sl_status = sl_id or "❌失败"
+            tp_status = tp_id or "❌失败"
             self._notify(
                 f"[Live] ✅ 入场成交\n"
                 f"━━━━━━━━━━━━━\n"
                 f"{order.symbol}  {order.direction}\n"
                 f"成交价  {avg_price}\n"
                 f"数量    {qty}\n"
-                f"SL      {order.sl}  (单号: {sl_id or '失败'})\n"
-                f"TP      {order.tp}  (单号: {tp_id or '失败'})"
+                f"SL      {order.sl}  (单号: {sl_status})\n"
+                f"TP      {order.tp}  (单号: {tp_status})"
             )
+            if not sl_id:
+                log.error("[Live] SL attachment FAILED after 3 retries for %s %s",
+                          order.live_order_id, order.symbol)
             log.info("[Live] entry filled %s, sl=%s tp=%s", order.live_order_id, sl_id, tp_id)
             return True
         elif status in ("CANCELED", "EXPIRED", "REJECTED"):
@@ -180,20 +186,58 @@ class LiveMirrorEngine:
 
     def _sync_filled(self, order: LiveOrder) -> bool:
         updated = False
-        if order.sl_order_id is None:
-            log.warning("[Live] NAKED POSITION detected: %s %s", order.live_order_id, order.symbol)
-            self._notify(
-                f"[Live] ⚠️ 裸仓警告！无止损单！\n"
-                f"{order.symbol}  {order.direction}\n"
-                f"live_order_id: {order.live_order_id}\n"
-                f"请立即处理！"
-            )
-            qty = Decimal(order.quantity)
-            sl_id = self._attach_sl(order, qty)
-            if sl_id:
-                self._repo.update_status(order.live_order_id, "FILLED", sl_order_id=sl_id)
-                self._event(order.live_order_id, order.signal_id, "NAKED_SL_ATTACHED", {"sl_id": sl_id})
-                updated = True
+        needs_sl = order.sl_order_id is None
+        needs_tp = order.tp_order_id is None
+
+        if needs_sl or needs_tp:
+            # Query actual position from Binance for real qty (not stored qty)
+            real_qty: Decimal | None = None
+            try:
+                positions = self._client.get_positions()
+                for p in positions:
+                    if p.get("symbol") == order.symbol:
+                        amt = Decimal(str(p.get("positionAmt", "0")))
+                        real_qty = abs(amt) if amt != 0 else None
+                        break
+            except Exception as exc:
+                log.warning("[Live] get_positions failed during naked check %s: %s",
+                            order.live_order_id, exc)
+            qty = real_qty if real_qty and real_qty > 0 else Decimal(order.quantity)
+
+            if needs_sl:
+                log.warning("[Live] NAKED POSITION detected: %s %s", order.live_order_id, order.symbol)
+                self._notify(
+                    f"[Live] ⚠️ 裸仓警告！无止损单！\n"
+                    f"{order.symbol}  {order.direction}\n"
+                    f"live_order_id: {order.live_order_id}\n"
+                    f"正在自动补挂止损..."
+                )
+                sl_id = self._attach_sl_with_retry(order, qty)
+                if sl_id:
+                    self._repo.update_status(order.live_order_id, "FILLED", sl_order_id=sl_id)
+                    self._event(order.live_order_id, order.signal_id, "NAKED_SL_ATTACHED",
+                                {"sl_id": sl_id, "qty": str(qty)})
+                    self._notify(
+                        f"[Live] ✅ 止损已补挂\n"
+                        f"{order.symbol}  SL @ {order.sl}\n"
+                        f"单号: {sl_id}"
+                    )
+                    updated = True
+                else:
+                    self._notify(
+                        f"[Live] 🚨 止损补挂失败！请手动处理！\n"
+                        f"{order.symbol}  {order.direction}\n"
+                        f"live_order_id: {order.live_order_id}"
+                    )
+
+            if needs_tp:
+                tp_id = self._attach_tp_with_retry(order, qty)
+                if tp_id:
+                    self._repo.update_status(order.live_order_id, "FILLED", tp_order_id=tp_id)
+                    self._event(order.live_order_id, order.signal_id, "NAKED_TP_ATTACHED",
+                                {"tp_id": tp_id, "qty": str(qty)})
+                    updated = True
+
             return updated
 
         closed_by: str | None = None
@@ -228,6 +272,31 @@ class LiveMirrorEngine:
         return False
 
     # ── SL / TP ───────────────────────────────────────────────────────────────
+
+    _ATTACH_RETRIES = 3
+    _ATTACH_RETRY_DELAY = 2.0  # seconds between retries
+
+    def _attach_sl_with_retry(self, order: LiveOrder, qty: Decimal) -> str | None:
+        for attempt in range(1, self._ATTACH_RETRIES + 1):
+            result = self._attach_sl(order, qty)
+            if result:
+                return result
+            if attempt < self._ATTACH_RETRIES:
+                log.warning("[Live] SL retry %d/%d for %s", attempt, self._ATTACH_RETRIES,
+                            order.live_order_id)
+                time.sleep(self._ATTACH_RETRY_DELAY)
+        return None
+
+    def _attach_tp_with_retry(self, order: LiveOrder, qty: Decimal) -> str | None:
+        for attempt in range(1, self._ATTACH_RETRIES + 1):
+            result = self._attach_tp(order, qty)
+            if result:
+                return result
+            if attempt < self._ATTACH_RETRIES:
+                log.warning("[Live] TP retry %d/%d for %s", attempt, self._ATTACH_RETRIES,
+                            order.live_order_id)
+                time.sleep(self._ATTACH_RETRY_DELAY)
+        return None
 
     def _attach_sl(self, order: LiveOrder, qty: Decimal) -> str | None:
         try:
