@@ -61,20 +61,22 @@ class HotlistWatcher:
             and not item.base_asset.endswith(self._universe_config.leveraged_token_suffixes)
         }
         all_tickers = [t for t in self._client.tickers_24h() if t.symbol in contracts]
-        top_movers = sorted(all_tickers, key=lambda t: -abs(t.price_change_percent))[:5]
-        log.info(
-            "[V3/Hotlist] universe=%d tickers fetched=%d threshold=%.0f%% top_movers=%s",
-            len(contracts),
-            len(all_tickers),
-            self._policy.min_move_pct,
-            [(t.symbol, f"{float(t.price_change_percent):+.1f}%", f"vol={float(t.quote_volume)/1e6:.1f}M") for t in top_movers],
-        )
         eligible = [
             ticker
             for ticker in all_tickers
             if abs(ticker.price_change_percent) >= self._policy.min_move_pct
             and ticker.quote_volume >= self._policy.min_quote_volume
         ]
+        top_all = sorted(all_tickers, key=lambda t: -abs(t.price_change_percent))[:15]
+        log.info(
+            "[V3/Hotlist] universe=%d fetched=%d eligible=%d(move>=%.0f%%+vol>=%.0fM) top15=%s",
+            len(contracts),
+            len(all_tickers),
+            len(eligible),
+            self._policy.min_move_pct,
+            self._policy.min_quote_volume / 1_000_000,
+            [(t.symbol, f"{float(t.price_change_percent):+.1f}%", f"{float(t.quote_volume)/1e6:.1f}M") for t in top_all],
+        )
         gainers = sorted(
             (item for item in eligible if item.price_change_percent > 0),
             key=lambda item: (-item.price_change_percent, -item.quote_volume, item.symbol),
