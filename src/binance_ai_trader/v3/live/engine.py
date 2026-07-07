@@ -400,12 +400,18 @@ class LiveMirrorEngine:
 
     # ── Risk checks ───────────────────────────────────────────────────────────
 
+    _LIVE_MAX_STOP_PCT = Decimal("8")  # live orders only: SL must be ≤8% from entry
+
     def _risk_check(self, candidate: V3Candidate) -> str | None:
         entry = Decimal(candidate.entry)
         sl    = Decimal(candidate.sl)
 
         if not candidate.entry or not candidate.sl or not candidate.tp1:
             return "缺少 entry/SL/TP"
+
+        sl_pct = abs(entry - sl) / entry * 100
+        if sl_pct > self._LIVE_MAX_STOP_PCT:
+            return f"止损距离{sl_pct:.1f}%>{self._LIVE_MAX_STOP_PCT}%(实盘限制)"
 
         try:
             open_orders = self._client.get_open_orders()
