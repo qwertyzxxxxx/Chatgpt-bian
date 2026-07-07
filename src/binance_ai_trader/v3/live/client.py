@@ -188,18 +188,34 @@ class BinanceFuturesClient:
         info = self.get_symbol_info(symbol)
         return int(info.get("pricePrecision", 4))
 
+    def get_tick_size(self, symbol: str) -> Decimal:
+        """Return the PRICE_FILTER tickSize for a symbol (authoritative for rounding)."""
+        info = self.get_symbol_info(symbol)
+        for f in info.get("filters", []):
+            if f.get("filterType") == "PRICE_FILTER":
+                return Decimal(str(f["tickSize"]))
+        prec = int(info.get("pricePrecision", 4))
+        return Decimal(10) ** -prec
+
+    def get_step_size(self, symbol: str) -> Decimal:
+        """Return the LOT_SIZE stepSize for a symbol (authoritative for qty rounding)."""
+        info = self.get_symbol_info(symbol)
+        for f in info.get("filters", []):
+            if f.get("filterType") == "LOT_SIZE":
+                return Decimal(str(f["stepSize"]))
+        prec = int(info.get("quantityPrecision", 3))
+        return Decimal(10) ** -prec
+
     def get_ticker_price(self, symbol: str) -> Decimal:
         data = self._get("/fapi/v1/ticker/price", {"symbol": symbol}, signed=False)
         return Decimal(str(data.get("price", "0")))  # type: ignore[union-attr]
 
     def round_quantity(self, symbol: str, qty: Decimal) -> Decimal:
-        prec = self.get_quantity_precision(symbol)
-        step = Decimal(10) ** -prec
+        step = self.get_step_size(symbol)
         return (qty / step).to_integral_value(rounding=ROUND_DOWN) * step
 
     def round_price(self, symbol: str, price: Decimal) -> Decimal:
-        prec = self.get_price_precision(symbol)
-        step = Decimal(10) ** -prec
+        step = self.get_tick_size(symbol)
         return (price / step).to_integral_value(rounding=ROUND_DOWN) * step
 
     # ── Orders ────────────────────────────────────────────────────────────────
