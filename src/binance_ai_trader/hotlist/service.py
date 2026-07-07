@@ -57,11 +57,19 @@ class HotlistWatcher:
             and item.symbol not in self._universe_config.denied_symbols
             and not item.base_asset.endswith(self._universe_config.leveraged_token_suffixes)
         }
+        all_tickers = [t for t in self._client.tickers_24h() if t.symbol in contracts]
+        top_movers = sorted(all_tickers, key=lambda t: -abs(t.price_change_percent))[:5]
+        log.info(
+            "[V3/Hotlist] universe=%d tickers fetched=%d threshold=%.0f%% top_movers=%s",
+            len(contracts),
+            len(all_tickers),
+            self._policy.min_move_pct,
+            [(t.symbol, f"{float(t.price_change_percent):+.1f}%", f"vol={float(t.quote_volume)/1e6:.1f}M") for t in top_movers],
+        )
         eligible = [
             ticker
-            for ticker in self._client.tickers_24h()
-            if ticker.symbol in contracts
-            and abs(ticker.price_change_percent) >= self._policy.min_move_pct
+            for ticker in all_tickers
+            if abs(ticker.price_change_percent) >= self._policy.min_move_pct
             and ticker.quote_volume >= self._policy.min_quote_volume
         ]
         gainers = sorted(
