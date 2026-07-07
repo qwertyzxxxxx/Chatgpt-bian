@@ -247,7 +247,16 @@ class LiveMirrorEngine:
             except Exception as exc:
                 log.warning("[Live] get_positions failed during naked check %s: %s",
                             order.live_order_id, exc)
-            qty = real_qty if real_qty and real_qty > 0 else Decimal(order.quantity)
+            # If position no longer exists on Binance, it was closed externally — mark CLOSED
+            if real_qty is None:
+                log.info("[Live] %s %s has no open position on Binance — marking CLOSED",
+                         order.live_order_id, order.symbol)
+                self._repo.update_status(order.live_order_id, "CLOSED")
+                self._event(order.live_order_id, order.signal_id, "CLOSED_EXTERNAL",
+                            {"reason": "no_open_position"})
+                return True
+
+            qty = real_qty
 
             if needs_sl:
                 log.warning("[Live] NAKED POSITION detected: %s %s", order.live_order_id, order.symbol)
