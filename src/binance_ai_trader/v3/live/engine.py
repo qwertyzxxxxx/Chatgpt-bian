@@ -244,14 +244,26 @@ class LiveMirrorEngine:
         return decision.reason
 
     def _cancel_binance_order(self, old: LiveOrder | None) -> None:
-        if old is None or not old.entry_order_id:
+        if old is None:
             return
-        try:
-            self._client.cancel_order(old.symbol, old.entry_order_id)
-        except BinanceFuturesError as exc:
-            log.warning("[Live] cancel old order failed %s: %s", old.live_order_id, exc)
-        except Exception:
-            log.exception("[Live] unexpected error canceling old order %s", old.live_order_id)
+        if old.entry_order_id:
+            try:
+                self._client.cancel_order(old.symbol, old.entry_order_id)
+            except BinanceFuturesError as exc:
+                log.warning("[Live] cancel old order failed %s: %s", old.live_order_id, exc)
+            except Exception:
+                log.exception("[Live] unexpected error canceling old order %s", old.live_order_id)
+        # SL/TP are separate Algo orders (see client.place_entry_with_sltp) — cancel
+        # those too so they don't linger as dangling conditional orders.
+        for algo_id in (old.sl_order_id, old.tp_order_id):
+            if not algo_id:
+                continue
+            try:
+                self._client.cancel_algo_order(old.symbol, algo_id)
+            except BinanceFuturesError as exc:
+                log.warning("[Live] cancel old algo order failed %s: %s", old.live_order_id, exc)
+            except Exception:
+                log.exception("[Live] unexpected error canceling old algo order %s", old.live_order_id)
 
     def _conflict_event(
         self, old: LiveOrder | None, candidate: V3Candidate, action: str, reason: str
@@ -463,7 +475,7 @@ class LiveMirrorEngine:
 
         if order.sl_order_id:
             try:
-                sl = self._client.get_order(order.symbol, order.sl_order_id)
+                sl = self._client.get_algo_order(order.symbol, order.sl_order_id)
                 if sl.get("status") == "FILLED":
                     closed_by = "CLOSED_SL"
             except Exception:
@@ -471,7 +483,7 @@ class LiveMirrorEngine:
 
         if closed_by is None and order.tp_order_id:
             try:
-                tp = self._client.get_order(order.symbol, order.tp_order_id)
+                tp = self._client.get_algo_order(order.symbol, order.tp_order_id)
                 if tp.get("status") == "FILLED":
                     closed_by = "CLOSED_TP"
             except Exception:
@@ -525,7 +537,7 @@ class LiveMirrorEngine:
             resp = self._client.place_stop_market(
                 order.symbol, close_side, sl_price_r, qty, position_side=order.direction
             )
-            sl_id = str(resp.get("orderId", ""))
+            sl_id = str(resp.get("algoId", resp.get("orderId", "")))
             self._event(order.live_order_id, order.signal_id, "SL_PLACED",
                         {"sl_order_id": sl_id, "stop_price": str(sl_price_r)})
             return sl_id
@@ -542,7 +554,7 @@ class LiveMirrorEngine:
             resp = self._client.place_take_profit_market(
                 order.symbol, close_side, tp_price_r, qty, position_side=order.direction
             )
-            tp_id = str(resp.get("orderId", ""))
+            tp_id = str(resp.get("algoId", resp.get("orderId", "")))
             self._event(order.live_order_id, order.signal_id, "TP_PLACED",
                         {"tp_order_id": tp_id, "stop_price": str(tp_price_r)})
             return tp_id

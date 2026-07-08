@@ -50,8 +50,13 @@ class BinanceFuturesClient:
 
     def _parse(self, raw: bytes) -> object:
         data = json.loads(raw)
-        if isinstance(data, dict) and "code" in data and data.get("code", 0) < 0:
-            raise BinanceFuturesError(data["code"], data.get("msg", "unknown"))
+        if isinstance(data, dict) and "code" in data:
+            try:
+                code = int(data.get("code", 0))
+            except (TypeError, ValueError):
+                code = 0
+            if code < 0:
+                raise BinanceFuturesError(code, data.get("msg", "unknown"))
         return data
 
     def _get(self, path: str, params: dict | None = None, signed: bool = True) -> object:
@@ -244,7 +249,14 @@ class BinanceFuturesClient:
         sl_price: Decimal,
         position_side: str = "BOTH",
     ) -> dict:
-        """Place entry LIMIT + SL + TP via batchOrders (3 independent orders in one call).
+        """Place entry LIMIT, then attach SL + TP as Algo (conditional) orders.
+
+        Binance migrated STOP_MARKET/TAKE_PROFIT_MARKET off /fapi/v1/order and
+        /fapi/v1/batchOrders to the dedicated Algo Order API on 2025-12-09
+        (error -4120 "...Please use the Algo Order API endpoints instead").
+        The algo endpoint has no batch variant, so SL/TP are placed as two
+        separate calls right after the entry order (not truly atomic, but the
+        window between them is milliseconds).
 
         Returns dict with entry_order_id, tp_order_id, sl_order_id.
         Raises BinanceFuturesError only if the ENTRY order itself fails.
@@ -260,55 +272,25 @@ class BinanceFuturesClient:
             "quantity":     str(quantity),
             "timeInForce":  "GTC",
         }
-        sl_order: dict = {
-            "symbol":    symbol,
-            "side":      close_side,
-            "type":      "STOP_MARKET",
-            "stopPrice": str(sl_price),
-            "closePosition": "true",
-            "workingType": "MARK_PRICE",
-        }
-        tp_order: dict = {
-            "symbol":    symbol,
-            "side":      close_side,
-            "type":      "TAKE_PROFIT_MARKET",
-            "stopPrice": str(tp_price),
-            "closePosition": "true",
-            "workingType": "MARK_PRICE",
-        }
         if position_side != "BOTH":
             entry_order["positionSide"] = position_side
-            sl_order["positionSide"]    = position_side
-            tp_order["positionSide"]    = position_side
-            # In hedge mode closePosition=true is not allowed; use quantity instead
-            sl_order.pop("closePosition")
-            tp_order.pop("closePosition")
-            sl_order["quantity"] = str(quantity)
-            tp_order["quantity"] = str(quantity)
         else:
             entry_order["reduceOnly"] = "false"
 
-        batch = json.dumps([entry_order, sl_order, tp_order], separators=(",", ":"))
-        params: dict = {"batchOrders": batch}
-        results: list = self._post("/fapi/v1/batchOrders", params)  # type: ignore[assignment]
+        entry_resp = self._post("/fapi/v1/order", entry_order)  # type: ignore[assignment]
+        entry_id = str(entry_resp.get("orderId", ""))  # type: ignore[union-attr]
 
-        entry_id = sl_id = tp_id = ""
-        for i, r in enumerate(results):
-            if not isinstance(r, dict):
-                continue
-            if r.get("code", 0) < 0:
-                err_msg = f"batchOrders[{i}] failed: {r.get('msg', r)}"
-                if i == 0:
-                    raise BinanceFuturesError(r["code"], err_msg)
-                log.warning("[client] %s %s — SL/TP will be attached by sync fallback", symbol, err_msg)
-                continue
-            oid = str(r.get("orderId", ""))
-            if i == 0:
-                entry_id = oid
-            elif i == 1:
-                sl_id = oid
-            elif i == 2:
-                tp_id = oid
+        sl_id = tp_id = ""
+        try:
+            sl_resp = self.place_stop_market(symbol, close_side, sl_price, quantity, position_side=position_side)
+            sl_id = str(sl_resp.get("algoId", sl_resp.get("orderId", "")))
+        except BinanceFuturesError as exc:
+            log.warning("[client] %s SL algo order failed: %s — sync fallback will retry", symbol, exc)
+        try:
+            tp_resp = self.place_take_profit_market(symbol, close_side, tp_price, quantity, position_side=position_side)
+            tp_id = str(tp_resp.get("algoId", tp_resp.get("orderId", "")))
+        except BinanceFuturesError as exc:
+            log.warning("[client] %s TP algo order failed: %s — sync fallback will retry", symbol, exc)
 
         return {
             "entry_order_id": entry_id,
@@ -316,110 +298,62 @@ class BinanceFuturesClient:
             "sl_order_id":    sl_id,
         }
 
+    def _place_algo_conditional(
+        self, symbol: str, side: str, order_type: str, stop_price: Decimal, quantity: Decimal,
+        position_side: str = "BOTH",
+    ) -> dict:
+        """Place a STOP_MARKET / TAKE_PROFIT_MARKET conditional order via the
+        Algo Order API (POST /fapi/v1/algoOrder, algoType=CONDITIONAL).
+
+        Required since Binance's 2025-12-09 migration — the legacy
+        /fapi/v1/order path now rejects these order types with -4120."""
+        params: dict = {
+            "symbol":       symbol,
+            "side":         side,
+            "positionSide": position_side,
+            "type":         order_type,
+            "algoType":     "CONDITIONAL",
+            "triggerPrice": str(stop_price),
+            "quantity":     str(quantity),
+            "workingType":  "MARK_PRICE",
+        }
+        if position_side == "BOTH":
+            params["reduceOnly"] = "true"
+        return self._post("/fapi/v1/algoOrder", params)  # type: ignore[return-value]
+
     def place_stop_market(
         self, symbol: str, side: str, stop_price: Decimal, quantity: Decimal,
         position_side: str = "BOTH",
     ) -> dict:
-        """Place STOP_MARKET.  Falls back to closePosition=true on -4120
-        (some symbols require it via the algo/conditional order path)."""
-        params: dict = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
-            "type": "STOP_MARKET",
-            "stopPrice": str(stop_price),
-            "quantity": str(quantity),
-        }
-        if position_side == "BOTH":
-            params["reduceOnly"] = "true"
-        try:
-            return self._post("/fapi/v1/order", params)  # type: ignore[return-value]
-        except BinanceFuturesError as exc:
-            if exc.code != -4120:
-                raise
-        # -4120 attempt 2: closePosition=true (no qty)
-        log.warning("[client] STOP_MARKET qty-mode rejected for %s (-4120), retrying with closePosition=true", symbol)
-        fallback2: dict = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
-            "type": "STOP_MARKET",
-            "stopPrice": str(stop_price),
-            "closePosition": "true",
-            "workingType": "MARK_PRICE",
-            "priceProtect": "true",
-        }
-        try:
-            return self._post("/fapi/v1/order", fallback2)  # type: ignore[return-value]
-        except BinanceFuturesError as exc2:
-            if exc2.code != -4120:
-                raise
-        # -4120 attempt 3: MARK_PRICE + qty (no closePosition)
-        log.warning("[client] STOP_MARKET closePosition-mode rejected for %s (-4120), retrying with MARK_PRICE+qty", symbol)
-        fallback3: dict = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
-            "type": "STOP_MARKET",
-            "stopPrice": str(stop_price),
-            "quantity": str(quantity),
-            "workingType": "MARK_PRICE",
-            "priceProtect": "true",
-        }
-        if position_side == "BOTH":
-            fallback3["reduceOnly"] = "true"
-        return self._post("/fapi/v1/order", fallback3)  # type: ignore[return-value]
+        """Place a STOP_MARKET stop-loss via the Algo Order API."""
+        return self._place_algo_conditional(symbol, side, "STOP_MARKET", stop_price, quantity, position_side)
 
     def place_take_profit_market(
         self, symbol: str, side: str, stop_price: Decimal, quantity: Decimal,
         position_side: str = "BOTH",
     ) -> dict:
-        """Place TAKE_PROFIT_MARKET.  Falls back to closePosition / MARK_PRICE on -4120."""
-        params: dict = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
-            "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": str(stop_price),
-            "quantity": str(quantity),
-        }
-        if position_side == "BOTH":
-            params["reduceOnly"] = "true"
+        """Place a TAKE_PROFIT_MARKET take-profit via the Algo Order API."""
+        return self._place_algo_conditional(symbol, side, "TAKE_PROFIT_MARKET", stop_price, quantity, position_side)
+
+    def get_algo_order(self, symbol: str, algo_id: str) -> dict:
+        """Query a single algo (conditional SL/TP) order by algoId.
+
+        Returns a dict with a normalized "status" key ("FILLED" once
+        triggered/executed, else the raw algoStatus) so callers can treat it
+        like the legacy get_order() response.
+        """
         try:
-            return self._post("/fapi/v1/order", params)  # type: ignore[return-value]
-        except BinanceFuturesError as exc:
-            if exc.code != -4120:
-                raise
-        log.warning("[client] TAKE_PROFIT_MARKET qty-mode rejected for %s (-4120), retrying with closePosition=true", symbol)
-        fallback2: dict = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
-            "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": str(stop_price),
-            "closePosition": "true",
-            "workingType": "MARK_PRICE",
-            "priceProtect": "true",
-        }
-        try:
-            return self._post("/fapi/v1/order", fallback2)  # type: ignore[return-value]
-        except BinanceFuturesError as exc2:
-            if exc2.code != -4120:
-                raise
-        log.warning("[client] TAKE_PROFIT_MARKET closePosition-mode rejected for %s (-4120), retrying with MARK_PRICE+qty", symbol)
-        fallback3: dict = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
-            "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": str(stop_price),
-            "quantity": str(quantity),
-            "workingType": "MARK_PRICE",
-            "priceProtect": "true",
-        }
-        if position_side == "BOTH":
-            fallback3["reduceOnly"] = "true"
-        return self._post("/fapi/v1/order", fallback3)  # type: ignore[return-value]
+            resp = self._get("/fapi/v1/algoOrder", {"symbol": symbol, "algoId": algo_id})
+        except BinanceFuturesError:
+            raise
+        if isinstance(resp, dict):
+            algo_status = resp.get("algoStatus", "")
+            actual_order_id = resp.get("actualOrderId", "")
+            resp["status"] = "FILLED" if (algo_status == "FILLED" or actual_order_id) else algo_status
+        return resp  # type: ignore[return-value]
+
+    def cancel_algo_order(self, symbol: str, algo_id: str) -> dict:
+        return self._delete("/fapi/v1/algoOrder", {"symbol": symbol, "algoId": algo_id})  # type: ignore[return-value]
 
     def cancel_order(self, symbol: str, order_id: str) -> dict:
         return self._delete("/fapi/v1/order", {"symbol": symbol, "orderId": order_id})  # type: ignore[return-value]
