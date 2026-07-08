@@ -221,11 +221,10 @@ def _cmd_debug(universe_config) -> str:
 
         if blocked:
             lines.append("")
-            lines.append(f"[被风控拦截 — 最近10条, 止损距离]")
+            lines.append(f"[被风控拦截 — 最近10条, 实际拦截原因]")
             for c in sorted(blocked, key=lambda x: x.created_at or "", reverse=True)[:10]:
-                stop_pct = c.stop_pct or 0.0
-                limit = 20.0 if c.strategy_id == "hotlist_momentum_v3" else 5.0
-                lines.append(f"  {c.symbol:<14} {c.direction:<5} stop={stop_pct:.1f}%  限={limit:.0f}%  {_ago(c.created_at)}")
+                reason = c.reason or "未知原因"
+                lines.append(f"  {c.symbol:<14} {c.direction:<5} {reason}  {_ago(c.created_at)}")
         else:
             lines.append("")
             lines.append("过去24h 无被拦截记录（可能扫描未生成候选）")

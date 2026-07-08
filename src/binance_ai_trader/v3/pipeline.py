@@ -125,7 +125,9 @@ class V3Pipeline:
         if not risk_dec.allowed:
             log.info("[V3] BLOCKED(risk) %s/%s: %s", inp.symbol, inp.direction, risk_dec.reason)
             signal_id = self._candidate_repo.generate_signal_id(inp.strategy_id, now=now)
-            self._candidate_repo.save(inp, signal_id, status="BLOCKED")
+            self._candidate_repo.save(
+                inp, signal_id, status="BLOCKED", reason_override=risk_dec.reason
+            )
             result.blocked_risk += 1
             return
 
@@ -139,7 +141,9 @@ class V3Pipeline:
         if dedup_dec.is_dup:
             log.debug("[V3] BLOCKED(dedup) %s/%s: %s", inp.symbol, inp.direction, dedup_dec.reason)
             signal_id = self._candidate_repo.generate_signal_id(inp.strategy_id, now=now)
-            self._candidate_repo.save(inp, signal_id, status="DEDUP")
+            self._candidate_repo.save(
+                inp, signal_id, status="DEDUP", reason_override=dedup_dec.reason
+            )
             result.blocked_dedup += 1
             return
 

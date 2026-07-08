@@ -119,7 +119,13 @@ class V3CandidateRepository:
             conn.close()
         return f"{prefix}-{date_str}-{seq:06d}"
 
-    def save(self, inp: CandidateInput, signal_id: str, status: str = "PENDING") -> V3Candidate:
+    def save(
+        self,
+        inp: CandidateInput,
+        signal_id: str,
+        status: str = "PENDING",
+        reason_override: str | None = None,
+    ) -> V3Candidate:
         now = datetime.now(UTC).isoformat(timespec="seconds")
         candidate = V3Candidate(
             signal_id=signal_id,
@@ -141,7 +147,7 @@ class V3CandidateRepository:
             ema20=inp.ema20,
             ema60=inp.ema60,
             market_regime=inp.market_regime,
-            reason=inp.reason,
+            reason=reason_override if reason_override is not None else inp.reason,
             status=status,
             repeat_count=0,
         )
