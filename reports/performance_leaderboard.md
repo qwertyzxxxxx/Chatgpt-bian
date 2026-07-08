@@ -1,6 +1,6 @@
 # Strategy Leaderboard
 
-_Generated: 2026-07-08 08:01 UTC_
+_Generated: 2026-07-08 10:27 UTC_
 
 | Rank | Strategy | Win Rate | Trades | Avg RR |
 |------|----------|----------|--------|--------|

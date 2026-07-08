@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 import psycopg2
 import psycopg2.extras
@@ -214,12 +215,39 @@ CREATE TABLE IF NOT EXISTS v3_scan_debug (
 """
 
 
+_CONNECT_MAX_ATTEMPTS = 4
+_CONNECT_BACKOFF_SECONDS = (0.5, 1.5, 3.0)
+
+
 def get_conn() -> psycopg2.extensions.connection:
-    """Return a new psycopg2 connection. Caller must close/commit."""
+    """Return a new psycopg2 connection. Caller must close/commit.
+
+    Retries transient connection failures (e.g. Neon "Control plane request
+    failed" cold-start/control-plane blips) with short backoff before giving
+    up, so a single flaky connect doesn't fail an entire scheduled task.
+    """
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL is not set — PostgreSQL not configured")
-    return psycopg2.connect(url)
+
+    last_err: Exception | None = None
+    for attempt in range(_CONNECT_MAX_ATTEMPTS):
+        try:
+            return psycopg2.connect(url, connect_timeout=10)
+        except psycopg2.OperationalError as exc:
+            last_err = exc
+            if attempt < _CONNECT_MAX_ATTEMPTS - 1:
+                delay = _CONNECT_BACKOFF_SECONDS[attempt]
+                log.warning(
+                    "[PG] connect attempt %d/%d failed (%s) — retrying in %.1fs",
+                    attempt + 1,
+                    _CONNECT_MAX_ATTEMPTS,
+                    exc,
+                    delay,
+                )
+                time.sleep(delay)
+    assert last_err is not None
+    raise last_err
 
 
 def init_schema() -> None:
