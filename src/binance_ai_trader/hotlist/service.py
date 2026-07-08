@@ -116,6 +116,29 @@ class HotlistWatcher:
                 break
         return tuple(plans)
 
+    def candidates_pool(self, limit: int = 15) -> tuple[HotlistCandidate, ...]:
+        """Top-N eligible candidates ranked by |24h move| — a ranking POOL only.
+
+        Callers that need quality-based selection (e.g. V3 strategy) should
+        compute full plans for the whole pool via `plan_all()` and re-rank by
+        their own criteria, instead of truncating on |24h move| alone.
+        """
+        return self.candidates()[:limit]
+
+    def plan_all(
+        self, candidates: tuple[HotlistCandidate, ...], now: datetime | None = None
+    ) -> tuple[HotlistEntryPlan, ...]:
+        """Compute entry/SL/TP plans for ALL given candidates — no early truncation."""
+        generated_at = (now or datetime.now(UTC)).astimezone(UTC)
+        plans = []
+        for candidate in candidates:
+            fifteen = self._client.klines(candidate.symbol, "15m", limit=60)
+            hourly = self._client.klines(candidate.symbol, "1h", limit=30)
+            if len(fifteen) < 21 or len(hourly) < 20:
+                continue
+            plans.append(self._plan(candidate, fifteen, hourly, generated_at))
+        return tuple(plans)
+
     def plan_candidate(
         self, candidate: HotlistCandidate, now: datetime | None = None
     ) -> HotlistEntryPlan | None:
@@ -150,6 +173,7 @@ class HotlistWatcher:
         above_ema = current >= hourly_ema
         trend_str = "上方" if above_ema else "下方"
         sentiment = _sentiment(candidate.direction, chg, volume_ratio, above_ema)
+        trend_aligned = above_ema if candidate.direction == "LONG" else not above_ema
         if candidate.direction == "LONG":
             entry = min(ema20, current - buffer)
             stop = min(swing_low, entry - atr14)
@@ -197,6 +221,7 @@ class HotlistWatcher:
             ),
             reason=reason,
             sentiment=sentiment,
+            trend_aligned=trend_aligned,
         )
 
 

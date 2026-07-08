@@ -11,7 +11,8 @@ Available commands:
   /status  — task health check (last run times, recent errors)
   /market  — live market snapshot (top movers + filter pass/fail)
   /debug   — deep diagnosis (why no signals? market or bug?)
-  /signals — last 10 pushed signals (V3 + V66)
+  /v4debug — V3 ranking diagnostic (pool/quality-sort/crowded-out symbols)
+  /signals — last 10 pushed signals (V3 + V66) incl. live order manager action
   /orders  — current open paper orders + last 5 closed
   /perf    — paper trading performance (V3 + V66)
   /v66     — V66 watchlist pool status
@@ -30,7 +31,7 @@ log = logging.getLogger(__name__)
 
 _POLL_INTERVAL = 3.0
 _COMMANDS = {
-    "/help", "/status", "/market", "/debug",
+    "/help", "/status", "/market", "/debug", "/v4debug",
     "/signals", "/orders", "/perf", "/v66",
 }
 
@@ -89,7 +90,8 @@ def _cmd_help() -> str:
         "/status  🩺 系统健康检查\n"
         "/market  📊 当前行情快照\n"
         "/debug   🔧 为何无信号（深度诊断）\n"
-        "/signals 📋 最近10条推送信号\n"
+        "/v4debug 🎯 V3排序诊断（候选池/质量排序/被挤掉币种）\n"
+        "/signals 📋 最近10条推送信号（含实盘订单管理动作）\n"
         "/orders  📂 当前模拟单 + 最近成交\n"
         "/perf    🏆 模拟盘绩效统计\n"
         "/v66     📡 V66 监控池状态\n"
@@ -258,6 +260,48 @@ def _cmd_debug(universe_config) -> str:
     return "\n".join(lines)
 
 
+def _cmd_v4debug() -> str:
+    from binance_ai_trader.v3.debug.repository import ScanDebugRepository
+
+    snap = ScanDebugRepository().load("hotlist_momentum_v3")
+    if snap is None:
+        return "🎯 V3排序诊断\n━━━━━━━━━━━━━━\n暂无数据（等待下次扫描）"
+
+    lines = ["🎯 V3排序诊断", "━━━━━━━━━━━━━━"]
+    lines.append(f"扫描时间: {_ago(snap.created_at)}")
+    lines.append(f"候选池(|24h涨跌|≥15%+量≥500万, 取前15): {snap.pool_size} 个")
+    lines.append(f"成功计算入场/止损/止盈: {snap.computed_count} 个")
+    lines.append(f"其中可实盘(止损≤8%): {snap.live_eligible_count} 个")
+
+    lines.append("")
+    lines.append("[质量排序 Top10 — 实盘优先>止损小>成交额大>1h趋势一致>涨跌幅兜底]")
+    if not snap.top10:
+        lines.append("  （无合格候选）")
+    for i, row in enumerate(snap.top10, 1):
+        mark = "✅入选" if row.get("selected") else "  "
+        live = "🟢实盘可" if row.get("live_eligible") else "⚪仅纸面"
+        trend = "↗趋势一致" if row.get("trend_aligned") else "↘趋势背离"
+        lines.append(
+            f"{i:2d}. {mark} {row['symbol']:<14} {row['direction']:<5} "
+            f"止损:{row['stop_pct']:.1f}%  {live}  {trend}  "
+            f"24h:{row['change_24h']:+.1f}%  量:{_fmt_vol(row['quote_volume'])}"
+        )
+
+    lines.append("")
+    lines.append("[被极端涨跌幅挤掉的币种 — 质量尚可但未进最终3席]")
+    if not snap.crowded_out:
+        lines.append("  （无 — 候选池全部进入最终名单，或候选不足3个）")
+    else:
+        for row in snap.crowded_out:
+            live = "🟢实盘可" if row.get("live_eligible") else "⚪仅纸面"
+            lines.append(
+                f"  {row['symbol']:<14} {row['direction']:<5} "
+                f"止损:{row['stop_pct']:.1f}%  {live}  24h:{row['change_24h']:+.1f}%"
+            )
+
+    return "\n".join(lines)
+
+
 def _cmd_signals() -> str:
     from binance_ai_trader.v3.candidates.repository import V3CandidateRepository
     repo = V3CandidateRepository(None)
@@ -269,16 +313,47 @@ def _cmd_signals() -> str:
     if not pushed:
         return "📋 最近72h 无推送信号"
 
+    from binance_ai_trader.v3.live.repository import LiveOrderRepository
+    live_repo = LiveOrderRepository()
+
+    _ACTION_LABEL = {
+        "PENDING": "🟡实盘挂单中",
+        "FILLED": "🟢实盘已成交",
+        "CLOSED_TP": "✅实盘止盈平仓",
+        "CLOSED_SL": "❌实盘止损平仓",
+        "CANCELED": "⚪实盘已撤销",
+        "REJECTED": "🚫实盘被拒",
+        "REPLACED": "🔁实盘旧单已替换",
+        "CANCELED_EXPIRED": "⏰实盘挂单超时撤销",
+        "CANCELED_CONFLICT": "⚠️实盘因冲突撤销",
+        "IGNORED_DUPLICATE": "🔂实盘忽略(重复信号)",
+        "IGNORED_WORSE_ENTRY": "🔂实盘忽略(入场价更差)",
+        "DIRECTION_CONFLICT": "⚠️实盘方向冲突",
+        "POSITION_EXISTS_SAME_SIDE": "⚠️实盘已有同向持仓",
+        "POSITION_EXISTS_OPPOSITE_SIDE": "⚠️实盘已有反向持仓",
+    }
+
     lines = [f"📋 最近推送信号 ({len(pushed)}条)", "━━━━━━━━━━━━━━"]
     for i, c in enumerate(pushed, 1):
         strat = "V3" if c.strategy_id == "hotlist_momentum_v3" else "V66"
         rr = f"RR:{c.rr}" if c.rr else ""
         stop = f"止损:{c.stop_pct:.1f}%" if c.stop_pct else ""
-        lines.append(
+        block = (
             f"{i}. [{strat}] {c.signal_id or '—'}\n"
             f"   {c.symbol} {c.direction}  {_ago(c.created_at)}\n"
             f"   Entry:{_fmt_price(c.entry)}  {stop}  {rr}"
         )
+        if c.signal_id:
+            try:
+                live = live_repo.load_by_signal_id(c.signal_id)
+            except Exception:
+                live = None
+            if live is not None:
+                label = _ACTION_LABEL.get(live.status, live.status)
+                block += f"\n   {label}"
+                if live.reject_reason:
+                    block += f"\n   原因: {live.reject_reason}"
+        lines.append(block)
     return "\n".join(lines)
 
 
@@ -481,6 +556,8 @@ class TelegramCommandServer:
                 return _cmd_market(self._universe_cfg)
             if cmd == "/debug":
                 return _cmd_debug(self._universe_cfg)
+            if cmd == "/v4debug":
+                return _cmd_v4debug()
             if cmd == "/signals":
                 return _cmd_signals()
             if cmd == "/orders":

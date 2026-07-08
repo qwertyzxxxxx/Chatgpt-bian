@@ -95,6 +95,20 @@ class LiveOrderRepository:
         finally:
             conn.close()
 
+    def load_by_signal_id(self, signal_id: str) -> LiveOrder | None:
+        """Most recent live_order row for a given signal, if any."""
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM live_orders WHERE signal_id=%s ORDER BY created_at DESC LIMIT 1",
+                    (signal_id,),
+                )
+                row = cur.fetchone()
+                return _row_to_order(row, cur.description) if row else None
+        finally:
+            conn.close()
+
     def load_active_symbols(self) -> set[str]:
         """Symbols with PENDING or FILLED orders."""
         conn = get_conn()
@@ -122,16 +136,49 @@ class LiveOrderRepository:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO live_events (event_id, live_order_id, signal_id, event_type, details_json, created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s)
+                    INSERT INTO live_events (
+                        event_id, live_order_id, signal_id, event_type, details_json, created_at,
+                        old_signal_id, new_signal_id, symbol, old_side, new_side,
+                        old_entry, new_entry, action, reason
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (event_id) DO NOTHING
                     """,
                     (
                         event.event_id, event.live_order_id, event.signal_id,
                         event.event_type, event.details_json, event.created_at,
+                        event.old_signal_id, event.new_signal_id, event.symbol,
+                        event.old_side, event.new_side, event.old_entry, event.new_entry,
+                        event.action, event.reason,
                     ),
                 )
             conn.commit()
+        finally:
+            conn.close()
+
+    def load_pending_by_symbol(self, symbol: str) -> list[LiveOrder]:
+        """PENDING orders for a symbol, oldest first."""
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM live_orders WHERE symbol=%s AND status='PENDING' ORDER BY created_at",
+                    (symbol,),
+                )
+                return [_row_to_order(row, cur.description) for row in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def load_filled_by_symbol(self, symbol: str) -> list[LiveOrder]:
+        """FILLED (open-position) orders for a symbol."""
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM live_orders WHERE symbol=%s AND status='FILLED' ORDER BY created_at",
+                    (symbol,),
+                )
+                return [_row_to_order(row, cur.description) for row in cur.fetchall()]
         finally:
             conn.close()
 

@@ -1,11 +1,11 @@
 # Strategy Performance Summary
 
-_Generated: 2026-06-23 04:32 UTC_
+_Generated: 2026-07-08 08:01 UTC_
 
 ### Hotlist
-- Trades: 370
-- Open: 19
-- TP1: 238 | TP2: 43 | SL: 70 | Timeout: 0 | Expired: 0
+- Trades: 380
+- Open: 0
+- TP1: 238 | TP2: 43 | SL: 70 | Timeout: 29 | Expired: 0
 - Win Rate: 80.1%  (decisive only: TP1+TP2 vs SL)
 - Avg RR: 0.72
 - Avg PnL%: 7.2919%

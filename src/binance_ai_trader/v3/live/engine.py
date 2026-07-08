@@ -23,10 +23,12 @@ from binance_ai_trader.v3.live.client import BinanceFuturesClient, BinanceFuture
 from binance_ai_trader.v3.live.models import (
     LiveEvent,
     LiveOrder,
+    LiveOrderStatus,
     PlaceResult,
     make_live_event_id,
     make_live_order_id,
 )
+from binance_ai_trader.v3.live.order_manager import LiveOrderManager
 from binance_ai_trader.v3.live.repository import LiveOrderRepository
 
 log = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ class LiveMirrorEngine:
         self._notional = notional_usdt
         self._max_pend = max_pending
         self._max_pos  = max_positions
+        self._order_manager = LiveOrderManager()
 
     def is_enabled(self) -> bool:
         return os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
@@ -62,12 +65,22 @@ class LiveMirrorEngine:
         live_order_id = make_live_order_id()
 
         try:
+            if not candidate.entry or not candidate.sl or not candidate.tp1:
+                reason = "缺少 entry/SL/TP"
+                self._save_status_order(live_order_id, candidate, now, "REJECTED", reason)
+                return PlaceResult(ok=False, reason=reason, live_order_id=live_order_id)
+
+            entry = Decimal(candidate.entry)
+
+            conflict_reason = self._handle_conflicts(candidate, live_order_id, now, entry)
+            if conflict_reason is not None:
+                return PlaceResult(ok=False, reason=conflict_reason, live_order_id=live_order_id)
+
             reason = self._risk_check(candidate)
             if reason:
                 self._save_rejected(live_order_id, candidate, now, reason)
                 return PlaceResult(ok=False, reason=reason, live_order_id=live_order_id)
 
-            entry = Decimal(candidate.entry)
             sl    = Decimal(candidate.sl)
             tp    = Decimal(candidate.tp1)
             side  = "BUY" if candidate.direction == "LONG" else "SELL"
@@ -136,9 +149,9 @@ class LiveMirrorEngine:
             self._repo.save(order)
             self._event(live_order_id, candidate.signal_id, "PLACED",
                         {"entry_order_id": bn_order_id, "qty": str(qty), "leverage": leverage,
-                         "sl_order_id": sl_order_id, "tp_order_id": tp_order_id, "otoco": otoco_ok})
+                         "sl_order_id": sl_order_id, "tp_order_id": tp_order_id, "otoco": batch_ok})
             log.info("[Live] placed %s %s %s qty=%s lev=%sx otoco=%s",
-                     live_order_id, candidate.symbol, side, qty, leverage, otoco_ok)
+                     live_order_id, candidate.symbol, side, qty, leverage, batch_ok)
             return PlaceResult(ok=True, live_order_id=live_order_id)
 
         except BinanceFuturesError as exc:
@@ -171,7 +184,147 @@ class LiveMirrorEngine:
             except Exception:
                 log.exception("[Live] sync_filled failed for %s", order.live_order_id)
 
+        try:
+            updated += self._expire_stale_pending()
+        except Exception:
+            log.exception("[Live] expire_stale_pending failed")
+
         return updated
+
+    # ── Conflict management (Part B) ────────────────────────────────────────────
+
+    def _handle_conflicts(
+        self, candidate: V3Candidate, live_order_id: str, now: str, entry: Decimal
+    ) -> str | None:
+        """Resolve same-symbol conflicts before placing a new order.
+
+        Returns None if the caller should proceed to place the new order
+        (either no conflict, or the conflicting order was just replaced).
+        Returns a reason string if placement should be skipped (terminal).
+        """
+        pending = self._repo.load_pending_by_symbol(candidate.symbol)
+        filled = self._repo.load_filled_by_symbol(candidate.symbol)
+        decision = self._order_manager.resolve(candidate.symbol, candidate.direction, entry, pending, filled)
+
+        if decision.action == "PLACE":
+            return None
+
+        old = decision.conflicting_order
+
+        if decision.action == "REPLACE":
+            self._cancel_binance_order(old)
+            self._repo.update_status(old.live_order_id, LiveOrderStatus.REPLACED, reject_reason=decision.reason)
+            self._conflict_event(old, candidate, "REPLACED", decision.reason)
+            self._notify(
+                f"[Live] 🔁 替换旧挂单\n{candidate.symbol} {candidate.direction}\n"
+                f"旧入场:{old.entry} → 新入场:{candidate.entry}\n{decision.reason}"
+            )
+            return None  # fall through: place the new order
+
+        status_map = {
+            "IGNORE_DUPLICATE": LiveOrderStatus.IGNORED_DUPLICATE,
+            "IGNORE_WORSE_ENTRY": LiveOrderStatus.IGNORED_WORSE_ENTRY,
+            "CANCEL_CONFLICT": LiveOrderStatus.DIRECTION_CONFLICT,
+            "POSITION_SAME_SIDE": LiveOrderStatus.POSITION_EXISTS_SAME_SIDE,
+            "POSITION_OPPOSITE_SIDE": LiveOrderStatus.POSITION_EXISTS_OPPOSITE_SIDE,
+        }
+        status = status_map[decision.action]
+
+        if decision.action == "CANCEL_CONFLICT" and old is not None:
+            self._cancel_binance_order(old)
+            self._repo.update_status(old.live_order_id, LiveOrderStatus.DIRECTION_CONFLICT,
+                                      reject_reason=decision.reason)
+
+        self._save_status_order(live_order_id, candidate, now, status, decision.reason)
+        self._conflict_event(old, candidate, decision.action, decision.reason)
+
+        if decision.action in ("CANCEL_CONFLICT", "POSITION_OPPOSITE_SIDE"):
+            self._notify(f"[Live] ⚠️ {decision.action}\n{candidate.symbol} {candidate.direction}\n{decision.reason}")
+
+        return decision.reason
+
+    def _cancel_binance_order(self, old: LiveOrder | None) -> None:
+        if old is None or not old.entry_order_id:
+            return
+        try:
+            self._client.cancel_order(old.symbol, old.entry_order_id)
+        except BinanceFuturesError as exc:
+            log.warning("[Live] cancel old order failed %s: %s", old.live_order_id, exc)
+        except Exception:
+            log.exception("[Live] unexpected error canceling old order %s", old.live_order_id)
+
+    def _conflict_event(
+        self, old: LiveOrder | None, candidate: V3Candidate, action: str, reason: str
+    ) -> None:
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        new_side = "BUY" if candidate.direction == "LONG" else "SELL"
+        try:
+            self._repo.append_event(LiveEvent(
+                event_id=make_live_event_id(),
+                live_order_id=old.live_order_id if old else "",
+                signal_id=candidate.signal_id,
+                event_type=action,
+                details_json=json.dumps({"reason": reason}),
+                created_at=now,
+                old_signal_id=old.signal_id if old else None,
+                new_signal_id=candidate.signal_id,
+                symbol=candidate.symbol,
+                old_side=old.side if old else None,
+                new_side=new_side,
+                old_entry=old.entry if old else None,
+                new_entry=candidate.entry,
+                action=action,
+                reason=reason,
+            ))
+        except Exception:
+            log.exception("[Live] failed to append conflict event %s", action)
+
+    # ── Pending-order expiry sweep ───────────────────────────────────────────────
+
+    _PENDING_EXPIRY_HOURS = 24
+    _PENDING_PRICE_DRIFT_PCT = Decimal("5")
+
+    def _expire_stale_pending(self) -> int:
+        count = 0
+        now = datetime.now(UTC)
+        for order in self._repo.load_by_status("PENDING"):
+            try:
+                reason = self._stale_reason(order, now)
+            except Exception:
+                log.exception("[Live] stale check failed for %s", order.live_order_id)
+                continue
+            if reason is None:
+                continue
+            self._cancel_binance_order(order)
+            self._repo.update_status(order.live_order_id, LiveOrderStatus.CANCELED_EXPIRED, reject_reason=reason)
+            self._event(order.live_order_id, order.signal_id, "CANCELED_EXPIRED", {"reason": reason})
+            self._notify(f"[Live] ⏰ 挂单自动撤销\n{order.symbol} {order.direction}\n{reason}")
+            count += 1
+        return count
+
+    def _stale_reason(self, order: LiveOrder, now: datetime) -> str | None:
+        try:
+            created = datetime.fromisoformat(order.created_at.replace("Z", "+00:00"))
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+        except Exception:
+            created = now
+
+        age_hours = (now - created).total_seconds() / 3600
+        if age_hours >= self._PENDING_EXPIRY_HOURS:
+            return f"挂单超过{self._PENDING_EXPIRY_HOURS}小时未成交，自动撤销"
+
+        try:
+            current_price = self._client.get_ticker_price(order.symbol)
+            entry = Decimal(order.entry)
+            if entry > 0:
+                drift = abs(Decimal(str(current_price)) - entry) / entry * 100
+                if drift > self._PENDING_PRICE_DRIFT_PCT:
+                    return f"现价偏离入场价{drift:.1f}%>{self._PENDING_PRICE_DRIFT_PCT}%，行情已远离，自动撤销"
+        except Exception as exc:
+            log.debug("[Live] price drift check unavailable for %s: %s", order.symbol, exc)
+
+        return None
 
     def _sync_pending(self, order: LiveOrder) -> bool:
         if not order.entry_order_id:
@@ -424,15 +577,12 @@ class LiveMirrorEngine:
             positions = self._client.get_positions()
             if len(positions) >= self._max_pos:
                 return f"持仓数{len(positions)}≥{self._max_pos}"
-            pos_symbols = {p.get("symbol") for p in positions}
-            if candidate.symbol in pos_symbols:
-                return f"{candidate.symbol}已有持仓"
         except Exception as exc:
             log.warning("[Live] position check failed: %s", exc)
 
-        active_symbols = self._repo.load_active_symbols()
-        if candidate.symbol in active_symbols:
-            return f"{candidate.symbol}已有挂单"
+        # NOTE: same-symbol pending/position conflicts are now handled by
+        # `_handle_conflicts()` / LiveOrderManager before this risk check runs
+        # (see try_place) — no blanket same-symbol rejection here anymore.
 
         try:
             balance = self._client.get_balance()
@@ -461,6 +611,14 @@ class LiveMirrorEngine:
     def _save_rejected(
         self, live_order_id: str, candidate: V3Candidate, now: str, reason: str
     ) -> None:
+        self._save_status_order(live_order_id, candidate, now, "REJECTED", reason)
+
+    def _save_status_order(
+        self, live_order_id: str, candidate: V3Candidate, now: str, status: str, reason: str
+    ) -> None:
+        """Persist a terminal (non-placed) live_order row — REJECTED, or one of
+        the order-manager conflict outcomes (IGNORED_*, DIRECTION_CONFLICT,
+        POSITION_EXISTS_*) — so `/signals` can join and show it per signal."""
         order = LiveOrder(
             live_order_id  = live_order_id,
             signal_id      = candidate.signal_id,
@@ -473,7 +631,7 @@ class LiveMirrorEngine:
             notional       = str(self._notional),
             leverage       = 0,
             quantity       = "0",
-            status         = "REJECTED",
+            status         = status,
             entry_order_id = None,
             sl_order_id    = None,
             tp_order_id    = None,
@@ -483,9 +641,9 @@ class LiveMirrorEngine:
         )
         try:
             self._repo.save(order)
-            self._event(live_order_id, candidate.signal_id, "REJECTED", {"reason": reason})
+            self._event(live_order_id, candidate.signal_id, status, {"reason": reason})
         except Exception:
-            log.exception("[Live] failed to save rejected order")
+            log.exception("[Live] failed to save %s order", status)
 
     def _event(self, live_order_id: str, signal_id: str, event_type: str, details: dict) -> None:
         now = datetime.now(UTC).isoformat(timespec="seconds")

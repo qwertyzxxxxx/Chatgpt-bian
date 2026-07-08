@@ -38,13 +38,26 @@ Optional tuning: `ORDER_NOTIONAL_USDT` (default 1000), `MAX_PENDING_ORDERS` (10)
 - LIVE_TRADING_ENABLED=true required
 - open_orders < MAX_PENDING_ORDERS
 - positions < MAX_OPEN_POSITIONS
-- same symbol not already in live_orders (PENDING/FILLED)
-- same symbol not already in Binance positions
-- SL distance ≤ 10% from entry
-- Entry drift ≤ 5% from current price
+- SL distance ≤ 8% from entry (live-only cap, tighter than paper)
 - Available balance ≥ notional / leverage
+- Same-symbol conflicts are NOT handled here anymore — see order_manager below.
 
 ## Leverage rule
 `min(10, max_leverage_from_binance)` — capped at 10x.
 
-**How to apply:** Any new trade type or strategy that needs live execution should use LiveMirrorEngine.try_place() and follow the same sync pattern.
+## Same-symbol conflict management (order_manager.py)
+Before `_risk_check`, `try_place()` calls `_handle_conflicts()` which asks
+`LiveOrderManager.resolve()` (pure decision logic, no I/O) what to do about an
+existing PENDING order or FILLED position for the same symbol:
+- Existing FILLED position, same direction → block (no pyramiding)
+- Existing FILLED position, opposite direction → block, alert-only, never auto-flip
+- Existing PENDING order, opposite direction → cancel old, also skip new (no auto-flip)
+- Existing PENDING order, same direction, new entry ≥0.5% better → REPLACE (cancel old, place new)
+- Existing PENDING order, same direction, within ±0.5% → duplicate, keep old
+- Existing PENDING order, same direction, new entry worse by >0.5% → ignore new
+- Pending orders also expire via `_expire_stale_pending()` (called from `sync_all`) after 24h or if price drifts >5% from entry.
+All terminal (non-place) outcomes still write a `live_orders` row (status e.g. IGNORED_DUPLICATE, DIRECTION_CONFLICT, POSITION_EXISTS_*) and a `live_events` row with old/new signal context, so `/signals` and `/v4debug`-style joins can show the reason per signal.
+
+**Why:** avoids duplicate/conflicting orders when the same symbol re-triggers across scans, without ever silently auto-flipping a position.
+
+**How to apply:** Any new order-placement path should call `LiveOrderManager.resolve()` first, exactly like `try_place()` does — don't reintroduce ad-hoc same-symbol checks in risk checks.

@@ -32,6 +32,7 @@ class HotlistEntryPlan:
     expires_at: str
     reason: str
     sentiment: str = ""
+    trend_aligned: bool = True
 
 
 @dataclass(frozen=True, slots=True)

@@ -182,6 +182,35 @@ CREATE INDEX IF NOT EXISTS idx_live_events_order
     ON live_events(live_order_id);
 CREATE INDEX IF NOT EXISTS idx_live_events_type
     ON live_events(event_type, created_at);
+
+-- Conflict-management fields — populated when a new signal collides with an
+-- existing live order/position for the same symbol (see v3/live/order_manager.py)
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS old_signal_id TEXT;
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS new_signal_id TEXT;
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS symbol        TEXT;
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS old_side      TEXT;
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS new_side      TEXT;
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS old_entry     TEXT;
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS new_entry     TEXT;
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS action        TEXT;
+ALTER TABLE live_events ADD COLUMN IF NOT EXISTS reason        TEXT;
+
+-- live_orders.status also accepts (beyond the original set):
+--   REPLACED, CANCELED_EXPIRED, CANCELED_CONFLICT, IGNORED_DUPLICATE,
+--   IGNORED_WORSE_ENTRY, DIRECTION_CONFLICT, POSITION_EXISTS_SAME_SIDE,
+--   POSITION_EXISTS_OPPOSITE_SIDE
+-- (status stays a free-text column — no CHECK constraint — to avoid migration
+-- pain; validity is enforced in Python via LiveOrderStatus).
+
+CREATE TABLE IF NOT EXISTS v3_scan_debug (
+    strategy_id          TEXT PRIMARY KEY,
+    created_at           TEXT NOT NULL,
+    pool_size            INTEGER NOT NULL,
+    computed_count       INTEGER NOT NULL,
+    live_eligible_count  INTEGER NOT NULL,
+    top10_json           TEXT NOT NULL DEFAULT '[]',
+    crowded_out_json     TEXT NOT NULL DEFAULT '[]'
+);
 """
 
 
