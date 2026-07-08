@@ -16,6 +16,8 @@ Available commands:
   /orders  — current open paper orders + last 5 closed
   /perf    — paper trading performance (V3 + V66)
   /v66     — V66 watchlist pool status
+  /limits  — view live dedup-window / max-open-orders settings
+  /setlimit — adjust dedup-window / max-open-orders without redeploy
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ _POLL_INTERVAL = 3.0
 _COMMANDS = {
     "/help", "/status", "/market", "/debug", "/v4debug",
     "/signals", "/orders", "/perf", "/v66",
+    "/limits", "/setlimit",
 }
 
 
@@ -95,8 +98,77 @@ def _cmd_help() -> str:
         "/orders  📂 当前模拟单 + 最近成交\n"
         "/perf    🏆 模拟盘绩效统计\n"
         "/v66     📡 V66 监控池状态\n"
+        "/limits  ⚙️ 查看去重窗口/持仓上限设置\n"
+        "/setlimit ⚙️ 调整去重窗口/持仓上限\n"
         "/help    📖 显示此帮助"
     )
+
+
+def _cmd_limits() -> str:
+    from binance_ai_trader.v3.settings.repository import (
+        DEFAULTS, V3_STRATEGY_ID, V66_STRATEGY_ID, VALID_DEDUP_HOURS,
+        V3RuntimeSettingsRepository,
+    )
+
+    repo = V3RuntimeSettingsRepository()
+    lines = ["⚙️ 去重/持仓限制设置", "━━━━━━━━━━━━━━"]
+    for alias, strategy_id in (("v3", V3_STRATEGY_ID), ("v66", V66_STRATEGY_ID)):
+        s = repo.get(strategy_id)
+        defaults = DEFAULTS[strategy_id]
+        dedup_hours = s.dedup_hours if s.dedup_hours is not None else defaults["dedup_hours"]
+        max_orders = s.max_open_orders if s.max_open_orders is not None else defaults["max_open_orders"]
+        dedup_tag = "（默认）" if s.dedup_hours is None else f"（已调整，{_ago(s.updated_at)}）"
+        orders_tag = "（默认）" if s.max_open_orders is None else f"（已调整，{_ago(s.updated_at)}）"
+        lines.append(f"\n【{alias}】")
+        lines.append(f"去重窗口: {dedup_hours}h {dedup_tag}")
+        lines.append(f"持仓上限: {max_orders} {orders_tag}")
+    lines.append("\n用法: /setlimit v3 dedup 12")
+    lines.append("      /setlimit v66 maxorders 8")
+    lines.append("      /setlimit v3 reset  (恢复默认)")
+    lines.append(f"去重窗口可选值: {sorted(VALID_DEDUP_HOURS)}")
+    return "\n".join(lines)
+
+
+def _cmd_setlimit(args: list[str], user_id: int | None) -> str:
+    from binance_ai_trader.v3.settings.repository import (
+        STRATEGY_ALIASES, V3RuntimeSettingsRepository,
+    )
+
+    if len(args) < 2:
+        return (
+            "❌ 用法: /setlimit <v3|v66> <dedup|maxorders> <数值>\n"
+            "      /setlimit <v3|v66> reset\n"
+            "示例: /setlimit v3 dedup 12\n"
+            "      /setlimit v66 maxorders 8"
+        )
+
+    alias = args[0].lower()
+    strategy_id = STRATEGY_ALIASES.get(alias)
+    if strategy_id is None:
+        return f"❌ 未知策略 '{alias}'，可选: {', '.join(STRATEGY_ALIASES)}"
+
+    repo = V3RuntimeSettingsRepository()
+    field = args[1].lower()
+    updated_by = str(user_id) if user_id is not None else None
+
+    try:
+        if field == "reset":
+            repo.reset(strategy_id)
+            return f"✅ {alias} 的去重/持仓设置已恢复默认值"
+
+        if len(args) < 3:
+            return "❌ 缺少数值，例如: /setlimit v3 dedup 12"
+        value = int(args[2])
+
+        if field in ("dedup", "dedup_hours"):
+            repo.set_dedup_hours(strategy_id, value, updated_by=updated_by)
+            return f"✅ {alias} 去重窗口已设为 {value}h"
+        if field in ("maxorders", "max_orders", "max_open_orders"):
+            repo.set_max_open_orders(strategy_id, value, updated_by=updated_by)
+            return f"✅ {alias} 持仓上限已设为 {value}"
+        return f"❌ 未知字段 '{field}'，可选: dedup / maxorders / reset"
+    except ValueError as exc:
+        return f"❌ {exc}"
 
 
 def _cmd_status(db_path: Path) -> str:
@@ -523,13 +595,16 @@ class TelegramCommandServer:
 
         chat_id  = msg.get("chat", {}).get("id")
         user_id  = msg.get("from", {}).get("id")
-        text     = (msg.get("text") or "").strip().lower()
+        raw_text = (msg.get("text") or "").strip()
+        text     = raw_text.lower()
 
         if not chat_id or not text.startswith("/"):
             return
 
         # Strip bot username suffix (e.g. /status@MyBot → /status)
-        cmd = text.split("@")[0].split()[0]
+        tokens = text.split()
+        cmd = tokens[0].split("@")[0]
+        args = tokens[1:]
         if cmd not in _COMMANDS:
             return
 
@@ -538,14 +613,14 @@ class TelegramCommandServer:
             log.warning("[CmdServer] denied %s from user_id=%s", cmd, user_id)
             return
 
-        log.info("[CmdServer] %s from user_id=%s", cmd, user_id)
-        reply = self._dispatch(cmd)
+        log.info("[CmdServer] %s %s from user_id=%s", cmd, args, user_id)
+        reply = self._dispatch(cmd, args, user_id)
         try:
             self._notifier.reply(chat_id, reply)
         except Exception:
             log.exception("[CmdServer] failed to send reply for %s", cmd)
 
-    def _dispatch(self, cmd: str) -> str:
+    def _dispatch(self, cmd: str, args: list[str], user_id: int | None = None) -> str:
         try:
             if cmd == "/help":
                 return _cmd_help()
@@ -565,6 +640,10 @@ class TelegramCommandServer:
                 return _cmd_perf()
             if cmd == "/v66":
                 return _cmd_v66()
+            if cmd == "/limits":
+                return _cmd_limits()
+            if cmd == "/setlimit":
+                return _cmd_setlimit(args, user_id)
             return "❓ 未知指令，发送 /help 查看列表"
         except Exception as exc:
             log.exception("[CmdServer] command %s failed", cmd)

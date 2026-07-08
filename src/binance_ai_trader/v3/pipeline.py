@@ -75,9 +75,20 @@ class V3Pipeline:
         strategy: V3Strategy,
         now: datetime | None = None,
         market_regime: str | None = None,
+        dedup_hours: int | None = None,
+        risk_config: RiskConfig | None = None,
     ) -> PipelineResult:
+        """Run one strategy pass.
+
+        `dedup_hours`/`risk_config` optionally override the values the
+        pipeline was constructed with — callers (e.g. tasks.py) can pass in
+        live-adjusted settings fetched right before each scan, without
+        rebuilding the pipeline.
+        """
         run_at = now or datetime.now(UTC)
         result = PipelineResult(strategy_id=strategy.strategy_id)
+        effective_dedup_hours = dedup_hours if dedup_hours is not None else self._dedup_hours
+        effective_risk_config = risk_config if risk_config is not None else self._risk_config
 
         try:
             candidates = strategy.generate_candidates(now=run_at)
@@ -91,7 +102,9 @@ class V3Pipeline:
 
         for inp in candidates:
             try:
-                self._process_one(inp, result, market_regime, run_at)
+                self._process_one(
+                    inp, result, market_regime, run_at, effective_dedup_hours, effective_risk_config
+                )
             except Exception:
                 log.exception("[V3] error processing candidate %s/%s", inp.symbol, inp.direction)
                 result.errors += 1
@@ -114,12 +127,14 @@ class V3Pipeline:
         result: PipelineResult,
         market_regime: str | None,
         now: datetime,
+        dedup_hours: int,
+        risk_config: RiskConfig | None,
     ) -> None:
         risk_dec = self._risk.check(
             strategy_id=inp.strategy_id,
             symbol=inp.symbol,
             direction=inp.direction,
-            config=self._risk_config,
+            config=risk_config,
             market_regime=market_regime,
         )
         if not risk_dec.allowed:
@@ -135,7 +150,7 @@ class V3Pipeline:
             strategy_id=inp.strategy_id,
             symbol=inp.symbol,
             direction=inp.direction,
-            window_hours=self._dedup_hours,
+            window_hours=dedup_hours,
             cross_strategy=self._cross_strategy_dedup,
         )
         if dedup_dec.is_dup:

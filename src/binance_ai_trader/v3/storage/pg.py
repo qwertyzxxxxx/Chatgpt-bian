@@ -212,6 +212,16 @@ CREATE TABLE IF NOT EXISTS v3_scan_debug (
     top10_json           TEXT NOT NULL DEFAULT '[]',
     crowded_out_json     TEXT NOT NULL DEFAULT '[]'
 );
+
+-- v3_runtime_settings: live-adjustable dedup/position-limit overrides, set via
+-- Telegram /setlimit command. NULL column = "no override, use hardcoded default".
+CREATE TABLE IF NOT EXISTS v3_runtime_settings (
+    strategy_id      TEXT PRIMARY KEY,
+    dedup_hours      INTEGER,
+    max_open_orders  INTEGER,
+    updated_at       TEXT,
+    updated_by       TEXT
+);
 """
 
 

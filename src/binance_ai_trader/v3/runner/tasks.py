@@ -39,6 +39,7 @@ from binance_ai_trader.v3.push_queue.repository import V3PushQueueRepository
 from binance_ai_trader.v3.risk.engine import RiskConfig
 from binance_ai_trader.v3.live.engine import LiveMirrorEngine
 from binance_ai_trader.v3.live.reporter import LiveHourlyReporter
+from binance_ai_trader.v3.settings.repository import V3RuntimeSettingsRepository
 from binance_ai_trader.v3.settlement.settler import V3Settler
 from binance_ai_trader.v3.strategies.hotlist import HotlistStrategyV3
 from binance_ai_trader.v3.strategies.v66 import HotlistStrategyV66
@@ -88,6 +89,7 @@ def build_v3_tasks(
     risk_cfg   = RiskConfig(strategy_id=_STRATEGY_ID, max_open_orders=max_open_orders)
     pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
     settler    = V3Settler(order_repo, client, notifier=telegram)
+    settings_repo = V3RuntimeSettingsRepository()
 
     v3_tg    = V3TelegramNotifier(telegram) if telegram else None
     live_reporter = (
@@ -107,7 +109,18 @@ def build_v3_tasks(
 
     def _scan_task() -> RunnerTaskResult:
         now = datetime.now(UTC)
-        result = pipeline.run(strategy, now=now)
+        try:
+            live_dedup_hours, live_max_open_orders = settings_repo.resolve(_STRATEGY_ID)
+            live_risk_cfg = RiskConfig(
+                strategy_id=_STRATEGY_ID,
+                max_open_orders=live_max_open_orders,
+                blacklist=risk_cfg.blacklist,
+                blocked_regimes=risk_cfg.blocked_regimes,
+            )
+        except Exception:
+            log.exception("[V3] failed to read runtime settings — using deploy defaults")
+            live_dedup_hours, live_risk_cfg = dedup_hours, risk_cfg
+        result = pipeline.run(strategy, now=now, dedup_hours=live_dedup_hours, risk_config=live_risk_cfg)
 
         orders_created = 0
         for candidate in result.candidates:
@@ -262,6 +275,7 @@ def build_v66_tasks(
     push_repo  = V3PushQueueRepository()
     perf_calc  = V3PerformanceCalculator(order_repo)
     settler    = V3Settler(order_repo, client, notifier=telegram)
+    settings_repo = V3RuntimeSettingsRepository()
 
     v66_tg = V3TelegramNotifier(telegram) if telegram else None
     reporter = (
@@ -277,7 +291,18 @@ def build_v66_tasks(
 
     def _v66_scan_task() -> RunnerTaskResult:
         now = datetime.now(UTC)
-        result = pipeline.run(strategy, now=now)
+        try:
+            live_dedup_hours, live_max_open_orders = settings_repo.resolve(_V66_STRATEGY_ID)
+            live_risk_cfg = RiskConfig(
+                strategy_id=_V66_STRATEGY_ID,
+                max_open_orders=live_max_open_orders,
+                blacklist=risk_cfg.blacklist,
+                blocked_regimes=risk_cfg.blocked_regimes,
+            )
+        except Exception:
+            log.exception("[V66] failed to read runtime settings — using deploy defaults")
+            live_dedup_hours, live_risk_cfg = dedup_hours, risk_cfg
+        result = pipeline.run(strategy, now=now, dedup_hours=live_dedup_hours, risk_config=live_risk_cfg)
 
         orders_created = 0
         for candidate in result.candidates:
