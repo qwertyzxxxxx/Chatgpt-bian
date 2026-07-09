@@ -216,8 +216,9 @@ def _pending_section(orders: list[V3PaperOrder]) -> str:
     for o in orders:
         tag = _strat(o.strategy_id)
         rows.append(
-            f"  [{tag}] {o.symbol} {o.direction} {_seq(o.signal_id)}  @{o.entry}\n"
-            f"  等待 {_elapsed(o.created_at)}  到期 {_short_dt(o.expires_at)}"
+            f"  [{tag}] {o.symbol} {o.direction} {_seq(o.signal_id)}\n"
+            f"  入{o.entry}  止损{o.stop_loss}  止盈{o.tp1}\n"
+            f"  下单{_short_dt(o.created_at)}  等待 {_elapsed(o.created_at)}  到期 {_short_dt(o.expires_at)}"
         )
     return "\n".join(rows)
 
@@ -232,8 +233,9 @@ def _positions_section(
     for o in orders:
         tag = _strat(o.strategy_id)
         rows.append(
-            f"  [{tag}] {o.symbol} {o.direction} {_seq(o.signal_id)}  @{o.entry}\n"
-            f"  PnL {_current_pnl(o, price_map)}  持仓 {_elapsed(o.filled_at)}"
+            f"  [{tag}] {o.symbol} {o.direction} {_seq(o.signal_id)}\n"
+            f"  入{o.entry}  止损{o.stop_loss}  止盈{o.tp1}\n"
+            f"  开仓{_short_dt(o.filled_at)}  PnL {_current_pnl(o, price_map)}  持仓 {_elapsed(o.filled_at)}"
         )
     return "\n".join(rows)
 
@@ -250,7 +252,8 @@ def _settled_section(orders: list[V3PaperOrder]) -> str:
         rows.append(
             f"  {icon}[{tag}] {o.symbol} {o.direction} {_seq(o.signal_id)}  "
             f"{o.result} {_pnl_str(o.pnl_pct)}  {dur}\n"
-            f"  入{_short_dt(o.filled_at)} → 平{_short_dt(o.closed_at)}  @{o.entry}"
+            f"  入{o.entry}  止损{o.stop_loss}  止盈{o.tp1}\n"
+            f"  开{_short_dt(o.filled_at)} → 平{_short_dt(o.closed_at)}"
         )
     return "\n".join(rows)
 
