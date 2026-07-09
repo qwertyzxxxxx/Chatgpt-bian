@@ -243,6 +243,33 @@ class LiveMirrorEngine:
 
         return decision.reason
 
+    def _cancel_remaining_algo_orders(
+        self, order: LiveOrder, skip_sl: bool = False, skip_tp: bool = False
+    ) -> None:
+        """Cancel whichever SL/TP algo order(s) are still open on Binance for
+        a position that is now flat (closed via the other leg, or externally).
+
+        Without this, the un-triggered leg keeps sitting on Binance as a live
+        conditional order with no position behind it — the exact "挂单没有撤回"
+        (pending order never cancelled) bug reported by the user.
+        """
+        pairs = []
+        if not skip_sl and order.sl_order_id:
+            pairs.append(order.sl_order_id)
+        if not skip_tp and order.tp_order_id:
+            pairs.append(order.tp_order_id)
+        for algo_id in pairs:
+            try:
+                self._client.cancel_algo_order(order.symbol, algo_id)
+                log.info("[Live] canceled dangling algo order %s for %s (%s)",
+                         algo_id, order.live_order_id, order.symbol)
+            except BinanceFuturesError as exc:
+                # -2011/"Unknown order" just means it was already filled/canceled — fine.
+                log.info("[Live] cancel dangling algo order %s failed (likely already gone): %s",
+                         algo_id, exc)
+            except Exception:
+                log.exception("[Live] unexpected error canceling dangling algo order %s", algo_id)
+
     def _cancel_binance_order(self, old: LiveOrder | None) -> None:
         if old is None:
             return
@@ -422,6 +449,7 @@ class LiveMirrorEngine:
             if real_qty is None and not get_pos_failed:
                 log.info("[Live] %s %s has no open position on Binance — marking CLOSED",
                          order.live_order_id, order.symbol)
+                self._cancel_remaining_algo_orders(order)
                 self._repo.update_status(order.live_order_id, "CLOSED")
                 self._event(order.live_order_id, order.signal_id, "CLOSED_EXTERNAL",
                             {"reason": "no_open_position"})
@@ -490,6 +518,11 @@ class LiveMirrorEngine:
                 pass
 
         if closed_by:
+            # The triggered leg (SL or TP) has already been consumed by Binance —
+            # cancel the OTHER leg so it doesn't linger as a dangling algo order
+            # once the position is flat.
+            self._cancel_remaining_algo_orders(order, skip_sl=(closed_by == "CLOSED_SL"),
+                                                skip_tp=(closed_by == "CLOSED_TP"))
             self._repo.update_status(order.live_order_id, closed_by)
             self._event(order.live_order_id, order.signal_id, closed_by, {})
             emoji = "✅" if closed_by == "CLOSED_TP" else "❌"
