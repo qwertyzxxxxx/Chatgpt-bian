@@ -40,7 +40,7 @@ class LiveHourlyReporter:
     def _build(self) -> str:
         status = self._engine.get_account_status()
         if "error" in status:
-            return f"[V3 LIVE HOURLY]\n❌ 账户查询失败: {status['error']}"
+            return f"[{self._tag} LIVE HOURLY]\n❌ 账户查询失败: {status['error']}"
 
         balance        = status.get("balance",        Decimal("0"))
         available      = status.get("available",      Decimal("0"))

@@ -22,6 +22,7 @@ from binance_ai_trader.v3.paper.repository import (
     V3PaperOrderRepository,
     make_event_id,
 )
+from binance_ai_trader.v3.telegram.labels import strategy_tag
 
 log = logging.getLogger(__name__)
 
@@ -35,10 +36,16 @@ class V3Settler:
         order_repo: V3PaperOrderRepository,
         client: BinancePublicClient,
         notifier: TelegramNotifier | None = None,
+        live_repo: object | None = None,
     ) -> None:
         self._order_repo = order_repo
         self._client = client
         self._notifier = notifier
+        # Optional LiveOrderRepository — used only to detect and flag when
+        # the paper/shadow settlement result (TP1/SL) diverges from the real
+        # exchange position's status, so the push message never implies a
+        # real position closed when it is actually still open.
+        self._live_repo = live_repo
 
     def settle_all(self, strategy_id: str | None = None) -> int:
         if strategy_id is not None:
@@ -179,10 +186,35 @@ class V3Settler:
         )
         if self._notifier is not None:
             try:
-                self._notifier.send(_fmt_settlement_msg(order, result, pnl_pct, rr_realized, closed_at))
+                live_note = self._live_divergence_note(order)
+                self._notifier.send(
+                    _fmt_settlement_msg(order, result, pnl_pct, rr_realized, closed_at, live_note)
+                )
             except Exception:
                 log.exception("[V3] failed to send settlement notification for %s", order.order_id)
         return True
+
+    def _live_divergence_note(self, order: V3PaperOrder) -> str | None:
+        """If this strategy mirrors real trades, check whether the actual
+        exchange position has already closed with the same outcome. If the
+        real position is still open while the paper/shadow result says
+        TP1/SL, return a clarifying note so the push never implies the real
+        account already closed the trade.
+        """
+        if self._live_repo is None:
+            return None
+        try:
+            live_order = self._live_repo.load_by_signal_id(order.signal_id)
+        except Exception:
+            log.exception("[V3] live status lookup failed for %s", order.signal_id)
+            return None
+        if live_order is None:
+            return None
+        if live_order.status in ("CLOSED_TP", "CLOSED_SL", "CLOSED", "MANUAL_CLOSED"):
+            return None
+        if live_order.status in ("FILLED", "PENDING"):
+            return "⚠️ 以上为模拟结算结果，实盘仓位目前仍在持仓中，尚未触发止盈/止损"
+        return None
 
     def _fetch_klines(self, symbol: str) -> list[dict]:
         try:
@@ -261,6 +293,7 @@ def _fmt_settlement_msg(
     pnl_pct: Decimal,
     rr_realized: Decimal,
     closed_at: str,
+    live_note: str | None = None,
 ) -> str:
     _EMOJI = {"TP1": "✅", "SL": "❌", "TIMEOUT": "⏰"}
     emoji = _EMOJI.get(result, "📋")
@@ -268,8 +301,9 @@ def _fmt_settlement_msg(
     pnl_str = f"{sign}{pnl_pct:.2f}%"
     sl_pct = abs(order.entry - order.stop_loss) / order.entry * Decimal("100")
     sl_sign = "-" if order.direction == "LONG" else "+"
+    note = f"\n{live_note}" if live_note else ""
     return (
-        f"[V3] {emoji} 结算 {result}  {pnl_str}\n"
+        f"[{strategy_tag(order.strategy_id)}] {emoji} 结算 {result}  {pnl_str}\n"
         f"━━━━━━━━━━━━━━\n"
         f"{order.signal_id}\n"
         f"{order.symbol}  {order.direction}\n"
@@ -279,6 +313,7 @@ def _fmt_settlement_msg(
         f"入场    {_sdt(order.filled_at)}\n"
         f"平仓    {_sdt(closed_at)}\n"
         f"持仓    {_holding(order.filled_at, closed_at)}"
+        f"{note}"
     )
 
 

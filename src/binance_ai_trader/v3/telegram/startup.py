@@ -17,6 +17,7 @@ import os
 from datetime import UTC, datetime
 
 from binance_ai_trader.notifications import TelegramNotifier
+from binance_ai_trader.v3.telegram.labels import strategy_tag
 
 _VERSION = "v3.0.0-phase2"
 
@@ -36,7 +37,7 @@ def send_v3_startup(
     pid = os.getpid()
 
     lines = [
-        f"[V3] 🚀 Started",
+        f"[{strategy_tag(strategy_id)}] 🚀 Started",
         f"Version    {_VERSION}",
         f"Strategy   {strategy_id}",
         f"DB         {db_path}",

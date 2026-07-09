@@ -12,6 +12,7 @@ from decimal import Decimal
 from binance_ai_trader.notifications import TelegramNotifier
 from binance_ai_trader.v3.paper.repository import V3PaperOrder, V3PaperOrderRepository
 from binance_ai_trader.v3.performance.calculator import V3PerformanceCalculator
+from binance_ai_trader.v3.telegram.labels import strategy_tag
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def send_weekly_review(
         top_sym, worst_sym = _top_worst(week_ord)
 
         msg = (
-            f"📋 V3 Weekly Strategy Review\n"
+            f"📋 [{strategy_tag(strategy_id)}] Weekly Strategy Review\n"
             f"{'━' * 22}\n"
             f"策略   {strategy_id}\n"
             f"周期   过去 7 天\n"

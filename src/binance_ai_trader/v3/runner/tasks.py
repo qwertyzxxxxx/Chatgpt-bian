@@ -89,7 +89,10 @@ def build_v3_tasks(
     strategy   = HotlistStrategyV3(client, universe_config)
     risk_cfg   = RiskConfig(strategy_id=_STRATEGY_ID, max_open_orders=max_open_orders)
     pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
-    settler    = V3Settler(order_repo, client, notifier=telegram)
+    settler    = V3Settler(
+        order_repo, client, notifier=telegram,
+        live_repo=(live_mirror._repo if live_mirror else None),
+    )
     settings_repo = V3RuntimeSettingsRepository()
 
     v3_tg    = V3TelegramNotifier(telegram) if telegram else None
@@ -298,7 +301,10 @@ def build_v66_tasks(
     order_repo = V3PaperOrderRepository()
     push_repo  = V3PushQueueRepository()
     perf_calc  = V3PerformanceCalculator(order_repo)
-    settler    = V3Settler(order_repo, client, notifier=telegram)
+    settler    = V3Settler(
+        order_repo, client, notifier=telegram,
+        live_repo=(live_mirror._repo if live_mirror else None),
+    )
     settings_repo = V3RuntimeSettingsRepository()
 
     v66_tg = V3TelegramNotifier(telegram) if telegram else None

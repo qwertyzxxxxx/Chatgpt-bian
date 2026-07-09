@@ -21,20 +21,9 @@ from decimal import Decimal
 
 from binance_ai_trader.notifications import TelegramNotifier
 from binance_ai_trader.v3.candidates.repository import V3Candidate
+from binance_ai_trader.v3.telegram.labels import strategy_label, strategy_tag
 
 log = logging.getLogger(__name__)
-
-_STRATEGY_LABELS: dict[str, str] = {
-    "hotlist_momentum_v3": "🔥 Hotlist",
-    "hotlist_v66":         "📡 V66 Watchlist",
-    "monster_v3":          "👾 Monster",
-    "breakout_v3":         "📈 Breakout",
-    "bear_v3":             "🐻 Bear",
-}
-
-
-def _label(strategy_id: str) -> str:
-    return _STRATEGY_LABELS.get(strategy_id, f"📊 {strategy_id}")
 
 
 def _pct(raw: str, ref: str) -> str:
@@ -81,7 +70,7 @@ def _format_candidate(
 
     return (
         f"{prefix}"
-        f"[V3] {_label(c.strategy_id)}\n"
+        f"[{strategy_tag(c.strategy_id)}] {strategy_label(c.strategy_id)}\n"
         f"━━━━━━━━━━━━━━\n"
         f"Signal   {c.signal_id}\n"
         f"{c.symbol}  {c.direction}\n"
