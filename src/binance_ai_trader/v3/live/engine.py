@@ -420,7 +420,8 @@ class LiveMirrorEngine:
             qty = Decimal(str(bn.get("executedQty", order.quantity)))
             avg_price = Decimal(str(bn.get("avgPrice", order.entry)))
 
-            # OTOCO order: SL/TP already placed at order time — just update status
+            # OTOCO order: SL/TP already placed at order time — just update status.
+            # Both legs present means the batch call fully succeeded.
             if order.sl_order_id and order.tp_order_id:
                 self._repo.update_status(order.live_order_id, "FILLED")
                 self._event(order.live_order_id, order.signal_id, "FILLED",
@@ -438,9 +439,12 @@ class LiveMirrorEngine:
                          order.live_order_id, order.sl_order_id, order.tp_order_id)
                 return True
 
-            # Plain LIMIT order: attach SL/TP now
-            sl_id = self._attach_sl_with_retry(order, qty)
-            tp_id = self._attach_tp_with_retry(order, qty)
+            # Only attach whichever leg is actually missing. A partially-successful
+            # batch call (e.g. SL placed but TP algo order rejected) already has one
+            # leg's order id populated on `order` — re-attaching it here would create
+            # a duplicate order on Binance sitting alongside the original.
+            sl_id = order.sl_order_id or self._attach_sl_with_retry(order, qty)
+            tp_id = order.tp_order_id or self._attach_tp_with_retry(order, qty)
             self._repo.update_status(order.live_order_id, "FILLED", sl_order_id=sl_id, tp_order_id=tp_id)
             self._event(order.live_order_id, order.signal_id, "FILLED",
                         {"avg_price": str(avg_price), "qty": str(qty)})
