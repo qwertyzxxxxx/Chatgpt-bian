@@ -126,6 +126,57 @@ class LiveOrderRepository:
         finally:
             conn.close()
 
+    _TERMINAL_STATUSES = (
+        "CANCELED", "CANCELED_EXPIRED", "REJECTED", "REPLACED",
+        "CLOSED_SL", "CLOSED_TP", "CLOSED",
+    )
+
+    def load_terminal_with_dangling_algo(self) -> list[LiveOrder]:
+        """Terminal-status orders that still have a non-null sl_order_id or
+        tp_order_id — i.e. the algo leg(s) may still be sitting open on
+        Binance even though this order is done. Safety net for the case
+        where the original cancel-on-terminal attempt failed/was skipped."""
+        placeholders = ",".join(["%s"] * len(self._TERMINAL_STATUSES))
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT * FROM live_orders
+                    WHERE status IN ({placeholders})
+                      AND (sl_order_id IS NOT NULL AND sl_order_id != ''
+                           OR tp_order_id IS NOT NULL AND tp_order_id != '')
+                    ORDER BY created_at
+                    """,
+                    list(self._TERMINAL_STATUSES),
+                )
+                return [_row_to_order(row, cur.description) for row in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def clear_algo_ids(self, live_order_id: str, clear_sl: bool, clear_tp: bool) -> None:
+        """Null out sl_order_id/tp_order_id once we've confirmed (via cancel
+        or 'unknown order' response) that the algo leg is gone on Binance."""
+        if not clear_sl and not clear_tp:
+            return
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE live_orders SET
+                        updated_at = %s
+                        {", sl_order_id = NULL" if clear_sl else ""}
+                        {", tp_order_id = NULL" if clear_tp else ""}
+                    WHERE live_order_id = %s
+                    """,
+                    (now, live_order_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     def load_recent(self, limit: int = 20) -> list[LiveOrder]:
         conn = get_conn()
         try:

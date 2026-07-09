@@ -219,10 +219,13 @@ def build_v3_tasks(
         # regardless of how many strategies have live mirrors configured.
         if live_mirror:
             info = live_mirror.sweep_orphans()
+            cleanup = live_mirror.cleanup_dangling_algo_orders()
             return RunnerTaskResult("SUCCEEDED", {
                 "event_type": "v3_live_orphan_sweep",
                 "checked": info["checked"],
                 "orphans": len(info["orphans"]),
+                "dangling_algo_checked": cleanup["checked"],
+                "dangling_algo_cleaned": cleanup["cleaned"],
             })
         return RunnerTaskResult("SKIPPED")
 

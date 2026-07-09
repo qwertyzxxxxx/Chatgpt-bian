@@ -820,6 +820,60 @@ class LiveMirrorEngine:
 
         return result
 
+    def cleanup_dangling_algo_orders(self) -> dict:
+        """Safety net: for orders already in a terminal DB status, re-check
+        any leftover sl_order_id/tp_order_id and cancel them on Binance if
+        still open. Covers the case where the original cancel-on-terminal
+        call failed (network blip, transient API error) and left a
+        conditional order stranded with no position behind it.
+
+        Only touches orders whose status is already unambiguously terminal
+        in our own DB — never guesses at live/ambiguous state.
+        """
+        result = {"checked": 0, "cleaned": 0}
+        try:
+            stale = self._repo.load_terminal_with_dangling_algo()
+        except Exception:
+            log.exception("[Live] cleanup_dangling_algo_orders: failed to load candidates")
+            return result
+
+        result["checked"] = len(stale)
+        for order in stale:
+            cleared_sl = cleared_tp = False
+            if order.sl_order_id:
+                cleared_sl = self._cancel_and_confirm(order.symbol, order.sl_order_id, "SL")
+            if order.tp_order_id:
+                cleared_tp = self._cancel_and_confirm(order.symbol, order.tp_order_id, "TP")
+            if cleared_sl or cleared_tp:
+                try:
+                    self._repo.clear_algo_ids(order.live_order_id, cleared_sl, cleared_tp)
+                    result["cleaned"] += 1
+                    log.info("[Live] cleanup_dangling_algo_orders: cleared stray leg(s) for %s (%s)",
+                              order.live_order_id, order.symbol)
+                except Exception:
+                    log.exception("[Live] cleanup_dangling_algo_orders: failed to clear ids for %s",
+                                  order.live_order_id)
+        return result
+
+    def _cancel_and_confirm(self, symbol: str, algo_id: str, label: str) -> bool:
+        """Try to cancel a dangling algo order. Returns True if it's now
+        confirmed gone (canceled, or already gone/unknown), False if the
+        cancel attempt itself failed for an unexpected reason (leave it for
+        the next sweep pass rather than silently dropping tracking of it)."""
+        try:
+            self._client.cancel_algo_order(symbol, algo_id)
+            return True
+        except BinanceFuturesError as exc:
+            if exc.code in (-2011, -2013) or "unknown" in exc.msg.lower():
+                return True
+            log.warning("[Live] cleanup: cancel %s algo order %s for %s failed: %s",
+                        label, algo_id, symbol, exc)
+            return False
+        except Exception:
+            log.exception("[Live] cleanup: unexpected error canceling %s algo order %s for %s",
+                           label, algo_id, symbol)
+            return False
+
     # ── Status / CLI helpers ──────────────────────────────────────────────────
 
     def get_account_status(self) -> dict:
