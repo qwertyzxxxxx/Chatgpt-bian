@@ -129,15 +129,19 @@ class V3Settler:
                 high, low = k["high"], k["low"]
 
                 if order.direction == "LONG":
-                    if high >= order.tp1:
-                        return self._close(order, "TP1", now, high, low)
-                    if low <= order.stop_loss:
-                        return self._close(order, "SL", now, high, low)
+                    tp_hit = high >= order.tp1
+                    sl_hit = low <= order.stop_loss
                 else:
-                    if low <= order.tp1:
-                        return self._close(order, "TP1", now, high, low)
-                    if high >= order.stop_loss:
-                        return self._close(order, "SL", now, high, low)
+                    tp_hit = low <= order.tp1
+                    sl_hit = high >= order.stop_loss
+
+                if tp_hit and sl_hit:
+                    result = self._resolve_same_candle(order, k)
+                    return self._close(order, result, now, high, low)
+                if tp_hit:
+                    return self._close(order, "TP1", now, high, low)
+                if sl_hit:
+                    return self._close(order, "SL", now, high, low)
 
             if now >= expires:
                 return self._close(order, "TIMEOUT", now, None, None)
@@ -183,10 +187,49 @@ class V3Settler:
     def _fetch_klines(self, symbol: str) -> list[dict]:
         try:
             raw = self._client.klines(symbol, _INTERVAL, limit=_KLINE_LIMIT)
-            return [{"high": k.high, "low": k.low} for k in raw]
+            return [
+                {"high": k.high, "low": k.low, "open_time_ms": k.open_time_ms, "close_time_ms": k.close_time_ms}
+                for k in raw
+            ]
         except Exception as exc:
             log.warning("[V3] kline fetch failed for %s: %s", symbol, exc)
             return []
+
+    def _resolve_same_candle(self, order: V3PaperOrder, k: dict) -> str:
+        """Both TP1 and SL fell within the same 15m candle's range — the 15m
+        OHLC alone cannot tell us which was touched first. Fetch 1m klines
+        covering this exact window and walk them in chronological order to
+        find the true first touch. If 1m data is unavailable/inconclusive,
+        fall back to SL (conservative — matches worst-case risk assumption).
+        """
+        try:
+            open_ms = k.get("open_time_ms")
+            close_ms = k.get("close_time_ms")
+            if open_ms is None or close_ms is None:
+                raise ValueError("missing candle window bounds")
+            one_min = self._client.klines(
+                order.symbol, "1m", limit=16, start_time_ms=open_ms, end_time_ms=close_ms
+            )
+            for mk in one_min:
+                if order.direction == "LONG":
+                    tp_hit = mk.high >= order.tp1
+                    sl_hit = mk.low <= order.stop_loss
+                else:
+                    tp_hit = mk.low <= order.tp1
+                    sl_hit = mk.high >= order.stop_loss
+                if tp_hit and sl_hit:
+                    continue
+                if tp_hit:
+                    return "TP1"
+                if sl_hit:
+                    return "SL"
+        except Exception as exc:
+            log.warning(
+                "[V3] same-candle TP1/SL tie-break failed for %s, defaulting to SL: %s",
+                order.symbol, exc,
+            )
+        log.info("[V3] %s same-candle TP1/SL ambiguous — defaulting to SL", order.order_id)
+        return "SL"
 
 
 def _sdt(iso: str | None) -> str:

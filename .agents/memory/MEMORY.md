@@ -4,3 +4,4 @@
 - [Live Mirror architecture](live-mirror-arch.md) — v3/live/ module; each strategy gets its own LiveMirrorEngine instance scoped by strategy_id; LIVE_TRADING_ENABLED env is a global kill switch, DB live_enabled is the per-strategy switch.
 - [Multi-strategy live isolation](multi-strategy-live-isolation.md) — running 2+ live strategies on one Binance account requires strategy_id on every live_orders query (conflict resolution, sync, reporting) or they silently cross-contaminate.
 - [V3 runtime settings](v3-runtime-settings.md) — dedup_hours/max_open_orders now live-adjustable via `v3_runtime_settings` PG table + `/limits`/`/setlimit` Telegram commands, no redeploy needed.
+- [Same-candle TP1/SL ambiguity](same-candle-tp-sl-ambiguity.md) — 15m OHLC can't order-of-events TP1 vs SL in one candle; disambiguate with 1m klines, fallback SL.

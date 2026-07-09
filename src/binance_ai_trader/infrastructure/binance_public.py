@@ -145,9 +145,12 @@ class BinancePublicClient:
         interval: str,
         limit: int = 200,
         now_ms: int | None = None,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
     ) -> tuple[Kline, ...]:
         return self.historical_klines(
-            symbol, interval, limit=limit, now_ms=now_ms
+            symbol, interval, limit=limit, now_ms=now_ms,
+            start_time_ms=start_time_ms, end_time_ms=end_time_ms,
         )
 
     def historical_klines(
@@ -159,7 +162,7 @@ class BinancePublicClient:
         end_time_ms: int | None = None,
         now_ms: int | None = None,
     ) -> tuple[Kline, ...]:
-        if interval not in {"15m", "1h", "4h"}:
+        if interval not in {"1m", "15m", "1h", "4h"}:
             raise ValueError(f"Unsupported interval: {interval}")
         if not 1 <= limit <= 1500:
             raise ValueError("Kline limit must be between 1 and 1500")
@@ -232,7 +235,7 @@ class BinancePublicClient:
 
     @staticmethod
     def _validate_klines(klines: tuple[Kline, ...], symbol: str, interval: str) -> None:
-        interval_ms = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000}[interval]
+        interval_ms = {"1m": 60_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000}[interval]
         previous: Kline | None = None
         for kline in klines:
             if min(kline.open, kline.high, kline.low, kline.close) <= 0:
