@@ -17,9 +17,12 @@ description: How the V3 Live Mirror 1:1 real-trade module is structured and wire
 - `cli.py` — live status/orders/positions/cancel/close commands
 
 ## Activation
-Set env secrets: `LIVE_TRADING_ENABLED=true`, `BINANCE_API_KEY`, `BINANCE_API_SECRET`.
+Set env secrets: `LIVE_TRADING_ENABLED=true`, `BINANCE_API_KEY`, `BINANCE_API_SECRET`. This env var is a global kill switch only — the actual per-strategy on/off is `v3_runtime_settings.live_enabled` in PG (default per strategy set in `settings/repository.py` `LIVE_DEFAULTS`), controlled live via `/livemode <v3|v66> on|off`.
 
-Optional tuning: `ORDER_NOTIONAL_USDT` (default 1000), `MAX_PENDING_ORDERS` (10), `MAX_OPEN_POSITIONS` (5), `LIVE_SYNC_INTERVAL_MIN` (15), `LIVE_REPORT_INTERVAL_MIN` (60).
+Optional tuning: `ORDER_NOTIONAL_USDT` (V3 fallback, default 1000), `V66_ORDER_NOTIONAL_USDT` (V66 fallback, default 2000), `MAX_PENDING_ORDERS` (10), `MAX_OPEN_POSITIONS` (5), `LIVE_SYNC_INTERVAL_MIN` (15), `LIVE_REPORT_INTERVAL_MIN` (60). Actual effective notional is DB `v3_runtime_settings.notional_usdt` per strategy (override via `/setlive <v3|v66> <amount>`), env is just the constructor default before any DB row exists.
+
+## Multi-strategy (V3 + V66) on one account
+Both strategies run their own `LiveMirrorEngine(strategy_id=..., tag=...)` against the *same* Binance account. See [multi-strategy-live-isolation.md](multi-strategy-live-isolation.md) for the isolation rules this requires.
 
 ## Wire-up points
 - `run_server.py` — creates LiveMirrorEngine if enabled, passes to build_v3_tasks()

@@ -158,6 +158,14 @@ CREATE INDEX IF NOT EXISTS idx_live_orders_symbol
 CREATE INDEX IF NOT EXISTS idx_live_orders_signal
     ON live_orders(signal_id);
 
+-- strategy_id: distinguishes V3 (hotlist_momentum_v3) vs V66 (hotlist_v66) live
+-- orders so each strategy's conflict resolution only sees its own orders and
+-- the two never falsely collide on the same symbol. Backfilled to the V3
+-- strategy id for any pre-existing rows (V3 was the only live strategy before).
+ALTER TABLE live_orders ADD COLUMN IF NOT EXISTS strategy_id TEXT NOT NULL DEFAULT 'hotlist_momentum_v3';
+CREATE INDEX IF NOT EXISTS idx_live_orders_strategy
+    ON live_orders(strategy_id, symbol, status);
+
 CREATE TABLE IF NOT EXISTS v66_watchlist (
     symbol             TEXT PRIMARY KEY,
     source             TEXT NOT NULL,
@@ -222,6 +230,13 @@ CREATE TABLE IF NOT EXISTS v3_runtime_settings (
     updated_at       TEXT,
     updated_by       TEXT
 );
+
+-- live_enabled: per-strategy DB-backed live-trading switch, controlled via the
+-- Telegram /livemode command. Combined with the global LIVE_TRADING_ENABLED
+-- env var as a kill switch (both must be true for real orders to be placed).
+-- notional_usdt: per-strategy live position size override (NULL = hardcoded default).
+ALTER TABLE v3_runtime_settings ADD COLUMN IF NOT EXISTS live_enabled  BOOLEAN;
+ALTER TABLE v3_runtime_settings ADD COLUMN IF NOT EXISTS notional_usdt NUMERIC;
 """
 
 

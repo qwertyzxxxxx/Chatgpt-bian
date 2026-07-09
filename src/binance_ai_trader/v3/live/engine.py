@@ -43,6 +43,8 @@ class LiveMirrorEngine:
         notional_usdt: Decimal = Decimal("1000"),
         max_pending: int = 10,
         max_positions: int = 5,
+        strategy_id: str = "hotlist_momentum_v3",
+        tag: str | None = None,
     ) -> None:
         self._client   = client
         self._repo     = repo
@@ -50,10 +52,44 @@ class LiveMirrorEngine:
         self._notional = notional_usdt
         self._max_pend = max_pending
         self._max_pos  = max_positions
+        self._strategy_id = strategy_id
+        # Short label used to prefix Telegram messages (e.g. "[V3]"/"[V66]") so
+        # the two strategies' live notifications are never confused with each
+        # other. Defaults to a readable form of strategy_id if not given.
+        self._tag = tag or strategy_id
         self._order_manager = LiveOrderManager()
 
     def is_enabled(self) -> bool:
-        return os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
+        """Live trading requires BOTH the global kill switch (env var) AND
+        this strategy's own DB-backed toggle (set via /livemode in Telegram).
+
+        The env var acts as an emergency master switch that always wins —
+        flipping it off disables live trading for every strategy at once,
+        regardless of what's stored in the database.
+        """
+        if os.environ.get("LIVE_TRADING_ENABLED", "").lower() != "true":
+            return False
+        try:
+            from binance_ai_trader.v3.settings.repository import V3RuntimeSettingsRepository
+
+            live_enabled, _ = V3RuntimeSettingsRepository().resolve_live(self._strategy_id)
+            return live_enabled
+        except Exception:
+            log.exception("[Live] failed to resolve live_enabled for %s — defaulting to disabled",
+                          self._strategy_id)
+            return False
+
+    def effective_notional(self) -> Decimal:
+        """Current live position size (USDT), honoring any DB override."""
+        try:
+            from binance_ai_trader.v3.settings.repository import V3RuntimeSettingsRepository
+
+            _, notional = V3RuntimeSettingsRepository().resolve_live(self._strategy_id)
+            return notional
+        except Exception:
+            log.exception("[Live] failed to resolve notional for %s — using constructor default",
+                          self._strategy_id)
+            return self._notional
 
     # ── Place ──────────────────────────────────────────────────────────────────
 
@@ -92,7 +128,8 @@ class LiveMirrorEngine:
             except BinanceFuturesError as exc:
                 log.warning("[Live] set_leverage failed for %s: %s", candidate.symbol, exc)
 
-            qty = self._calc_quantity(candidate.symbol, entry, leverage)
+            notional = self.effective_notional()
+            qty = self._calc_quantity(candidate.symbol, entry, leverage, notional)
             if qty <= 0:
                 reason = "数量计算结果≤0"
                 self._save_rejected(live_order_id, candidate, now, reason)
@@ -135,7 +172,7 @@ class LiveMirrorEngine:
                 entry          = str(entry_r),
                 sl             = str(sl),
                 tp             = str(tp),
-                notional       = str(self._notional),
+                notional       = str(notional),
                 leverage       = leverage,
                 quantity       = str(qty),
                 status         = "PENDING",
@@ -145,6 +182,7 @@ class LiveMirrorEngine:
                 created_at     = now,
                 updated_at     = now,
                 reject_reason  = None,
+                strategy_id    = self._strategy_id,
             )
             self._repo.save(order)
             self._event(live_order_id, candidate.signal_id, "PLACED",
@@ -168,16 +206,21 @@ class LiveMirrorEngine:
     # ── Sync ──────────────────────────────────────────────────────────────────
 
     def sync_all(self) -> int:
-        """Check pending/filled orders, attach SL/TP after entry fill. Returns updated count."""
+        """Check pending/filled orders, attach SL/TP after entry fill. Returns updated count.
+
+        Scoped to this engine's own strategy_id — the V3 and V66 engines each
+        sync only their own orders, so one strategy's sync loop can never
+        touch or reconcile the other's live_orders rows.
+        """
         updated = 0
-        for order in self._repo.load_by_status("PENDING"):
+        for order in self._repo.load_by_status("PENDING", strategy_id=self._strategy_id):
             try:
                 if self._sync_pending(order):
                     updated += 1
             except Exception:
                 log.exception("[Live] sync_pending failed for %s", order.live_order_id)
 
-        for order in self._repo.load_by_status("FILLED"):
+        for order in self._repo.load_by_status("FILLED", strategy_id=self._strategy_id):
             try:
                 if self._sync_filled(order):
                     updated += 1
@@ -202,8 +245,11 @@ class LiveMirrorEngine:
         (either no conflict, or the conflicting order was just replaced).
         Returns a reason string if placement should be skipped (terminal).
         """
-        pending = self._repo.load_pending_by_symbol(candidate.symbol)
-        filled = self._repo.load_filled_by_symbol(candidate.symbol)
+        # Scoped to this strategy: V3 and V66 resolve conflicts independently,
+        # so a V66 signal can never see (or replace/cancel) a V3 order on the
+        # same symbol, and vice versa.
+        pending = self._repo.load_pending_by_symbol(candidate.symbol, strategy_id=self._strategy_id)
+        filled = self._repo.load_filled_by_symbol(candidate.symbol, strategy_id=self._strategy_id)
         decision = self._order_manager.resolve(candidate.symbol, candidate.direction, entry, pending, filled)
 
         if decision.action == "PLACE":
@@ -326,7 +372,7 @@ class LiveMirrorEngine:
     def _expire_stale_pending(self) -> int:
         count = 0
         now = datetime.now(UTC)
-        for order in self._repo.load_by_status("PENDING"):
+        for order in self._repo.load_by_status("PENDING", strategy_id=self._strategy_id):
             try:
                 reason = self._stale_reason(order, now)
             except Exception:
@@ -632,7 +678,7 @@ class LiveMirrorEngine:
         try:
             balance = self._client.get_balance()
             leverage = self._choose_leverage(candidate.symbol)
-            required_margin = self._notional / Decimal(leverage)
+            required_margin = self.effective_notional() / Decimal(leverage)
             if balance < required_margin:
                 return f"余额{balance:.0f}U不足(需{required_margin:.0f}U)"
         except Exception as exc:
@@ -649,8 +695,8 @@ class LiveMirrorEngine:
         except Exception:
             return 10
 
-    def _calc_quantity(self, symbol: str, entry: Decimal, leverage: int) -> Decimal:
-        raw_qty = self._notional / entry
+    def _calc_quantity(self, symbol: str, entry: Decimal, leverage: int, notional: Decimal | None = None) -> Decimal:
+        raw_qty = (notional if notional is not None else self._notional) / entry
         return self._client.round_quantity(symbol, raw_qty)
 
     def _save_rejected(
@@ -673,7 +719,7 @@ class LiveMirrorEngine:
             entry          = candidate.entry,
             sl             = candidate.sl,
             tp             = candidate.tp1,
-            notional       = str(self._notional),
+            notional       = str(self.effective_notional()),
             leverage       = 0,
             quantity       = "0",
             status         = status,
@@ -683,6 +729,7 @@ class LiveMirrorEngine:
             created_at     = now,
             updated_at     = now,
             reject_reason  = reason,
+            strategy_id    = self._strategy_id,
         )
         try:
             self._repo.save(order)
@@ -710,6 +757,64 @@ class LiveMirrorEngine:
                 self._notifier.send(msg)
             except Exception:
                 log.exception("[Live] notification failed")
+
+    # ── Orphan-order reconciliation sweep ───────────────────────────────────────
+
+    def sweep_orphans(self) -> dict:
+        """Detect Binance orders that exist on the exchange but aren't tracked
+        by ANY live_orders row (across both V3 and V66 — deliberately
+        unscoped by strategy_id here, since an orphan could have come from
+        either strategy, a manual trade, or a previous bug).
+
+        This is diagnostic-only: it never auto-cancels anything. Given this
+        controls real money, a human must confirm before any order is
+        touched — we just surface the finding so the operator can act via
+        /orders, /livestatus, or manually on Binance/Telegram.
+        """
+        result = {"checked": 0, "orphans": []}
+        try:
+            open_orders = self._client.get_open_orders()
+        except Exception:
+            log.exception("[Live] sweep_orphans: get_open_orders failed")
+            return result
+
+        result["checked"] = len(open_orders)
+        if not open_orders:
+            return result
+
+        try:
+            # Unscoped: every non-terminal order across all strategies.
+            tracked = self._repo.load_by_status("PENDING", "FILLED")
+        except Exception:
+            log.exception("[Live] sweep_orphans: failed to load tracked orders")
+            return result
+
+        known_order_ids: set[str] = set()
+        for o in tracked:
+            for oid in (o.entry_order_id, o.sl_order_id, o.tp_order_id):
+                if oid:
+                    known_order_ids.add(str(oid))
+
+        orphans = [
+            oo for oo in open_orders
+            if str(oo.get("orderId", "")) not in known_order_ids
+        ]
+        result["orphans"] = orphans
+
+        if orphans:
+            log.warning("[Live] sweep_orphans found %d untracked order(s): %s",
+                        len(orphans),
+                        [(o.get("symbol"), o.get("orderId"), o.get("type")) for o in orphans])
+            lines = [f"⚠️ 发现 {len(orphans)} 个未被系统追踪的挂单（可能是手动下单/历史遗留）："]
+            for o in orphans[:10]:
+                lines.append(
+                    f"  {o.get('symbol')} orderId={o.get('orderId')} "
+                    f"{o.get('type')} {o.get('side')} qty={o.get('origQty')}"
+                )
+            lines.append("该检查仅提示，不会自动撤单，请人工核实。")
+            self._notify("\n".join(lines))
+
+        return result
 
     # ── Status / CLI helpers ──────────────────────────────────────────────────
 

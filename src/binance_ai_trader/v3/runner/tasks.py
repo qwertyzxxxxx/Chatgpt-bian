@@ -72,6 +72,7 @@ def build_v3_tasks(
     live_mirror: LiveMirrorEngine | None = None,
     live_sync_interval: timedelta = timedelta(minutes=3),
     live_report_interval: timedelta = timedelta(hours=1),
+    live_orphan_sweep_interval: timedelta = timedelta(minutes=30),
 ) -> tuple[RunnerTask, ...]:
     """Bootstrap V3 repos (PostgreSQL) and return runner tasks."""
     client = BinancePublicClient(
@@ -93,7 +94,8 @@ def build_v3_tasks(
 
     v3_tg    = V3TelegramNotifier(telegram) if telegram else None
     live_reporter = (
-        LiveHourlyReporter(live_mirror, live_mirror._repo, telegram)
+        LiveHourlyReporter(live_mirror, live_mirror._repo, telegram,
+                           strategy_id=_STRATEGY_ID, tag="V3")
         if live_mirror and telegram else None
     )
     reporter = (
@@ -211,6 +213,19 @@ def build_v3_tasks(
             live_reporter.send_report()
         return RunnerTaskResult("SUCCEEDED", {"event_type": "v3_live_report"})
 
+    def _live_orphan_sweep_task() -> RunnerTaskResult:
+        # Runs off the V3 engine, but the sweep itself is unscoped and checks
+        # ALL live orders (V3 + V66) against Binance — only needs to run once
+        # regardless of how many strategies have live mirrors configured.
+        if live_mirror:
+            info = live_mirror.sweep_orphans()
+            return RunnerTaskResult("SUCCEEDED", {
+                "event_type": "v3_live_orphan_sweep",
+                "checked": info["checked"],
+                "orphans": len(info["orphans"]),
+            })
+        return RunnerTaskResult("SKIPPED")
+
     def _report_task() -> RunnerTaskResult:
         if reporter:
             reporter.send_report()
@@ -231,6 +246,7 @@ def build_v3_tasks(
     if live_mirror:
         tasks.append(RunnerTask("v3_live_sync",   _live_sync_task,   interval=live_sync_interval,   startup_immediate=True))
         tasks.append(RunnerTask("v3_live_report", _live_report_task, interval=live_report_interval))
+        tasks.append(RunnerTask("v3_live_orphan_sweep", _live_orphan_sweep_task, interval=live_orphan_sweep_interval))
     if reporter:
         tasks.append(RunnerTask("v3_shadow_report", _report_task, interval=report_interval, startup_immediate=True))
     tasks.append(RunnerTask("v3_weekly_review", _weekly_review_task, interval=weekly_review_interval))
@@ -260,8 +276,13 @@ def build_v66_tasks(
     report_interval: timedelta = timedelta(hours=1),
     dedup_hours: int = 24,
     max_open_orders: int = 5,
+    live_mirror: LiveMirrorEngine | None = None,
+    live_sync_interval: timedelta = timedelta(minutes=3),
+    live_report_interval: timedelta = timedelta(hours=1),
 ) -> tuple[RunnerTask, ...]:
-    """Bootstrap V66 (V1-style watchlist) tasks — paper trading only."""
+    """Bootstrap V66 (V1-style watchlist) tasks. Paper trading always runs;
+    live mirroring is optional and controlled independently of V3 (own
+    LiveMirrorEngine instance, own strategy_id, own DB live_enabled flag)."""
     client = BinancePublicClient(
         base_url=base_url,
         timeout_seconds=timeout,
@@ -278,6 +299,11 @@ def build_v66_tasks(
     settings_repo = V3RuntimeSettingsRepository()
 
     v66_tg = V3TelegramNotifier(telegram) if telegram else None
+    live_reporter = (
+        LiveHourlyReporter(live_mirror, live_mirror._repo, telegram,
+                           strategy_id=_V66_STRATEGY_ID, tag="V66")
+        if live_mirror and telegram else None
+    )
     reporter = (
         V3ShadowReporter(
             telegram, order_repo, perf_calc, _V66_STRATEGY_ID,
@@ -349,8 +375,17 @@ def build_v66_tasks(
             ))
             orders_created += 1
 
+            live_prefix = "【V66 模拟盘】"
+            if live_mirror and live_mirror.is_enabled():
+                try:
+                    live_result = live_mirror.try_place(candidate)
+                    live_prefix = live_result.prefix()
+                except Exception:
+                    log.exception("[V66] live mirror try_place failed for %s", candidate.signal_id)
+                    live_prefix = "【实盘未下单：内部错误】"
+
             if v66_tg:
-                v66_tg.send_candidate(candidate, hold_hours=_V66_HOLD_HOURS, live_prefix="【V66 模拟盘】")
+                v66_tg.send_candidate(candidate, hold_hours=_V66_HOLD_HOURS, live_prefix=live_prefix)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
@@ -378,8 +413,24 @@ def build_v66_tasks(
             reporter.send_report()
         return RunnerTaskResult("SUCCEEDED", {"event_type": "v66_report"})
 
-    return (
+    def _v66_live_sync_task() -> RunnerTaskResult:
+        if live_mirror and live_mirror.is_enabled():
+            updated = live_mirror.sync_all()
+            return RunnerTaskResult("SUCCEEDED", {"event_type": "v66_live_sync", "updated": updated})
+        return RunnerTaskResult("SKIPPED")
+
+    def _v66_live_report_task() -> RunnerTaskResult:
+        if live_mirror and live_mirror.is_enabled() and live_reporter:
+            live_reporter.send_report()
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "v66_live_report"})
+
+    tasks: list[RunnerTask] = [
         RunnerTask("v66_scan",   _v66_scan_task,   interval=scan_interval,   startup_immediate=True),
         RunnerTask("v66_settle", _v66_settle_task, interval=settle_interval, startup_immediate=True),
-        RunnerTask("v66_report", _v66_report_task, interval=report_interval),
-    )
+    ]
+    if live_mirror:
+        tasks.append(RunnerTask("v66_live_sync",   _v66_live_sync_task,   interval=live_sync_interval,   startup_immediate=True))
+        tasks.append(RunnerTask("v66_live_report", _v66_live_report_task, interval=live_report_interval))
+    tasks.append(RunnerTask("v66_report", _v66_report_task, interval=report_interval))
+
+    return tuple(tasks)

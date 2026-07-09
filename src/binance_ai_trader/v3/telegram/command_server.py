@@ -36,6 +36,7 @@ _COMMANDS = {
     "/help", "/status", "/market", "/debug", "/v4debug",
     "/signals", "/orders", "/perf", "/v66",
     "/limits", "/setlimit",
+    "/livestatus", "/livemode", "/setlive",
 }
 
 
@@ -100,6 +101,9 @@ def _cmd_help() -> str:
         "/v66     📡 V66 监控池状态\n"
         "/limits  ⚙️ 查看去重窗口/持仓上限设置\n"
         "/setlimit ⚙️ 调整去重窗口/持仓上限\n"
+        "/livestatus 🟢 查看实盘开关/仓位状态\n"
+        "/livemode   🔌 开关某策略实盘交易\n"
+        "/setlive    💰 调整实盘仓位大小(USDT)\n"
         "/help    📖 显示此帮助"
     )
 
@@ -169,6 +173,76 @@ def _cmd_setlimit(args: list[str], user_id: int | None) -> str:
         return f"❌ 未知字段 '{field}'，可选: dedup / maxorders / reset"
     except ValueError as exc:
         return f"❌ {exc}"
+
+
+def _cmd_livestatus() -> str:
+    from binance_ai_trader.v3.settings.repository import (
+        V3_STRATEGY_ID, V66_STRATEGY_ID, V3RuntimeSettingsRepository,
+    )
+
+    repo = V3RuntimeSettingsRepository()
+    master_on = os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
+    lines = ["🟢 实盘交易状态", "━━━━━━━━━━━━━━"]
+    lines.append(f"全局开关(LIVE_TRADING_ENABLED): {'✅ ON' if master_on else '⛔ OFF（优先级最高，覆盖下方策略开关）'}")
+    for alias, strategy_id in (("v3", V3_STRATEGY_ID), ("v66", V66_STRATEGY_ID)):
+        on, notional = repo.resolve_live(strategy_id)
+        s = repo.get(strategy_id)
+        on_tag = "（默认）" if s.live_enabled is None else f"（已调整，{_ago(s.updated_at)}）"
+        notional_tag = "（默认）" if s.notional_usdt is None else f"（已调整，{_ago(s.updated_at)}）"
+        effective = "✅ 实盘中" if (master_on and on) else "⛔ 未实盘（仅模拟）"
+        lines.append(f"\n【{alias}】{effective}")
+        lines.append(f"策略开关: {'ON' if on else 'OFF'} {on_tag}")
+        lines.append(f"仓位大小: {notional} USDT {notional_tag}")
+    lines.append("\n用法: /livemode v3 on|off")
+    lines.append("      /setlive v66 3000")
+    return "\n".join(lines)
+
+
+def _cmd_livemode(args: list[str], user_id: int | None) -> str:
+    from binance_ai_trader.v3.settings.repository import (
+        STRATEGY_ALIASES, V3RuntimeSettingsRepository,
+    )
+
+    if len(args) < 2 or args[1].lower() not in ("on", "off"):
+        return "❌ 用法: /livemode <v3|v66> <on|off>\n示例: /livemode v66 on"
+
+    alias = args[0].lower()
+    strategy_id = STRATEGY_ALIASES.get(alias)
+    if strategy_id is None:
+        return f"❌ 未知策略 '{alias}'，可选: {', '.join(STRATEGY_ALIASES)}"
+
+    enabled = args[1].lower() == "on"
+    updated_by = str(user_id) if user_id is not None else None
+    repo = V3RuntimeSettingsRepository()
+    repo.set_live_enabled(strategy_id, enabled, updated_by=updated_by)
+
+    master_on = os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
+    warn = "" if master_on else "\n⚠️ 注意: 全局开关 LIVE_TRADING_ENABLED 当前为 OFF，此设置暂不会实际生效"
+    return f"✅ {alias} 实盘交易已设为 {'ON' if enabled else 'OFF'}{warn}"
+
+
+def _cmd_setlive(args: list[str], user_id: int | None) -> str:
+    from binance_ai_trader.v3.settings.repository import (
+        STRATEGY_ALIASES, V3RuntimeSettingsRepository,
+    )
+
+    if len(args) < 2:
+        return "❌ 用法: /setlive <v3|v66> <数值USDT>\n示例: /setlive v66 3000"
+
+    alias = args[0].lower()
+    strategy_id = STRATEGY_ALIASES.get(alias)
+    if strategy_id is None:
+        return f"❌ 未知策略 '{alias}'，可选: {', '.join(STRATEGY_ALIASES)}"
+
+    updated_by = str(user_id) if user_id is not None else None
+    repo = V3RuntimeSettingsRepository()
+    try:
+        repo.set_notional_usdt(strategy_id, args[1], updated_by=updated_by)
+        return f"✅ {alias} 仓位大小已设为 {args[1]} USDT"
+    except ValueError as exc:
+        return f"❌ {exc}"
+    except Exception as exc:
+        return f"❌ 数值无效: {exc}"
 
 
 def _cmd_status(db_path: Path) -> str:
@@ -644,6 +718,12 @@ class TelegramCommandServer:
                 return _cmd_limits()
             if cmd == "/setlimit":
                 return _cmd_setlimit(args, user_id)
+            if cmd == "/livestatus":
+                return _cmd_livestatus()
+            if cmd == "/livemode":
+                return _cmd_livemode(args, user_id)
+            if cmd == "/setlive":
+                return _cmd_setlive(args, user_id)
             return "❓ 未知指令，发送 /help 查看列表"
         except Exception as exc:
             log.exception("[CmdServer] command %s failed", cmd)

@@ -54,6 +54,7 @@ class LiveOrder:
     created_at: str
     updated_at: str
     reject_reason: str | None
+    strategy_id: str = "hotlist_momentum_v3"
 
 
 @dataclass(frozen=True, slots=True)

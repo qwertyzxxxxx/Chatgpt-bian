@@ -140,7 +140,14 @@ if __name__ == "__main__":
     _drop_v2_tables()
 
     # ── Live Mirror (optional) ────────────────────────────────────────────────
-    live_mirror = None
+    # V3 and V66 each get their OWN LiveMirrorEngine instance, scoped by
+    # strategy_id, so their orders/notional/conflict-resolution never cross.
+    # The env var LIVE_TRADING_ENABLED is a global kill switch: if it's not
+    # "true", neither engine is even constructed. Per-strategy on/off and
+    # position size are then controlled at runtime via DB settings
+    # (V3RuntimeSettingsRepository / Telegram /livemode /setlive commands).
+    live_mirror = None       # V3
+    v66_live_mirror = None   # V66
     _live_enabled = os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
     if _live_enabled:
         _api_key    = os.environ.get("BINANCE_API_KEY", "")
@@ -151,26 +158,56 @@ if __name__ == "__main__":
                 from binance_ai_trader.v3.live.client import BinanceFuturesClient
                 from binance_ai_trader.v3.live.engine import LiveMirrorEngine
                 from binance_ai_trader.v3.live.repository import LiveOrderRepository
+                from binance_ai_trader.v3.settings.repository import (
+                    V3_STRATEGY_ID, V66_STRATEGY_ID,
+                )
                 _live_client = BinanceFuturesClient(_api_key, _api_secret)
                 _live_repo   = LiveOrderRepository()
-                _notional    = _Dec(os.environ.get("ORDER_NOTIONAL_USDT", "1000"))
                 _max_pending = int(os.environ.get("MAX_PENDING_ORDERS", "10"))
                 _max_pos     = int(os.environ.get("MAX_OPEN_POSITIONS", "5"))
+
+                _v3_notional = _Dec(os.environ.get("ORDER_NOTIONAL_USDT", "1000"))
                 live_mirror  = LiveMirrorEngine(
                     _live_client, _live_repo, notifier,
-                    notional_usdt=_notional,
+                    notional_usdt=_v3_notional,
                     max_pending=_max_pending,
                     max_positions=_max_pos,
+                    strategy_id=V3_STRATEGY_ID,
+                    tag="V3",
                 )
-                _log.info("[startup] Live Mirror initialised — notional=%sU max_pending=%d max_pos=%d",
-                          _notional, _max_pending, _max_pos)
+
+                _v66_notional = _Dec(os.environ.get("V66_ORDER_NOTIONAL_USDT", "2000"))
+                v66_live_mirror = LiveMirrorEngine(
+                    _live_client, _live_repo, notifier,
+                    notional_usdt=_v66_notional,
+                    max_pending=_max_pending,
+                    max_positions=_max_pos,
+                    strategy_id=V66_STRATEGY_ID,
+                    tag="V66",
+                )
+
+                _log.info(
+                    "[startup] Live Mirror initialised — V3 notional=%sU (live_enabled db-controlled), "
+                    "V66 notional=%sU (live_enabled db-controlled), max_pending=%d max_pos=%d",
+                    _v3_notional, _v66_notional, _max_pending, _max_pos,
+                )
                 if notifier:
+                    try:
+                        from binance_ai_trader.v3.settings.repository import V3RuntimeSettingsRepository
+                        _settings_repo = V3RuntimeSettingsRepository()
+                        _v3_on, _v3_amt = _settings_repo.resolve_live(V3_STRATEGY_ID)
+                        _v66_on, _v66_amt = _settings_repo.resolve_live(V66_STRATEGY_ID)
+                    except Exception:
+                        _v3_on, _v3_amt = False, _v3_notional
+                        _v66_on, _v66_amt = True, _v66_notional
                     notifier.send(
-                        "[V3 LIVE] 实盘模块启动\n"
+                        "[LIVE] 实盘模块启动\n"
                         f"━━━━━━━━━━━━━━\n"
-                        f"名义仓位  {_notional} USDT\n"
+                        f"V3  实盘 {'ON' if _v3_on else 'OFF'}  仓位 {_v3_amt} USDT\n"
+                        f"V66 实盘 {'ON' if _v66_on else 'OFF'}  仓位 {_v66_amt} USDT\n"
                         f"最大挂单  {_max_pending}\n"
-                        f"最大持仓  {_max_pos}"
+                        f"最大持仓  {_max_pos}\n"
+                        f"使用 /livestatus /livemode /setlive 调整"
                     )
             except Exception as exc:
                 _log.error("[startup] Live Mirror init failed: %s", exc)
@@ -197,7 +234,7 @@ if __name__ == "__main__":
         live_report_interval=timedelta(minutes=int(os.environ.get("LIVE_REPORT_INTERVAL_MIN", "60"))),
     ))
 
-    # ── Build V66 tasks (V1-style watchlist, paper only) ──────────────────────
+    # ── Build V66 tasks (V1-style watchlist, own live mirror) ─────────────────
     v66_tasks = build_v66_tasks(
         db_path=_DB_PATH,
         universe_config=universe_config,
@@ -207,6 +244,9 @@ if __name__ == "__main__":
         report_interval=timedelta(hours=1),
         dedup_hours=24,
         max_open_orders=5,
+        live_mirror=v66_live_mirror,
+        live_sync_interval=timedelta(minutes=int(os.environ.get("LIVE_SYNC_INTERVAL_MIN", "3"))),
+        live_report_interval=timedelta(minutes=int(os.environ.get("LIVE_REPORT_INTERVAL_MIN", "60"))),
     )
     tasks.extend(v66_tasks)
 

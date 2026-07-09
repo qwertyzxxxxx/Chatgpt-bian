@@ -45,6 +45,17 @@ class RuntimeSettings:
     max_open_orders: int | None = None
     updated_at: str | None = None
     updated_by: str | None = None
+    live_enabled: bool | None = None
+    notional_usdt: str | None = None
+
+
+# Hardcoded fallback live-trading defaults, used only when there is no DB row
+# yet (fresh deploy). Per the 2026-07 rollout: V3 live trading is OFF (paper
+# continues), V66 goes live with a 2000 USDT position size.
+LIVE_DEFAULTS: dict[str, dict[str, object]] = {
+    V3_STRATEGY_ID:  {"live_enabled": False, "notional_usdt": "1000"},
+    V66_STRATEGY_ID: {"live_enabled": True,  "notional_usdt": "2000"},
+}
 
 
 class V3RuntimeSettingsRepository:
@@ -55,7 +66,8 @@ class V3RuntimeSettingsRepository:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT dedup_hours, max_open_orders, updated_at, updated_by
+                    """SELECT dedup_hours, max_open_orders, updated_at, updated_by,
+                              live_enabled, notional_usdt
                        FROM v3_runtime_settings WHERE strategy_id=%s""",
                     (strategy_id,),
                 )
@@ -70,7 +82,31 @@ class V3RuntimeSettingsRepository:
             max_open_orders=row[1],
             updated_at=row[2],
             updated_by=row[3],
+            live_enabled=row[4],
+            notional_usdt=str(row[5]) if row[5] is not None else None,
         )
+
+    def resolve_live(self, strategy_id: str) -> tuple[bool, "Decimal"]:
+        """Return the effective (live_enabled, notional_usdt) for a strategy —
+        DB override if set, otherwise the hardcoded rollout default."""
+        from decimal import Decimal
+
+        defaults = LIVE_DEFAULTS.get(strategy_id, {"live_enabled": False, "notional_usdt": "1000"})
+        s = self.get(strategy_id)
+        live_enabled = s.live_enabled if s.live_enabled is not None else bool(defaults["live_enabled"])
+        notional = Decimal(s.notional_usdt) if s.notional_usdt is not None else Decimal(str(defaults["notional_usdt"]))
+        return live_enabled, notional
+
+    def set_live_enabled(self, strategy_id: str, enabled: bool, updated_by: str | None = None) -> None:
+        self._upsert(strategy_id, live_enabled=enabled, updated_by=updated_by)
+
+    def set_notional_usdt(self, strategy_id: str, notional: "Decimal | str | int", updated_by: str | None = None) -> None:
+        from decimal import Decimal
+
+        value = Decimal(str(notional))
+        if value <= 0:
+            raise ValueError(f"notional_usdt 必须 > 0，收到 {value}")
+        self._upsert(strategy_id, notional_usdt=value, updated_by=updated_by)
 
     def resolve(self, strategy_id: str) -> tuple[int, int]:
         """Return the effective (dedup_hours, max_open_orders) for a strategy —
@@ -109,6 +145,8 @@ class V3RuntimeSettingsRepository:
         strategy_id: str,
         dedup_hours: int | None = None,
         max_open_orders: int | None = None,
+        live_enabled: bool | None = None,
+        notional_usdt: "object | None" = None,
         updated_by: str | None = None,
     ) -> None:
         now = datetime.now(UTC).isoformat(timespec="seconds")
@@ -117,19 +155,23 @@ class V3RuntimeSettingsRepository:
             with conn.cursor() as cur:
                 cur.execute(
                     """INSERT INTO v3_runtime_settings
-                           (strategy_id, dedup_hours, max_open_orders, updated_at, updated_by)
-                       VALUES (%s, %s, %s, %s, %s)
+                           (strategy_id, dedup_hours, max_open_orders, updated_at, updated_by,
+                            live_enabled, notional_usdt)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
                        ON CONFLICT (strategy_id) DO UPDATE SET
                            dedup_hours     = COALESCE(EXCLUDED.dedup_hours, v3_runtime_settings.dedup_hours),
                            max_open_orders = COALESCE(EXCLUDED.max_open_orders, v3_runtime_settings.max_open_orders),
+                           live_enabled    = COALESCE(EXCLUDED.live_enabled, v3_runtime_settings.live_enabled),
+                           notional_usdt   = COALESCE(EXCLUDED.notional_usdt, v3_runtime_settings.notional_usdt),
                            updated_at      = EXCLUDED.updated_at,
                            updated_by      = EXCLUDED.updated_by""",
-                    (strategy_id, dedup_hours, max_open_orders, now, updated_by),
+                    (strategy_id, dedup_hours, max_open_orders, now, updated_by,
+                     live_enabled, notional_usdt),
                 )
             conn.commit()
         finally:
             conn.close()
         log.info(
-            "[V3Settings] %s updated: dedup_hours=%s max_open_orders=%s by=%s",
-            strategy_id, dedup_hours, max_open_orders, updated_by,
+            "[V3Settings] %s updated: dedup_hours=%s max_open_orders=%s live_enabled=%s notional_usdt=%s by=%s",
+            strategy_id, dedup_hours, max_open_orders, live_enabled, notional_usdt, updated_by,
         )

@@ -22,9 +22,9 @@ class LiveOrderRepository:
                         live_order_id, signal_id, symbol, side, direction,
                         entry, sl, tp, notional, leverage, quantity,
                         status, entry_order_id, sl_order_id, tp_order_id,
-                        created_at, updated_at, reject_reason
+                        created_at, updated_at, reject_reason, strategy_id
                     ) VALUES (
-                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
                     )
                     ON CONFLICT (live_order_id) DO NOTHING
                     """,
@@ -34,7 +34,7 @@ class LiveOrderRepository:
                         order.tp, order.notional, order.leverage, order.quantity,
                         order.status, order.entry_order_id, order.sl_order_id,
                         order.tp_order_id, order.created_at, order.updated_at,
-                        order.reject_reason,
+                        order.reject_reason, order.strategy_id,
                     ),
                 )
             conn.commit()
@@ -82,15 +82,22 @@ class LiveOrderRepository:
         finally:
             conn.close()
 
-    def load_by_status(self, *statuses: str) -> list[LiveOrder]:
+    def load_by_status(self, *statuses: str, strategy_id: str | None = None) -> list[LiveOrder]:
         placeholders = ",".join(["%s"] * len(statuses))
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT * FROM live_orders WHERE status IN ({placeholders}) ORDER BY created_at",
-                    list(statuses),
-                )
+                if strategy_id is not None:
+                    cur.execute(
+                        f"SELECT * FROM live_orders WHERE status IN ({placeholders}) "
+                        f"AND strategy_id=%s ORDER BY created_at",
+                        [*statuses, strategy_id],
+                    )
+                else:
+                    cur.execute(
+                        f"SELECT * FROM live_orders WHERE status IN ({placeholders}) ORDER BY created_at",
+                        list(statuses),
+                    )
                 return [_row_to_order(row, cur.description) for row in cur.fetchall()]
         finally:
             conn.close()
@@ -156,53 +163,89 @@ class LiveOrderRepository:
         finally:
             conn.close()
 
-    def load_pending_by_symbol(self, symbol: str) -> list[LiveOrder]:
-        """PENDING orders for a symbol, oldest first."""
+    def load_pending_by_symbol(self, symbol: str, strategy_id: str | None = None) -> list[LiveOrder]:
+        """PENDING orders for a symbol, oldest first.
+
+        When `strategy_id` is given, only that strategy's own orders are
+        returned — so V3 and V66 each resolve conflicts against their own
+        book and never falsely collide on the same symbol.
+        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM live_orders WHERE symbol=%s AND status='PENDING' ORDER BY created_at",
-                    (symbol,),
-                )
+                if strategy_id is not None:
+                    cur.execute(
+                        "SELECT * FROM live_orders WHERE symbol=%s AND status='PENDING' "
+                        "AND strategy_id=%s ORDER BY created_at",
+                        (symbol, strategy_id),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM live_orders WHERE symbol=%s AND status='PENDING' ORDER BY created_at",
+                        (symbol,),
+                    )
                 return [_row_to_order(row, cur.description) for row in cur.fetchall()]
         finally:
             conn.close()
 
-    def load_filled_by_symbol(self, symbol: str) -> list[LiveOrder]:
-        """FILLED (open-position) orders for a symbol."""
+    def load_filled_by_symbol(self, symbol: str, strategy_id: str | None = None) -> list[LiveOrder]:
+        """FILLED (open-position) orders for a symbol.
+
+        See `load_pending_by_symbol` for why `strategy_id` matters.
+        """
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM live_orders WHERE symbol=%s AND status='FILLED' ORDER BY created_at",
-                    (symbol,),
-                )
+                if strategy_id is not None:
+                    cur.execute(
+                        "SELECT * FROM live_orders WHERE symbol=%s AND status='FILLED' "
+                        "AND strategy_id=%s ORDER BY created_at",
+                        (symbol, strategy_id),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM live_orders WHERE symbol=%s AND status='FILLED' ORDER BY created_at",
+                        (symbol,),
+                    )
                 return [_row_to_order(row, cur.description) for row in cur.fetchall()]
         finally:
             conn.close()
 
-    def count_today_by_type(self, event_type: str) -> int:
+    def count_today_by_type(self, event_type: str, strategy_id: str | None = None) -> int:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) FROM live_events WHERE event_type=%s AND created_at LIKE %s",
-                    (event_type, f"{today}%"),
-                )
+                if strategy_id is not None:
+                    cur.execute(
+                        """SELECT COUNT(*) FROM live_events e
+                           JOIN live_orders o ON o.live_order_id = e.live_order_id
+                           WHERE e.event_type=%s AND e.created_at LIKE %s AND o.strategy_id=%s""",
+                        (event_type, f"{today}%", strategy_id),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM live_events WHERE event_type=%s AND created_at LIKE %s",
+                        (event_type, f"{today}%"),
+                    )
                 return cur.fetchone()[0]
         finally:
             conn.close()
 
-    def today_order_count(self) -> int:
+    def today_order_count(self, strategy_id: str | None = None) -> int:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) FROM live_orders WHERE created_at LIKE %s", (f"{today}%",)
-                )
+                if strategy_id is not None:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM live_orders WHERE created_at LIKE %s AND strategy_id=%s",
+                        (f"{today}%", strategy_id),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM live_orders WHERE created_at LIKE %s", (f"{today}%",)
+                    )
                 return cur.fetchone()[0]
         finally:
             conn.close()
@@ -230,4 +273,5 @@ def _row_to_order(row: tuple, description: object) -> LiveOrder:
         created_at     = d["created_at"],
         updated_at     = d["updated_at"],
         reject_reason  = d["reject_reason"],
+        strategy_id    = d.get("strategy_id") or "hotlist_momentum_v3",
     )

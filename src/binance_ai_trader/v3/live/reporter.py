@@ -17,10 +17,18 @@ class LiveHourlyReporter:
         engine: LiveMirrorEngine,
         repo: LiveOrderRepository,
         notifier: TelegramNotifier,
+        strategy_id: str | None = None,
+        tag: str = "V3",
     ) -> None:
         self._engine   = engine
         self._repo     = repo
         self._notifier = notifier
+        # strategy_id scopes the per-strategy order/event counts below (today's
+        # orders/fills/TP/SL) so V3 and V66 hourly reports don't double-count
+        # each other's activity. Account-level fields (balance/positions) are
+        # necessarily shared across the whole Binance account.
+        self._strategy_id = strategy_id
+        self._tag = tag
 
     def send_report(self) -> None:
         try:
@@ -41,11 +49,11 @@ class LiveHourlyReporter:
         positions      = status.get("positions",      [])
         open_orders    = status.get("open_orders",    [])
 
-        today_orders  = self._repo.today_order_count()
-        today_filled  = self._repo.count_today_by_type("FILLED")
-        today_tp      = self._repo.count_today_by_type("CLOSED_TP")
-        today_sl      = self._repo.count_today_by_type("CLOSED_SL")
-        today_manual  = self._repo.count_today_by_type("MANUAL_CLOSED")
+        today_orders  = self._repo.today_order_count(strategy_id=self._strategy_id)
+        today_filled  = self._repo.count_today_by_type("FILLED", strategy_id=self._strategy_id)
+        today_tp      = self._repo.count_today_by_type("CLOSED_TP", strategy_id=self._strategy_id)
+        today_sl      = self._repo.count_today_by_type("CLOSED_SL", strategy_id=self._strategy_id)
+        today_manual  = self._repo.count_today_by_type("MANUAL_CLOSED", strategy_id=self._strategy_id)
 
         risk = "🟢 正常"
         if len(open_orders) >= 8:
@@ -57,7 +65,7 @@ class LiveHourlyReporter:
         r_sign = "+" if realized_pnl   >= 0 else ""
 
         lines = [
-            "[V3 LIVE HOURLY]",
+            f"[{self._tag} LIVE HOURLY]",
             "━━━━━━━━━━━━━━",
             f"余额         {balance:.2f} USDT",
             f"可用余额     {available:.2f} USDT",
