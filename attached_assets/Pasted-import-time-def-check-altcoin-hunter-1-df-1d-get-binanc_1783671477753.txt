@@ -1,0 +1,60 @@
+import time
+
+def check_altcoin_hunter():
+    # 1. 获取币安山寨币极值数据
+    df_1d = get_binance_klines(symbol='1000PEPEUSDT', timeframe='1d', limit=30)
+    df_4h = get_binance_klines(symbol='1000PEPEUSDT', timeframe='4h', limit=30)
+    df_1h = get_binance_klines(symbol='1000PEPEUSDT', timeframe='1h', limit=30)
+    df_15m = get_binance_klines(symbol='1000PEPEUSDT', timeframe='15m', limit=30)
+    
+    # 2. 计算 3倍布林带、RSI 和 4倍天量
+    atr_1d = calculate_atr(df_1d, 14)
+    rsi_4h = calculate_rsi(df_4h, 14)
+    bb_upper_3x_1h, bb_lower_3x_1h = calculate_bollinger_3x(df_1h) # 3倍标准差
+    vol_ma20_15m = calculate_volume_ma(df_15m, 20)
+    
+    current_price = get_last_price('1000PEPEUSDT')
+    open_interest_drop = get_binance_oi_change('1000PEPEUSDT', period='15m')
+    
+    # ==================== 【做空执行：抓向上插针见顶】 ====================
+    # 1D 异常放量拉升 + 4H 极度超买
+    if df_1d['high'].iloc[-1] - df_1d['low'].iloc[-1] > (atr_1d * 1.5) and rsi_4h > 80:
+        # 1H 刺穿 3倍布林带上轨
+        if df_1h['high'].iloc[-1] > bb_upper_3x_1h:
+            # 15m 出现超长上影线（墓碑线）
+            if is_long_upper_shadow(df_15m, threshold=0.60):
+                # 双重核心量能验证：4倍天量 + 持仓量断崖式暴跌（空头爆光）
+                if df_15m['volume'].iloc[-1] > (vol_ma20_15m * 4.0) and open_interest_drop < -0.10:
+                    
+                    # 动态 ATR 计算 1:2 盈亏比
+                    atr_15m = get_atr(df_15m, 14)
+                    stop_loss = df_15m['high'].iloc[-1] + (atr_15m * 1.5) # 挂在插针头顶再加 ATR 防护
+                    risk_distance = stop_loss - current_price
+                    take_profit = current_price - (risk_distance * 2.2) # 强行锁定 1:2 
+                    
+                    binance_place_order(symbol='1000PEPEUSDT', side='SELL', type='MARKET')
+                    binance_set_tp_sl(symbol='1000PEPEUSDT', stop_loss=stop_loss, take_profit=take_profit)
+                    print(f"🎯 抓到庄家向上针！空单突击，止损:{stop_loss}, 止盈:{take_profit}")
+
+    # ==================== 【做多执行：抓向下插针见底】 ====================
+    # 1D 异常暴跌 + 4H 极度超卖
+    if df_1d['high'].iloc[-1] - df_1d['low'].iloc[-1] > (atr_1d * 1.5) and rsi_4h < 20:
+        # 1H 跌穿 3倍布林带下轨
+        if df_1h['low'].iloc[-1] < bb_lower_3x_1h:
+            # 15m 出现超长下影线（长脚锤子）
+            if is_long_lower_shadow(df_15m, threshold=0.60):
+                # 双重核心量能验证：4倍天量 + 持仓量暴跌（多头爆光）
+                if df_15m['volume'].iloc[-1] > (vol_ma20_15m * 4.0) and open_interest_drop < -0.10:
+                    
+                    atr_15m = get_atr(df_15m, 14)
+                    stop_loss = df_15m['low'].iloc[-1] - (atr_15m * 1.5) # 挂在针底外侧
+                    risk_distance = current_price - stop_loss
+                    take_profit = current_price + (risk_distance * 2.2) # 强行锁定 1:2
+                    
+                    binance_place_order(symbol='1000PEPEUSDT', side='BUY', type='MARKET')
+                    binance_set_tp_sl(symbol='1000PEPEUSDT', stop_loss=stop_loss, take_profit=take_profit)
+                    print(f"🔥 抓到庄家向下针！多单突击，止损:{stop_loss}, 止盈:{take_profit}")
+
+while True:
+    check_altcoin_hunter()
+    time.sleep(900)
