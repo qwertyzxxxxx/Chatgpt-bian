@@ -192,7 +192,36 @@ class V3Settler:
                 )
             except Exception:
                 log.exception("[V3] failed to send settlement notification for %s", order.order_id)
+        self._record_paper_vs_live(order, result, closed_at)
         return True
+
+    def _record_paper_vs_live(self, order: V3PaperOrder, result: str, closed_at: str) -> None:
+        """Log this settlement alongside the real live order state, purely as
+        a diff record for future paper-strategy tuning. Never affects paper
+        stats or live trading — best-effort, swallows all errors."""
+        if self._live_repo is None:
+            return
+        try:
+            live_order = self._live_repo.load_by_signal_id(order.signal_id)
+            live_status = live_order.status if live_order else None
+            live_closed_at = live_order.updated_at if live_order else None
+            match = (
+                (result == "TP1" and live_status == "CLOSED_TP")
+                or (result == "SL" and live_status == "CLOSED_SL")
+                or (live_status is None)
+            )
+            self._live_repo.record_paper_vs_live(
+                signal_id=order.signal_id,
+                strategy_id=order.strategy_id,
+                symbol=order.symbol,
+                paper_result=result,
+                paper_closed_at=closed_at,
+                live_status=live_status,
+                live_closed_at=live_closed_at,
+                match=match,
+            )
+        except Exception:
+            log.exception("[V3] failed to record paper-vs-live comparison for %s", order.signal_id)
 
     def _live_divergence_note(self, order: V3PaperOrder) -> str | None:
         """If this strategy mirrors real trades, check whether the actual

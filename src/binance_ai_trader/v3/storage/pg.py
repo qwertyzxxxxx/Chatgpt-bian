@@ -221,6 +221,29 @@ CREATE TABLE IF NOT EXISTS v3_scan_debug (
     crowded_out_json     TEXT NOT NULL DEFAULT '[]'
 );
 
+-- v3_live_paper_comparison: append-only side-by-side record of each paper
+-- settlement result vs. the real live_orders status at that moment. Written
+-- once per settlement when a live mirror exists — purely for future offline
+-- analysis of paper-vs-live divergence; never read by PerformanceCalculator
+-- and never mutates existing stats (per user decision: paper stats stay
+-- self-contained / independently optimized, this table is just a diff log).
+CREATE TABLE IF NOT EXISTS v3_live_paper_comparison (
+    id              BIGSERIAL PRIMARY KEY,
+    signal_id       TEXT NOT NULL,
+    strategy_id     TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    paper_result    TEXT NOT NULL,
+    paper_closed_at TEXT NOT NULL,
+    live_status     TEXT,
+    live_closed_at  TEXT,
+    match           BOOLEAN NOT NULL,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_live_paper_cmp_signal
+    ON v3_live_paper_comparison(signal_id);
+CREATE INDEX IF NOT EXISTS idx_live_paper_cmp_strategy
+    ON v3_live_paper_comparison(strategy_id, created_at);
+
 -- v3_runtime_settings: live-adjustable dedup/position-limit overrides, set via
 -- Telegram /setlimit command. NULL column = "no override, use hardcoded default".
 CREATE TABLE IF NOT EXISTS v3_runtime_settings (

@@ -301,6 +301,38 @@ class LiveOrderRepository:
         finally:
             conn.close()
 
+    def record_paper_vs_live(
+        self,
+        signal_id: str,
+        strategy_id: str,
+        symbol: str,
+        paper_result: str,
+        paper_closed_at: str,
+        live_status: str | None,
+        live_closed_at: str | None,
+        match: bool,
+    ) -> None:
+        """Append-only diff log between a paper settlement and the real live
+        order state at that moment. Used only for later offline analysis of
+        paper-vs-live divergence — never read back into performance stats."""
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO v3_live_paper_comparison (
+                        signal_id, strategy_id, symbol, paper_result, paper_closed_at,
+                        live_status, live_closed_at, match, created_at
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (signal_id, strategy_id, symbol, paper_result, paper_closed_at,
+                     live_status, live_closed_at, match, now),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
 
 def _row_to_order(row: tuple, description: object) -> LiveOrder:
     cols = [d[0] for d in description]

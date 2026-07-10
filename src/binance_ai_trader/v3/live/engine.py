@@ -462,6 +462,24 @@ class LiveMirrorEngine:
             if not sl_id:
                 log.error("[Live] SL attachment FAILED after 3 retries for %s %s",
                           order.live_order_id, order.symbol)
+                self._notify(
+                    f"[Live] 🚨 止损挂单失败（重试3次后仍失败）\n"
+                    f"{order.symbol}  {order.direction}  SL @ {order.sl}\n"
+                    f"live_order_id: {order.live_order_id}\n"
+                    f"👉 请立即在 Binance App 手动设置止损"
+                )
+            if not tp_id:
+                # TP failures used to be logged only (no Telegram alert), which is
+                # exactly how the "漏挂止盈" issue went unnoticed — SL failures paged
+                # loudly while TP failures sat silently in the log. Alert on both now.
+                log.error("[Live] TP attachment FAILED after 3 retries for %s %s",
+                          order.live_order_id, order.symbol)
+                self._notify(
+                    f"[Live] 🚨 止盈挂单失败（重试3次后仍失败）\n"
+                    f"{order.symbol}  {order.direction}  TP @ {order.tp}\n"
+                    f"live_order_id: {order.live_order_id}\n"
+                    f"👉 请立即在 Binance App 手动设置止盈"
+                )
             log.info("[Live] entry filled %s, sl=%s tp=%s", order.live_order_id, sl_id, tp_id)
             return True
         elif status in ("CANCELED", "EXPIRED", "REJECTED"):
@@ -497,12 +515,23 @@ class LiveMirrorEngine:
             # If position no longer exists on Binance, it was closed externally — mark CLOSED
             # (skip this conclusion if the API call itself failed, to avoid false closures)
             if real_qty is None and not get_pos_failed:
-                log.info("[Live] %s %s has no open position on Binance — marking CLOSED",
+                # Neither SL nor TP algo order exists (needs_sl/needs_tp both true
+                # got us here) yet the position is already gone — this can only be
+                # an external/manual close (or an entry that was flattened before
+                # either leg attached). Tag it distinctly so performance stats can
+                # exclude manual intervention from win-rate calculations.
+                log.info("[Live] %s %s has no open position on Binance — marking MANUAL_CLOSED",
                          order.live_order_id, order.symbol)
                 self._cancel_remaining_algo_orders(order)
-                self._repo.update_status(order.live_order_id, "CLOSED")
+                self._repo.update_status(order.live_order_id, "MANUAL_CLOSED")
                 self._event(order.live_order_id, order.signal_id, "CLOSED_EXTERNAL",
                             {"reason": "no_open_position"})
+                self._notify(
+                    f"[Live] ℹ️ 检测到手动平仓（无止盈/止损触发记录）\n"
+                    f"{order.symbol}  {order.direction}\n"
+                    f"live_order_id: {order.live_order_id}\n"
+                    f"该笔不计入策略胜率统计"
+                )
                 return True
 
             if real_qty is None:
@@ -540,32 +569,95 @@ class LiveMirrorEngine:
                     )
 
             if needs_tp:
+                if needs_sl:
+                    self._notify(
+                        f"[Live] ⚠️ 裸仓警告！无止盈单！\n"
+                        f"{order.symbol}  {order.direction}\n"
+                        f"live_order_id: {order.live_order_id}\n"
+                        f"正在自动补挂止盈..."
+                    )
                 tp_id = self._attach_tp_with_retry(order, qty)
                 if tp_id:
                     self._repo.update_status(order.live_order_id, "FILLED", tp_order_id=tp_id)
                     self._event(order.live_order_id, order.signal_id, "NAKED_TP_ATTACHED",
                                 {"tp_id": tp_id, "qty": str(qty)})
+                    self._notify(
+                        f"[Live] ✅ 止盈已补挂\n"
+                        f"{order.symbol}  TP @ {order.tp}\n"
+                        f"单号: {tp_id}"
+                    )
                     updated = True
+                else:
+                    # Previously this failure was silent (log only) — that's exactly
+                    # how a missing TP could go unnoticed for hours. Alert loudly,
+                    # matching the SL failure treatment above.
+                    self._notify(
+                        f"[Live] 🚨 止盈自动补挂失败\n"
+                        f"{order.symbol}  {order.direction}  TP @ {order.tp}\n"
+                        f"live_order_id: {order.live_order_id}\n"
+                        f"👉 请在 Binance App → 持仓 → 该仓位右侧 TP/SL 按钮手动设置\n"
+                        f"    止损: {order.sl}  止盈: {order.tp}"
+                    )
 
             return updated
 
         closed_by: str | None = None
 
         if order.sl_order_id:
+            sl_id_lost = False
             try:
                 sl = self._client.get_algo_order(order.symbol, order.sl_order_id)
                 if sl.get("status") == "FILLED":
                     closed_by = "CLOSED_SL"
+                elif sl.get("status") in ("CANCELED", "EXPIRED", "REJECTED"):
+                    # The stored algoOrderId is stale — e.g. it was manually
+                    # cancelled/replaced on Binance's side. The old flow could
+                    # never detect this and would leave the position naked
+                    # forever. Clear it so the naked-position path re-attaches.
+                    sl_id_lost = True
+            except BinanceFuturesError:
+                # -2013/"Order does not exist" — the algoOrderId no longer
+                # resolves on Binance at all.
+                sl_id_lost = True
             except Exception:
                 pass
 
+            if sl_id_lost:
+                log.warning("[Live] SL algo order %s for %s no longer valid on Binance — "
+                            "clearing and re-attaching", order.sl_order_id, order.live_order_id)
+                self._repo.clear_algo_ids(order.live_order_id, clear_sl=True, clear_tp=False)
+                self._notify(
+                    f"[Live] ⚠️ 止损单在币安端已失效（可能被手动撤销）\n"
+                    f"{order.symbol}  {order.direction}\n"
+                    f"live_order_id: {order.live_order_id}\n"
+                    f"正在自动重新补挂止损..."
+                )
+                return updated
+
         if closed_by is None and order.tp_order_id:
+            tp_id_lost = False
             try:
                 tp = self._client.get_algo_order(order.symbol, order.tp_order_id)
                 if tp.get("status") == "FILLED":
                     closed_by = "CLOSED_TP"
+                elif tp.get("status") in ("CANCELED", "EXPIRED", "REJECTED"):
+                    tp_id_lost = True
+            except BinanceFuturesError:
+                tp_id_lost = True
             except Exception:
                 pass
+
+            if tp_id_lost:
+                log.warning("[Live] TP algo order %s for %s no longer valid on Binance — "
+                            "clearing and re-attaching", order.tp_order_id, order.live_order_id)
+                self._repo.clear_algo_ids(order.live_order_id, clear_sl=False, clear_tp=True)
+                self._notify(
+                    f"[Live] ⚠️ 止盈单在币安端已失效（可能被手动撤销）\n"
+                    f"{order.symbol}  {order.direction}\n"
+                    f"live_order_id: {order.live_order_id}\n"
+                    f"正在自动重新补挂止盈..."
+                )
+                return updated
 
         if closed_by:
             # The triggered leg (SL or TP) has already been consumed by Binance —
