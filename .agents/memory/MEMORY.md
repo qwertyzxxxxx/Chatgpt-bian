@@ -6,3 +6,4 @@
 - [V3 runtime settings](v3-runtime-settings.md) — dedup_hours/max_open_orders now live-adjustable via `v3_runtime_settings` PG table + `/limits`/`/setlimit` Telegram commands, no redeploy needed.
 - [Same-candle TP1/SL ambiguity](same-candle-tp-sl-ambiguity.md) — 15m OHLC can't order-of-events TP1 vs SL in one candle; disambiguate with 1m klines, fallback SL.
 - [New paper-only strategy checklist](new-strategy-checklist.md) — run_server.py is prod entrypoint, not cli.py; a strategy's tasks must be wired into both (env var vs CLI flag) or it never runs in prod.
+- [BinancePublicClient interval whitelist](binance-client-interval-whitelist.md) — klines()/historical_klines() hardcode an allowed-interval set; any new timeframe (e.g. 1d) a strategy uses must be added there or every call silently raises and the strategy scans 0 candidates forever.
