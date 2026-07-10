@@ -32,10 +32,12 @@ log = logging.getLogger(__name__)
 _STRAT_LABEL: dict[str, str] = {
     "hotlist_momentum_v3": "V3",
     "hotlist_v66":         "V66",
+    "hotlist_reversal":    "REV",
 }
 _STRAT_TITLE: dict[str, str] = {
     "hotlist_momentum_v3": "📊 V3 纸盘 Paper",
     "hotlist_v66":         "📊 V66 纸盘 Paper",
+    "hotlist_reversal":    "📊 反插针 REV 纸盘 Paper",
 }
 
 

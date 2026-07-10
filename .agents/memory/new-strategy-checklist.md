@@ -14,3 +14,4 @@ This project has two separate places task lists get built:
 2. Wire it into `run_server.py` behind an explicit env var (e.g. `ENABLE_<STRATEGY>=true`), appended to `tasks` before `ProductionRunner` is constructed.
 3. Optionally also wire an argparse flag into `cli.py` for local testing, but treat `run_server.py` wiring as the one that determines prod behavior.
 4. Confirm with the user before flipping the env var on in the actual deployed/Reserved-VM environment — new strategies should stay off until explicitly approved.
+5. Telegram surfaces (`v3/telegram/command_server.py`'s `/orders`, `/perf`, and any strategy_id→label maps in `v3/telegram/shadow_report.py`) hardcode the known strategy_id list — a new strategy is silently excluded from these commands/reports unless its strategy_id is added to each map explicitly.

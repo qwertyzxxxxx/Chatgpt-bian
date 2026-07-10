@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 _POLL_INTERVAL = 3.0
 _COMMANDS = {
     "/help", "/status", "/market", "/debug", "/v4debug",
-    "/signals", "/orders", "/perf", "/v66",
+    "/signals", "/orders", "/perf", "/v66", "/portfolio",
     "/limits", "/setlimit",
     "/livestatus", "/livemode", "/setlive",
 }
@@ -98,6 +98,7 @@ def _cmd_help() -> str:
         "/signals 📋 最近10条推送信号（含实盘订单管理动作）\n"
         "/orders  📂 当前模拟单 + 最近成交\n"
         "/perf    🏆 模拟盘绩效统计\n"
+        "/portfolio [v3|v66|rev] 📊 完整持仓报告（默认v3）\n"
         "/v66     📡 V66 监控池状态\n"
         "/limits  ⚙️ 查看去重窗口/持仓上限设置\n"
         "/setlimit ⚙️ 调整去重窗口/持仓上限\n"
@@ -514,8 +515,9 @@ def _cmd_orders() -> str:
         lines.append("[当前无开仓单]")
     else:
         lines.append(f"[开仓中 — {len(open_orders)}单]")
+        _STRAT_TAG = {"hotlist_momentum_v3": "V3", "hotlist_v66": "V66", "hotlist_reversal": "REV"}
         for o in open_orders:
-            strat = "V3" if o.strategy_id == "hotlist_momentum_v3" else "V66"
+            strat = _STRAT_TAG.get(o.strategy_id, o.strategy_id[:4])
             sl_pct = abs(Decimal(o.entry) - o.stop_loss) / Decimal(o.entry) * 100
             lines.append(
                 f"[{strat}] {o.symbol} {o.direction}  {o.status}\n"
@@ -560,7 +562,7 @@ def _cmd_perf() -> str:
 
     lines = ["🏆 模拟盘绩效", "━━━━━━━━━━━━━━"]
 
-    for strat_id, label in [("hotlist_momentum_v3", "V3"), ("hotlist_v66", "V66")]:
+    for strat_id, label in [("hotlist_momentum_v3", "V3"), ("hotlist_v66", "V66"), ("hotlist_reversal", "REV")]:
         orders = [o for o in all_orders if o.strategy_id == strat_id]
         s = _stats(orders)
         lines.append(f"[{label} — {strat_id}]")
@@ -572,6 +574,40 @@ def _cmd_perf() -> str:
         lines.append(f"  已结算: {s['closed']}  平均收益: {s['avg_pnl']:+.2f}%")
 
     return "\n".join(lines)
+
+
+_PORTFOLIO_STRATEGIES = {
+    "v3": "hotlist_momentum_v3",
+    "v66": "hotlist_v66",
+    "rev": "hotlist_reversal",
+    "reversal": "hotlist_reversal",
+}
+
+
+def _cmd_portfolio(args: list[str], notifier, db_path: Path) -> str:
+    """On-demand full shadow-report (same format as the hourly push) for any strategy.
+
+    Usage: /portfolio [v3|v66|rev]  (default: v3)
+    """
+    from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
+    from binance_ai_trader.v3.paper.repository import V3PaperOrderRepository
+    from binance_ai_trader.v3.performance.calculator import V3PerformanceCalculator
+    from binance_ai_trader.v3.telegram.shadow_report import V3ShadowReporter
+
+    key = (args[0].lower() if args else "v3")
+    strategy_id = _PORTFOLIO_STRATEGIES.get(key)
+    if strategy_id is None:
+        return f"❓ 未知策略 '{args[0] if args else ''}'，可用: v3 / v66 / rev"
+
+    order_repo = V3PaperOrderRepository()
+    perf_calc = V3PerformanceCalculator(order_repo)
+    try:
+        client = BinancePublicClient()
+    except Exception:
+        client = None
+
+    reporter = V3ShadowReporter(notifier, order_repo, perf_calc, strategy_id, client=client)
+    return reporter._build_message()
 
 
 def _cmd_v66() -> str:
@@ -714,6 +750,8 @@ class TelegramCommandServer:
                 return _cmd_perf()
             if cmd == "/v66":
                 return _cmd_v66()
+            if cmd == "/portfolio":
+                return _cmd_portfolio(args, self._notifier, self._db_path)
             if cmd == "/limits":
                 return _cmd_limits()
             if cmd == "/setlimit":
