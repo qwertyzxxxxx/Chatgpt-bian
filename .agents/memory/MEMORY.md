@@ -5,3 +5,4 @@
 - [Multi-strategy live isolation](multi-strategy-live-isolation.md) — running 2+ live strategies on one Binance account requires strategy_id on every live_orders query (conflict resolution, sync, reporting) or they silently cross-contaminate.
 - [V3 runtime settings](v3-runtime-settings.md) — dedup_hours/max_open_orders now live-adjustable via `v3_runtime_settings` PG table + `/limits`/`/setlimit` Telegram commands, no redeploy needed.
 - [Same-candle TP1/SL ambiguity](same-candle-tp-sl-ambiguity.md) — 15m OHLC can't order-of-events TP1 vs SL in one candle; disambiguate with 1m klines, fallback SL.
+- [New paper-only strategy checklist](new-strategy-checklist.md) — run_server.py is prod entrypoint, not cli.py; a strategy's tasks must be wired into both (env var vs CLI flag) or it never runs in prod.

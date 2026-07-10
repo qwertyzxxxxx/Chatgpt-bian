@@ -480,6 +480,14 @@ def build_parser() -> argparse.ArgumentParser:
                           help="V3 dedup window in hours (default: 24)")
     run_loop.add_argument("--v3-max-open-orders", type=int, default=5, metavar="N",
                           help="V3 max open paper orders per strategy (default: 5)")
+    run_loop.add_argument("--enable-v3-reversal", action="store_true",
+                          help="Enable hotlist_reversal (V-Reversal) paper-only strategy (default: off)")
+    run_loop.add_argument("--v3-reversal-report-interval-hours", type=int, default=1, metavar="N",
+                          help="hotlist_reversal shadow report interval in hours (default: 1)")
+    run_loop.add_argument("--v3-reversal-dedup-hours", type=int, default=24, metavar="N",
+                          help="hotlist_reversal dedup window in hours (default: 24)")
+    run_loop.add_argument("--v3-reversal-max-open-orders", type=int, default=5, metavar="N",
+                          help="hotlist_reversal max open paper orders (default: 5)")
     run_loop.add_argument("--enable-paper-portfolio", action="store_true",
                           help="Enable unified paper portfolio settle + summary tasks")
     run_loop.add_argument("--paper-settle-interval-minutes", type=int, default=15,
@@ -1821,6 +1829,22 @@ def _run_loop(args: argparse.Namespace) -> int:
                 )
             except Exception:
                 pass
+    if getattr(args, "enable_v3_reversal", False):
+        from binance_ai_trader.v3.runner.tasks import build_reversal_tasks
+        _rev_report_hours = getattr(args, "v3_reversal_report_interval_hours", 1)
+        _rev_dedup_hours  = getattr(args, "v3_reversal_dedup_hours", 24)
+        _rev_max_open     = getattr(args, "v3_reversal_max_open_orders", 5)
+        reversal_tasks = build_reversal_tasks(
+            db_path=database,
+            base_url=args.base_url,
+            timeout=args.timeout,
+            max_retries=args.max_retries,
+            telegram=notifier,
+            report_interval=timedelta(hours=_rev_report_hours),
+            dedup_hours=_rev_dedup_hours,
+            max_open_orders=_rev_max_open,
+        )
+        tasks = tasks + reversal_tasks
     repository = MarketDataRepository(database)
     try:
         runner = ProductionRunner(

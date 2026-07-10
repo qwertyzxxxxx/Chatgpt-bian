@@ -16,6 +16,7 @@ All permanent data stored in PostgreSQL via PG repositories.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -42,6 +43,11 @@ from binance_ai_trader.v3.live.reporter import LiveHourlyReporter
 from binance_ai_trader.v3.settings.repository import V3RuntimeSettingsRepository
 from binance_ai_trader.v3.settlement.settler import V3Settler
 from binance_ai_trader.v3.strategies.hotlist import HotlistStrategyV3
+from binance_ai_trader.v3.strategies.reversal import (
+    BREAKEVEN_TRIGGER_R,
+    MAX_HOLD_MINUTES,
+    HotlistStrategyReversal,
+)
 from binance_ai_trader.v3.strategies.v66 import HotlistStrategyV66
 from binance_ai_trader.v3.telegram.notifier import V3TelegramNotifier
 from binance_ai_trader.v3.telegram.shadow_report import V3ShadowReporter
@@ -441,5 +447,166 @@ def build_v66_tasks(
         tasks.append(RunnerTask("v66_live_sync",   _v66_live_sync_task,   interval=live_sync_interval,   startup_immediate=True))
         tasks.append(RunnerTask("v66_live_report", _v66_live_report_task, interval=live_report_interval))
     tasks.append(RunnerTask("v66_report", _v66_report_task, interval=report_interval))
+
+    return tuple(tasks)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# hotlist_reversal Task Builder — V-Reversal (山寨妖币反插针) strategy, paper only
+# ─────────────────────────────────────────────────────────────────────────────
+
+_REVERSAL_STRATEGY_ID = "hotlist_reversal"
+
+
+def build_reversal_tasks(
+    db_path: Path,
+    base_url: str = "https://fapi.binance.com",
+    timeout: float = 10.0,
+    max_retries: int = 3,
+    telegram: TelegramNotifier | None = None,
+    scan_interval: timedelta = timedelta(minutes=15),
+    settle_interval: timedelta = timedelta(minutes=15),
+    report_interval: timedelta = timedelta(hours=1),
+    dedup_hours: int = 24,
+    max_open_orders: int = 5,
+) -> tuple[RunnerTask, ...]:
+    """Bootstrap hotlist_reversal tasks. Paper-only — no live mirror wiring.
+
+    Independent from V3/V66: own strategy_id, own risk config, own stats
+    (V3PerformanceCalculator already scopes by strategy_id).
+    """
+    client = BinancePublicClient(
+        base_url=base_url,
+        timeout_seconds=timeout,
+        max_retries=max_retries,
+    )
+
+    strategy   = HotlistStrategyReversal(client)
+    risk_cfg   = RiskConfig(strategy_id=_REVERSAL_STRATEGY_ID, max_open_orders=max_open_orders)
+    pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
+    order_repo = V3PaperOrderRepository()
+    push_repo  = V3PushQueueRepository()
+    perf_calc  = V3PerformanceCalculator(order_repo)
+    settler    = V3Settler(order_repo, client, notifier=telegram, live_repo=None)
+    settings_repo = V3RuntimeSettingsRepository()
+
+    rev_tg = V3TelegramNotifier(telegram) if telegram else None
+    reporter = (
+        V3ShadowReporter(
+            telegram, order_repo, perf_calc, _REVERSAL_STRATEGY_ID,
+            client=client,
+            scan_interval_minutes=int(scan_interval.total_seconds() // 60),
+            settle_interval_minutes=int(settle_interval.total_seconds() // 60),
+            summary_interval_hours=int(report_interval.total_seconds() // 3600),
+        )
+        if telegram else None
+    )
+
+    def _reversal_scan_task() -> RunnerTaskResult:
+        now = datetime.now(UTC)
+        try:
+            live_dedup_hours, live_max_open_orders = settings_repo.resolve(_REVERSAL_STRATEGY_ID)
+            live_risk_cfg = RiskConfig(
+                strategy_id=_REVERSAL_STRATEGY_ID,
+                max_open_orders=live_max_open_orders,
+                blacklist=risk_cfg.blacklist,
+                blocked_regimes=risk_cfg.blocked_regimes,
+            )
+        except Exception:
+            log.exception("[REV] failed to read runtime settings — using deploy defaults")
+            live_dedup_hours, live_risk_cfg = dedup_hours, risk_cfg
+        result = pipeline.run(strategy, now=now, dedup_hours=live_dedup_hours, risk_config=live_risk_cfg)
+
+        orders_created = 0
+        for candidate in result.candidates:
+            if order_repo.exists_open_for_symbol_direction(
+                _REVERSAL_STRATEGY_ID, candidate.symbol, candidate.direction
+            ):
+                continue
+
+            entry = Decimal(candidate.entry)
+            stop_loss = Decimal(candidate.sl)
+            expires_at = (now + timedelta(minutes=MAX_HOLD_MINUTES)).isoformat(timespec="seconds")
+            metadata = {
+                "max_hold_minutes": MAX_HOLD_MINUTES,
+                "breakeven_trigger_r": str(BREAKEVEN_TRIGGER_R),
+                "orig_stop_loss": str(stop_loss),
+                "breakeven_activated": False,
+            }
+            order = V3PaperOrder(
+                order_id=make_order_id(),
+                signal_id=candidate.signal_id,
+                strategy_id=_REVERSAL_STRATEGY_ID,
+                symbol=candidate.symbol,
+                direction=candidate.direction,
+                entry=entry,
+                stop_loss=stop_loss,
+                tp1=Decimal(candidate.tp1),
+                tp2=Decimal(candidate.tp2) if candidate.tp2 else Decimal(candidate.tp1),
+                rr=Decimal(candidate.rr),
+                status="OPEN",
+                result=None,
+                created_at=now.isoformat(timespec="seconds"),
+                filled_at=None,
+                closed_at=None,
+                expires_at=expires_at,
+                pnl_pct=None,
+                rr_realized=None,
+                pushed=True,
+                metadata_json=json.dumps(metadata),
+            )
+            order_repo.save(order)
+            order_repo.append_event(V3OrderEvent(
+                event_id=make_event_id(),
+                order_id=order.order_id,
+                signal_id=candidate.signal_id,
+                event_type="CREATED",
+                old_status=None,
+                new_status="OPEN",
+                candle_high=None,
+                candle_low=None,
+                triggered_at=now.isoformat(timespec="seconds"),
+                metadata_json="{}",
+            ))
+            orders_created += 1
+
+            if rev_tg:
+                rev_tg.send_candidate(
+                    candidate,
+                    hold_hours=MAX_HOLD_MINUTES / 60,
+                    live_prefix="【V-Reversal 模拟盘】",
+                )
+
+            push_items = push_repo.load_by_signal(candidate.signal_id)
+            if push_items:
+                push_repo.mark_sent(push_id=push_items[0].push_id)
+
+        log.info(
+            "[REV] scan done — pushed=%d orders_created=%d blocked=%d",
+            result.pushed, orders_created, result.total_blocked,
+        )
+        return RunnerTaskResult("SUCCEEDED", {
+            "event_type":     "hotlist_reversal_scan",
+            "scanned":        result.scanned,
+            "pushed":         result.pushed,
+            "orders_created": orders_created,
+            "blocked_risk":   result.blocked_risk,
+            "blocked_dedup":  result.blocked_dedup,
+        })
+
+    def _reversal_settle_task() -> RunnerTaskResult:
+        updated = settler.settle_all(strategy_id=_REVERSAL_STRATEGY_ID)
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "hotlist_reversal_settle", "settled": updated})
+
+    def _reversal_report_task() -> RunnerTaskResult:
+        if reporter:
+            reporter.send_report()
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "hotlist_reversal_report"})
+
+    tasks: list[RunnerTask] = [
+        RunnerTask("hotlist_reversal_scan",   _reversal_scan_task,   interval=scan_interval,   startup_immediate=True),
+        RunnerTask("hotlist_reversal_settle", _reversal_settle_task, interval=settle_interval, startup_immediate=True),
+    ]
+    tasks.append(RunnerTask("hotlist_reversal_report", _reversal_report_task, interval=report_interval))
 
     return tuple(tasks)

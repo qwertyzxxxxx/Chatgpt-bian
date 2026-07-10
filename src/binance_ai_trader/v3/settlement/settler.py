@@ -10,6 +10,7 @@ Every state transition writes to v3_order_events for full audit trail.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -28,6 +29,7 @@ log = logging.getLogger(__name__)
 
 _INTERVAL = "15m"
 _KLINE_LIMIT = 4
+_REVERSAL_META_MARKER = "max_hold_minutes"
 
 
 class V3Settler:
@@ -124,6 +126,10 @@ class V3Settler:
 
         # ── FILLED: check TP1 / SL / TIMEOUT ──────────────────────────
         if order.status == "FILLED":
+            meta = self._reversal_meta(order)
+            if meta is not None:
+                return self._settle_filled_reversal(order, now, meta)
+
             expires = datetime.fromisoformat(order.expires_at.replace("Z", "+00:00"))
             if expires.tzinfo is None:
                 expires = expires.replace(tzinfo=UTC)
@@ -195,6 +201,127 @@ class V3Settler:
         self._record_paper_vs_live(order, result, closed_at)
         return True
 
+    def _reversal_meta(self, order: V3PaperOrder) -> dict | None:
+        try:
+            meta = json.loads(order.metadata_json or "{}")
+        except Exception:
+            return None
+        if not isinstance(meta, dict) or _REVERSAL_META_MARKER not in meta:
+            return None
+        return meta
+
+    def _settle_filled_reversal(self, order: V3PaperOrder, now: datetime, meta: dict) -> bool:
+        """hotlist_reversal-specific FILLED handling:
+          - forced close at max_hold_minutes -> TIMEOUT_FORCED
+          - breakeven stop-loss move at breakeven_trigger_r x SL distance,
+            gated by a minimum hold time/candle count to avoid instant whipsaw
+          - otherwise standard TP1 / SL check against the (possibly moved) stop
+        """
+        filled_at = datetime.fromisoformat(order.filled_at.replace("Z", "+00:00")) if order.filled_at else now
+        if filled_at.tzinfo is None:
+            filled_at = filled_at.replace(tzinfo=UTC)
+        held_minutes = (now - filled_at).total_seconds() / 60
+        max_hold = int(meta.get("max_hold_minutes", 240))
+
+        klines = self._fetch_klines(order.symbol)
+        if not klines:
+            return False
+
+        if held_minutes >= max_hold:
+            exit_price = klines[-1]["close"] if "close" in klines[-1] else order.entry
+            return self._close_reversal(order, "TIMEOUT_FORCED", now, exit_price)
+
+        for k in klines:
+            high, low = k["high"], k["low"]
+            if order.direction == "LONG":
+                tp_hit = high >= order.tp1
+                sl_hit = low <= order.stop_loss
+            else:
+                tp_hit = low <= order.tp1
+                sl_hit = high >= order.stop_loss
+
+            if tp_hit and sl_hit:
+                result = self._resolve_same_candle(order, k)
+                return self._close(order, result, now, high, low)
+            if tp_hit:
+                return self._close(order, "TP1", now, high, low)
+            if sl_hit:
+                return self._close(order, "SL", now, high, low)
+
+        if not meta.get("breakeven_activated"):
+            closed_candles = int(held_minutes // 15)
+            eligible = held_minutes >= 5 or closed_candles >= 1
+            if eligible:
+                orig_sl = Decimal(str(meta.get("orig_stop_loss", order.stop_loss)))
+                risk = abs(order.entry - orig_sl)
+                trigger_r = Decimal(str(meta.get("breakeven_trigger_r", "0.7")))
+                trigger_distance = risk * trigger_r
+                current_price = klines[-1].get("close", order.entry)
+                if order.direction == "LONG":
+                    favorable = current_price - order.entry
+                else:
+                    favorable = order.entry - current_price
+                if risk > 0 and favorable >= trigger_distance:
+                    self._order_repo.update_stop_loss(order.order_id, order.entry)
+                    meta["breakeven_activated"] = True
+                    self._order_repo.update_metadata(order.order_id, json.dumps(meta))
+                    self._order_repo.append_event(V3OrderEvent(
+                        event_id=make_event_id(),
+                        order_id=order.order_id,
+                        signal_id=order.signal_id,
+                        event_type="BREAKEVEN_MOVED",
+                        old_status="FILLED",
+                        new_status="FILLED",
+                        candle_high=None,
+                        candle_low=None,
+                        triggered_at=now.isoformat(timespec="seconds"),
+                        metadata_json=json.dumps({"new_stop": str(order.entry)}),
+                    ))
+                    log.info("[REV] %s breakeven stop moved to entry %s", order.order_id, order.entry)
+                    return True
+
+        return False
+
+    def _close_reversal(
+        self, order: V3PaperOrder, result: str, now: datetime, exit_price: Decimal
+    ) -> bool:
+        closed_at = now.isoformat(timespec="seconds")
+        if order.direction == "LONG":
+            pnl = (exit_price - order.entry) / order.entry * Decimal("100")
+        else:
+            pnl = (order.entry - exit_price) / order.entry * Decimal("100")
+        risk = abs(order.entry - order.stop_loss)
+        rr_realized = (pnl / Decimal("100") * order.entry / risk) if risk > 0 else Decimal("0")
+        pnl = pnl.quantize(Decimal("0.01"))
+        rr_realized = rr_realized.quantize(Decimal("0.01"))
+
+        self._order_repo.update_settled(order.order_id, result, closed_at, pnl, rr_realized)
+        self._order_repo.append_event(V3OrderEvent(
+            event_id=make_event_id(),
+            order_id=order.order_id,
+            signal_id=order.signal_id,
+            event_type=result,
+            old_status="FILLED",
+            new_status="CLOSED",
+            candle_high=None,
+            candle_low=None,
+            triggered_at=closed_at,
+            metadata_json="{}",
+        ))
+        log.info(
+            "[REV] %s %s %s pnl=%s rr=%s (exit=%s)",
+            order.order_id, order.symbol, result, pnl, rr_realized, exit_price,
+        )
+        if self._notifier is not None:
+            try:
+                self._notifier.send(
+                    _fmt_settlement_msg(order, result, pnl, rr_realized, closed_at, None)
+                )
+            except Exception:
+                log.exception("[REV] failed to send settlement notification for %s", order.order_id)
+        self._record_paper_vs_live(order, result, closed_at)
+        return True
+
     def _record_paper_vs_live(self, order: V3PaperOrder, result: str, closed_at: str) -> None:
         """Log this settlement alongside the real live order state, purely as
         a diff record for future paper-strategy tuning. Never affects paper
@@ -249,7 +376,10 @@ class V3Settler:
         try:
             raw = self._client.klines(symbol, _INTERVAL, limit=_KLINE_LIMIT)
             return [
-                {"high": k.high, "low": k.low, "open_time_ms": k.open_time_ms, "close_time_ms": k.close_time_ms}
+                {
+                    "high": k.high, "low": k.low, "close": k.close,
+                    "open_time_ms": k.open_time_ms, "close_time_ms": k.close_time_ms,
+                }
                 for k in raw
             ]
         except Exception as exc:
@@ -324,7 +454,7 @@ def _fmt_settlement_msg(
     closed_at: str,
     live_note: str | None = None,
 ) -> str:
-    _EMOJI = {"TP1": "✅", "SL": "❌", "TIMEOUT": "⏰"}
+    _EMOJI = {"TP1": "✅", "SL": "❌", "TIMEOUT": "⏰", "TIMEOUT_FORCED": "⏱️"}
     emoji = _EMOJI.get(result, "📋")
     sign = "+" if pnl_pct >= 0 else ""
     pnl_str = f"{sign}{pnl_pct:.2f}%"

@@ -256,6 +256,30 @@ class V3PaperOrderRepository:
         finally:
             conn.close()
 
+    def update_stop_loss(self, order_id: str, new_stop_loss: Decimal) -> None:
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE v3_paper_orders SET stop_loss=%s WHERE order_id=%s",
+                    (str(new_stop_loss), order_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def update_metadata(self, order_id: str, metadata_json: str) -> None:
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE v3_paper_orders SET metadata_json=%s WHERE order_id=%s",
+                    (metadata_json, order_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     def update_expired_not_filled(self, order_id: str, closed_at: str) -> None:
         conn = get_conn()
         try:

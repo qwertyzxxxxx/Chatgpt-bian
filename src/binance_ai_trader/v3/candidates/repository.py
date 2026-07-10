@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from binance_ai_trader.v3.storage.pg import get_conn
 
 _STRATEGY_PREFIXES: dict[str, str] = {
+    "reversal":  "REV",
     "hotlist":   "HOT",
     "monster":   "MON",
     "breakout":  "BRK",

@@ -13,6 +13,7 @@ _STRATEGY_TAGS: dict[str, str] = {
     "monster_v3":          "V3",
     "breakout_v3":         "V3",
     "bear_v3":             "V3",
+    "hotlist_reversal":    "REV",
 }
 
 _STRATEGY_LABELS: dict[str, str] = {
@@ -21,6 +22,7 @@ _STRATEGY_LABELS: dict[str, str] = {
     "monster_v3":          "👾 Monster",
     "breakout_v3":         "📈 Breakout",
     "bear_v3":             "🐻 Bear",
+    "hotlist_reversal":    "🪤 V-Reversal",
 }
 
 
