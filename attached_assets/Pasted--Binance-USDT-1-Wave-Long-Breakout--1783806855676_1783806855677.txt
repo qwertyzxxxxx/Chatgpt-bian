@@ -1,0 +1,632 @@
+任务名称：新增双向突破模拟交易策略
+
+目标：
+在现有 Binance USDT 永续合约扫描系统中，新增两个独立策略：
+
+1. Wave Long Breakout
+    中文名：放量突破回踩做多
+2. Wave Short Breakdown
+    中文名：放量跌破反抽做空
+
+两个策略必须独立识别、独立记录、独立统计。
+本阶段只做 Paper Trading 模拟盘，严禁连接真实下单接口。
+
+━━━━━━━━━━━━━━━━━━
+一、共同交易规则
+━━━━━━━━━━━━━━━━━━
+
+交易市场：
+
+* Binance USDT 永续合约
+* 使用公开行情接口
+* 不需要 API Key
+* 不允许真实下单
+
+扫描频率：
+
+* 每15分钟扫描一次
+* 只在K线收盘后判断信号
+* 禁止使用未收盘K线，避免未来函数
+
+候选币池：
+
+* 使用最近24小时滚动成交额 quoteVolume
+* 不是自然日成交额
+* 按滚动24小时成交额排序
+* 默认取 Top100
+* 排除稳定币、杠杆代币、异常交易对
+* 排除上市数据不足60天的币种
+
+交易周期：
+
+* 1D：大方向
+* 4H：中期趋势
+* 1H：放量突破或跌破确认
+* 15M：唯一入场周期
+
+最长持仓：
+
+* 48小时
+
+单币限制：
+
+* 同一个币同一方向最多持有1笔
+* 已有持仓时不能重复开仓
+* 做多和做空不得同时持有
+* 平仓后至少等待4根15M K线，才允许同币再次开仓
+
+风险规则：
+
+* 止损距离必须在2%至5%之间
+* 小于2%的止损按2%计算
+* 大于5%的信号直接放弃
+* 默认目标盈亏比为1:2
+* 若前方结构空间足够，可使用1:3
+* 不允许低于1:2的交易
+
+成交量统一定义：
+
+* VolumeRatio = 当前已收盘K线成交量 / 前20根同周期已收盘K线平均成交量
+* 放量标准：VolumeRatio >= 1.5
+* 计算均量时不得包含当前K线
+
+━━━━━━━━━━━━━━━━━━
+二、策略一：Wave Long Breakout
+放量突破回踩做多
+━━━━━━━━━━━━━━━━━━
+
+核心逻辑：
+
+1D上涨趋势
+→ 4H上涨趋势
+→ 1H放量突破平台
+→ 进入观察区
+→ 15M第一次缩量回踩平台
+→ 重新转强入场做多
+
+【1D方向条件】
+
+必须满足：
+
+* EMA20 > EMA60
+
+1D只判断大方向。
+不要加入EMA200、RSI、MACD、ADX和BBW。
+
+【4H趋势条件】
+
+必须满足：
+
+* EMA20 > EMA60
+
+4H成交量不作为每次必须放量的硬条件，避免信号过少。
+
+4H额外只做风险检查：
+
+* 当前价格不能低于EMA60
+* 最近一根4H K线涨幅不得超过12%
+* 若已经出现明显加速暴涨，则不追高
+
+【1H突破条件】
+
+平台定义：
+
+* 取突破K线之前最近20根已收盘1H K线
+* PlatformHigh = 最近20根1H最高价
+* PlatformLow = 最近20根1H最低价
+
+有效做多突破必须同时满足：
+
+1. 当前1H收盘价 > PlatformHigh
+2. 当前1H成交量 / 前20根1H平均成交量 >= 1.5
+3. 当前1H收盘价不能比PlatformHigh高出超过5%
+4. 当前1H必须为阳线
+
+满足后，不立即开仓，进入 LONG_WATCH 观察区。
+
+保存：
+
+* symbol
+* strategy_name
+* direction
+* breakout_time
+* platform_high
+* platform_low
+* breakout_close
+* breakout_volume_ratio
+* watch_expire_time
+
+【做多观察区】
+
+观察时间：
+
+* 最长8小时
+* 从1H突破K线收盘后开始
+* 超过8小时没有入场则自动失效
+
+观察区提前失效条件：
+
+1. 任意1H收盘价重新跌回PlatformHigh下方
+2. 任意1H收盘价跌破1H EMA20
+3. 出现1H放量阴线，且VolumeRatio >= 1.5
+4. 距离潜在止损超过5%
+
+【15M做多入场】
+
+只监控进入LONG_WATCH的币种。
+
+入场必须满足：
+
+1. 价格第一次回踩PlatformHigh附近
+2. 允许回踩范围：
+    PlatformHigh上下1%
+3. 15M收盘价必须重新站在PlatformHigh上方
+4. 回踩阶段至少一根15M成交量低于15M VolumeMA20
+5. 触发入场的15M K线为阳线
+6. 触发入场K线成交量：
+    VolumeRatio >= 1.5
+7. 触发K线收盘价突破前一根15M K线最高价
+
+满足后，在该15M K线收盘价模拟做多。
+
+【做多止损】
+
+优先使用：
+
+* 回踩期间最近的15M Swing Low下方0.2%
+
+止损距离计算：
+
+StopLossPct =
+(EntryPrice - StopLossPrice) / EntryPrice
+
+规则：
+
+* StopLossPct < 2%，按2%止损设置
+* StopLossPct > 5%，取消该信号
+* 最终止损必须在2%至5%之间
+
+【做多止盈】
+
+默认使用1:2：
+
+* Risk = EntryPrice - StopLossPrice
+* TakeProfit = EntryPrice + 2 × Risk
+
+若入场价到最近明显1H压力位的空间 >= 3R，则允许使用1:3：
+
+* TakeProfit = EntryPrice + 3 × Risk
+
+RR选择规则：
+
+* 默认RR = 2
+* 只有前方结构空间足够时才使用RR = 3
+* 不做1:5或1:10
+
+━━━━━━━━━━━━━━━━━━
+三、策略二：Wave Short Breakdown
+放量跌破反抽做空
+━━━━━━━━━━━━━━━━━━
+
+核心逻辑：
+
+1D下跌趋势
+→ 4H下跌趋势
+→ 1H放量跌破平台
+→ 进入观察区
+→ 15M第一次缩量反抽平台
+→ 再次转弱入场做空
+
+【1D方向条件】
+
+必须满足：
+
+* EMA20 < EMA60
+
+不要加入EMA200、RSI、MACD、ADX和BBW。
+
+【4H趋势条件】
+
+必须满足：
+
+* EMA20 < EMA60
+
+4H额外风险检查：
+
+* 当前价格不能高于EMA60
+* 最近一根4H K线跌幅不得超过12%
+* 已经连续暴跌的币不要追空
+
+【1H跌破条件】
+
+平台定义：
+
+* 取跌破K线之前最近20根已收盘1H K线
+* PlatformHigh = 最近20根1H最高价
+* PlatformLow = 最近20根1H最低价
+
+有效做空跌破必须同时满足：
+
+1. 当前1H收盘价 < PlatformLow
+2. 当前1H成交量 / 前20根1H平均成交量 >= 1.5
+3. 当前1H收盘价不能比PlatformLow低出超过5%
+4. 当前1H必须为阴线
+
+满足后，不立即开仓，进入 SHORT_WATCH观察区。
+
+保存：
+
+* symbol
+* strategy_name
+* direction
+* breakdown_time
+* platform_high
+* platform_low
+* breakdown_close
+* breakdown_volume_ratio
+* watch_expire_time
+
+【做空观察区】
+
+观察时间：
+
+* 最长8小时
+* 从1H跌破K线收盘后开始
+* 超过8小时未入场则自动失效
+
+观察区提前失效条件：
+
+1. 任意1H收盘价重新站回PlatformLow上方
+2. 任意1H收盘价站上1H EMA20
+3. 出现1H放量阳线，且VolumeRatio >= 1.5
+4. 距离潜在止损超过5%
+
+【15M做空入场】
+
+只监控进入SHORT_WATCH的币种。
+
+入场必须满足：
+
+1. 价格第一次反抽PlatformLow附近
+2. 允许反抽范围：
+    PlatformLow上下1%
+3. 15M收盘价必须重新跌到PlatformLow下方
+4. 反抽阶段至少一根15M成交量低于15M VolumeMA20
+5. 触发入场的15M K线为阴线
+6. 触发入场K线成交量：
+    VolumeRatio >= 1.5
+7. 触发K线收盘价跌破前一根15M K线最低价
+
+满足后，在该15M K线收盘价模拟做空。
+
+【做空止损】
+
+优先使用：
+
+* 反抽期间最近的15M Swing High上方0.2%
+
+止损距离：
+
+StopLossPct =
+(StopLossPrice - EntryPrice) / EntryPrice
+
+规则：
+
+* StopLossPct < 2%，按2%止损设置
+* StopLossPct > 5%，取消该信号
+* 最终止损必须在2%至5%之间
+
+【做空止盈】
+
+默认使用1:2：
+
+* Risk = StopLossPrice - EntryPrice
+* TakeProfit = EntryPrice - 2 × Risk
+
+若入场价到最近明显1H支撑位的空间 >= 3R，则允许使用1:3：
+
+* TakeProfit = EntryPrice - 3 × Risk
+
+━━━━━━━━━━━━━━━━━━
+四、模拟盘执行规则
+━━━━━━━━━━━━━━━━━━
+
+初始模拟资金：
+
+* 100,000 USDT
+
+单笔风险：
+
+* 每笔最多亏损账户权益的0.5%
+
+仓位计算：
+
+risk_amount = equity × 0.005
+
+LONG：
+position_size =
+risk_amount / (entry_price - stop_loss_price)
+
+SHORT：
+position_size =
+risk_amount / (stop_loss_price - entry_price)
+
+暂时不计算杠杆收益放大。
+模拟仓位名义价值不得超过账户权益的20%。
+
+同时持仓：
+
+* 最多5笔
+* 做多最多3笔
+* 做空最多3笔
+* 总数不得超过5笔
+
+成交价格：
+
+* 使用信号15M K线收盘价
+* 增加模拟滑点0.05%
+
+手续费：
+
+* 开仓0.05%
+* 平仓0.05%
+
+平仓优先级：
+
+同一根K线同时触发止损和止盈时：
+
+* 保守处理
+* 优先判定止损成交
+
+平仓条件：
+
+1. 触及止损
+2. 触及止盈
+3. 持仓达到48小时
+4. 数据异常或交易对下架
+
+48小时强制平仓：
+
+* 使用最后一根可用15M K线收盘价
+* exit_reason = TIME_EXIT
+
+━━━━━━━━━━━━━━━━━━
+五、数据库
+━━━━━━━━━━━━━━━━━━
+
+新增或复用以下表。
+
+watchlist：
+
+* watch_id
+* symbol
+* strategy_name
+* direction
+* platform_high
+* platform_low
+* trigger_time
+* trigger_price
+* trigger_volume_ratio
+* expires_at
+* status
+* invalid_reason
+* created_at
+* updated_at
+
+paper_positions：
+
+* position_id
+* symbol
+* strategy_name
+* direction
+* entry_time
+* entry_price
+* stop_loss
+* take_profit
+* risk_reward
+* stop_loss_pct
+* quantity
+* notional_value
+* entry_fee
+* status
+* max_favorable_excursion
+* max_adverse_excursion
+* exit_time
+* exit_price
+* exit_fee
+* exit_reason
+* pnl_usdt
+* pnl_pct
+* r_multiple
+* holding_minutes
+
+paper_account：
+
+* equity
+* cash
+* realized_pnl
+* unrealized_pnl
+* total_fees
+* open_positions
+* updated_at
+
+strategy_daily_stats：
+
+* date
+* strategy_name
+* signals
+* entries
+* wins
+* losses
+* time_exits
+* win_rate
+* average_win
+* average_loss
+* profit_factor
+* net_pnl
+* average_r
+* max_drawdown
+
+━━━━━━━━━━━━━━━━━━
+六、命令行
+━━━━━━━━━━━━━━━━━━
+
+新增或确认支持以下命令：
+
+扫描信号：
+
+python -m app.cli scan-strategies
+
+更新观察区：
+
+python -m app.cli update-watchlist
+
+执行模拟入场和平仓：
+
+python -m app.cli paper-trade
+
+查看当前观察区：
+
+python -m app.cli watchlist
+
+查看模拟持仓：
+
+python -m app.cli positions
+
+查看模拟账户：
+
+python -m app.cli paper-account
+
+查看策略统计：
+
+python -m app.cli strategy-report –days 30
+
+完整运行一次：
+
+python -m app.cli run-cycle
+
+run-cycle执行顺序：
+
+1. 更新Rolling24h Top100候选池
+2. 更新现有模拟持仓和平仓状态
+3. 检查观察区是否失效或过期
+4. 扫描1D、4H、1H新突破和新跌破
+5. 将符合条件的币加入观察区
+6. 扫描15M入场条件
+7. 创建模拟持仓
+8. 更新账户和策略统计
+9. 输出运行摘要
+
+━━━━━━━━━━━━━━━━━━
+七、推送格式
+━━━━━━━━━━━━━━━━━━
+
+进入观察区时：
+
+🔍 策略观察
+
+币种：SOLUSDT
+策略：Wave Long Breakout
+方向：做多
+1H平台：145.20
+突破收盘：147.10
+1H量比：1.82
+观察有效期：8小时
+状态：等待15M回踩确认
+
+模拟入场时：
+
+🟢 模拟做多
+
+币种：SOLUSDT
+策略：Wave Long Breakout
+入场价：146.30
+止损价：142.50
+止损幅度：2.60%
+止盈价：153.90
+盈亏比：1:2
+1H突破量比：1.82
+15M触发量比：1.63
+最长持仓：48小时
+
+模拟做空时：
+
+🔴 模拟做空
+
+币种：XXXUSDT
+策略：Wave Short Breakdown
+入场价：1.2500
+止损价：1.2925
+止损幅度：3.40%
+止盈价：1.1650
+盈亏比：1:2
+1H跌破量比：1.91
+15M触发量比：1.58
+最长持仓：48小时
+
+平仓时：
+
+📊 模拟平仓
+
+币种：SOLUSDT
+策略：Wave Long Breakout
+方向：做多
+入场价：146.30
+出场价：153.90
+结果：止盈
+盈亏：+2.00R
+持仓时间：19小时15分钟
+手续费：XX USDT
+
+━━━━━━━━━━━━━━━━━━
+八、测试要求
+━━━━━━━━━━━━━━━━━━
+
+必须增加自动化测试：
+
+1. Rolling24h成交额不会在凌晨归零
+2. EMA计算不使用未来数据
+3. 平台计算不包含当前突破K线
+4. VolumeMA20不包含当前K线
+5. 未收盘K线不能产生信号
+6. 1H突破后不会立即入场
+7. 观察区最长8小时
+8. 跌回平台后观察信号失效
+9. 止损超过5%的信号不会开仓
+10. RR不能低于1:2
+11. 同一币种不会重复开仓
+12. 48小时后必须强制平仓
+13. 同一根K线同时触发止损和止盈时按止损处理
+14. 做多和做空统计必须独立
+15. 手续费和滑点必须进入盈亏计算
+
+━━━━━━━━━━━━━━━━━━
+九、验收标准
+━━━━━━━━━━━━━━━━━━
+
+完成后输出：
+
+1. 新增和修改的文件列表
+2. 两个策略的完整执行流程
+3. 数据库迁移说明
+4. 所有测试结果
+5. 运行以下命令的真实输出：
+
+python -m app.cli run-cycle
+python -m app.cli watchlist
+python -m app.cli positions
+python -m app.cli paper-account
+python -m app.cli strategy-report –days 30
+
+6. 明确确认：
+    * 没有接真实下单
+    * 没有使用未收盘K线
+    * 没有未来函数
+    * 所有信号都有1H量比≥1.5
+    * 所有入场都有15M量比≥1.5
+    * 所有止损都不超过5%
+    * 所有目标RR都在1:2至1:3之间
+
+不要修改现有策略逻辑。
+新策略必须使用独立文件、独立strategy_name和独立统计。
+先检查现有项目结构，再按现有Repository、CLI和数据库风格实现，不要重复搭建第二套架构。

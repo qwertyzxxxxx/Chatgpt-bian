@@ -27,6 +27,8 @@ ENABLE_HOTLIST_REVERSAL = "true"
 ENABLE_V662 = "true"
 ENABLE_V663 = "true"
 ENABLE_V664 = "true"
+ENABLE_WAVE_LONG = "true"
+ENABLE_WAVE_SHORT = "true"
 
 [[ports]]
 localPort = 8080
