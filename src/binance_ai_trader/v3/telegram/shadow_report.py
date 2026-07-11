@@ -35,6 +35,7 @@ _STRAT_LABEL: dict[str, str] = {
     "hotlist_reversal":    "REV",
     "hotlist_v662":        "V662",
     "hotlist_v663":        "V663",
+    "hotlist_v664":        "V664",
 }
 _STRAT_TITLE: dict[str, str] = {
     "hotlist_momentum_v3": "📊 V3 纸盘 Paper",
@@ -42,6 +43,7 @@ _STRAT_TITLE: dict[str, str] = {
     "hotlist_reversal":    "📊 反插针 REV 纸盘 Paper",
     "hotlist_v662":        "📊 V662 纸盘 Paper",
     "hotlist_v663":        "📊 V663 纸盘 Paper",
+    "hotlist_v664":        "📊 V664 纸盘 Paper",
 }
 
 

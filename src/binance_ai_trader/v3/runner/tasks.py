@@ -51,6 +51,7 @@ from binance_ai_trader.v3.strategies.reversal import (
 from binance_ai_trader.v3.strategies.v66 import HotlistStrategyV66
 from binance_ai_trader.v3.strategies.v662 import HotlistStrategyV662
 from binance_ai_trader.v3.strategies.v663 import HotlistStrategyV663
+from binance_ai_trader.v3.strategies.v664 import HotlistStrategyV664
 from binance_ai_trader.v3.telegram.notifier import V3TelegramNotifier
 from binance_ai_trader.v3.telegram.shadow_report import V3ShadowReporter
 from binance_ai_trader.v3.telegram.weekly_review import send_weekly_review
@@ -741,6 +742,152 @@ def build_v663_tasks(
         RunnerTask("v663_scan",   _v663_scan_task,   interval=scan_interval,   startup_immediate=True),
         RunnerTask("v663_settle", _v663_settle_task, interval=settle_interval, startup_immediate=True),
         RunnerTask("v663_report", _v663_report_task, interval=report_interval),
+    ]
+    return tuple(tasks)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V664 Task Builder — 精准回踩+量缩，多空双向，paper only
+# ─────────────────────────────────────────────────────────────────────────────
+
+_V664_STRATEGY_ID = "hotlist_v664"
+_V664_HOLD_HOURS  = 24
+
+
+def build_v664_tasks(
+    db_path: Path,
+    universe_config: UniverseConfig,
+    base_url: str = "https://fapi.binance.com",
+    timeout: float = 10.0,
+    max_retries: int = 3,
+    telegram: TelegramNotifier | None = None,
+    scan_interval: timedelta = timedelta(minutes=15),
+    settle_interval: timedelta = timedelta(minutes=15),
+    report_interval: timedelta = timedelta(hours=1),
+    dedup_hours: int = 24,
+    max_open_orders: int = 5,
+) -> tuple[RunnerTask, ...]:
+    """Bootstrap V664 tasks. Paper-only — 精准回踩EMA20+量缩，多空双向，无实盘镜像。"""
+    client = BinancePublicClient(
+        base_url=base_url,
+        timeout_seconds=timeout,
+        max_retries=max_retries,
+    )
+
+    strategy   = HotlistStrategyV664(client, universe_config)
+    risk_cfg   = RiskConfig(strategy_id=_V664_STRATEGY_ID, max_open_orders=max_open_orders)
+    pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
+    order_repo = V3PaperOrderRepository()
+    push_repo  = V3PushQueueRepository()
+    perf_calc  = V3PerformanceCalculator(order_repo)
+    settler    = V3Settler(order_repo, client, notifier=telegram, live_repo=None)
+    settings_repo = V3RuntimeSettingsRepository()
+
+    v664_tg = V3TelegramNotifier(telegram) if telegram else None
+    reporter = (
+        V3ShadowReporter(
+            telegram, order_repo, perf_calc, _V664_STRATEGY_ID,
+            client=client,
+            scan_interval_minutes=int(scan_interval.total_seconds() // 60),
+            settle_interval_minutes=int(settle_interval.total_seconds() // 60),
+            summary_interval_hours=int(report_interval.total_seconds() // 3600),
+        )
+        if telegram else None
+    )
+
+    def _v664_scan_task() -> RunnerTaskResult:
+        now = datetime.now(UTC)
+        try:
+            live_dedup_hours, live_max_open_orders = settings_repo.resolve(_V664_STRATEGY_ID)
+            live_risk_cfg = RiskConfig(
+                strategy_id=_V664_STRATEGY_ID,
+                max_open_orders=live_max_open_orders,
+                blacklist=risk_cfg.blacklist,
+                blocked_regimes=risk_cfg.blocked_regimes,
+            )
+        except Exception:
+            log.exception("[V664] failed to read runtime settings — using deploy defaults")
+            live_dedup_hours, live_risk_cfg = dedup_hours, risk_cfg
+        result = pipeline.run(strategy, now=now, dedup_hours=live_dedup_hours, risk_config=live_risk_cfg)
+
+        orders_created = 0
+        for candidate in result.candidates:
+            if order_repo.exists_open_for_symbol_direction(
+                _V664_STRATEGY_ID, candidate.symbol, candidate.direction
+            ):
+                continue
+
+            expires_at = (now + timedelta(hours=_V664_HOLD_HOURS)).isoformat(timespec="seconds")
+            order = V3PaperOrder(
+                order_id=make_order_id(),
+                signal_id=candidate.signal_id,
+                strategy_id=_V664_STRATEGY_ID,
+                symbol=candidate.symbol,
+                direction=candidate.direction,
+                entry=Decimal(candidate.entry),
+                stop_loss=Decimal(candidate.sl),
+                tp1=Decimal(candidate.tp1),
+                tp2=Decimal(candidate.tp2) if candidate.tp2 else Decimal(candidate.tp1),
+                rr=Decimal(candidate.rr),
+                status="OPEN",
+                result=None,
+                created_at=now.isoformat(timespec="seconds"),
+                filled_at=None,
+                closed_at=None,
+                expires_at=expires_at,
+                pnl_pct=None,
+                rr_realized=None,
+                pushed=True,
+                metadata_json="{}",
+            )
+            order_repo.save(order)
+            order_repo.append_event(V3OrderEvent(
+                event_id=make_event_id(),
+                order_id=order.order_id,
+                signal_id=candidate.signal_id,
+                event_type="CREATED",
+                old_status=None,
+                new_status="OPEN",
+                candle_high=None,
+                candle_low=None,
+                triggered_at=now.isoformat(timespec="seconds"),
+                metadata_json="{}",
+            ))
+            orders_created += 1
+
+            if v664_tg:
+                v664_tg.send_candidate(candidate, hold_hours=_V664_HOLD_HOURS, live_prefix="【V664 模拟盘】")
+
+            push_items = push_repo.load_by_signal(candidate.signal_id)
+            if push_items:
+                push_repo.mark_sent(push_id=push_items[0].push_id)
+
+        log.info(
+            "[V664] scan done — pushed=%d orders_created=%d blocked=%d",
+            result.pushed, orders_created, result.total_blocked,
+        )
+        return RunnerTaskResult("SUCCEEDED", {
+            "event_type":     "v664_scan",
+            "scanned":        result.scanned,
+            "pushed":         result.pushed,
+            "orders_created": orders_created,
+            "blocked_risk":   result.blocked_risk,
+            "blocked_dedup":  result.blocked_dedup,
+        })
+
+    def _v664_settle_task() -> RunnerTaskResult:
+        updated = settler.settle_all(strategy_id=_V664_STRATEGY_ID)
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "v664_settle", "settled": updated})
+
+    def _v664_report_task() -> RunnerTaskResult:
+        if reporter:
+            reporter.send_report()
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "v664_report"})
+
+    tasks: list[RunnerTask] = [
+        RunnerTask("v664_scan",   _v664_scan_task,   interval=scan_interval,   startup_immediate=True),
+        RunnerTask("v664_settle", _v664_settle_task, interval=settle_interval, startup_immediate=True),
+        RunnerTask("v664_report", _v664_report_task, interval=report_interval),
     ]
     return tuple(tasks)
 

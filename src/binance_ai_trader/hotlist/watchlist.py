@@ -31,6 +31,8 @@ class HotlistWatchlistPolicy:
     require_trend_aligned_4h: bool = False
     require_triple_ema_1h: bool = False
     require_triple_ema_4h: bool = False
+    max_entry_distance_pct: Decimal = Decimal("100")
+    require_low_volume: bool = False
 
     def __post_init__(self) -> None:
         if min(self.gainers, self.losers, self.max_opportunities) < 1:
@@ -136,6 +138,15 @@ class HotlistWatchlist:
             if self._policy.require_triple_ema_1h and not plan.trend_aligned_triple_1h:
                 continue
             if self._policy.require_triple_ema_4h and not plan.trend_aligned_triple_4h:
+                continue
+            if self._policy.max_entry_distance_pct < Decimal("100"):
+                dist_pct = (
+                    abs(plan.current_price - plan.suggested_limit_entry)
+                    / plan.suggested_limit_entry * 100
+                )
+                if dist_pct > self._policy.max_entry_distance_pct:
+                    continue
+            if self._policy.require_low_volume and plan.volume_ratio_15m >= Decimal("1.0"):
                 continue
             plans.append(plan)
         plans.sort(

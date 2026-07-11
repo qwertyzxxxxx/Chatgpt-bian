@@ -88,7 +88,7 @@ if __name__ == "__main__":
     from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
     from binance_ai_trader.notifications.telegram import TelegramNotifier
     from binance_ai_trader.runner.engine import ProductionRunner, RunnerLockError
-    from binance_ai_trader.v3.runner.tasks import build_reversal_tasks, build_v3_tasks, build_v66_tasks, build_v662_tasks, build_v663_tasks
+    from binance_ai_trader.v3.runner.tasks import build_reversal_tasks, build_v3_tasks, build_v66_tasks, build_v662_tasks, build_v663_tasks, build_v664_tasks
     from binance_ai_trader.v3.storage.migration import run_migration
     from binance_ai_trader.v3.storage.pg import init_schema
     from binance_ai_trader.v3.telegram.startup import send_v3_startup
@@ -281,6 +281,22 @@ if __name__ == "__main__":
         )
         tasks.extend(v663_tasks)
         _log.info("[startup] V663 enabled — paper-only (EMA三线排列升级版)")
+
+    # ── Build V664 tasks (精准回踩+量缩，多空双向，paper-only) ──────────────
+    _v664_enabled = os.environ.get("ENABLE_V664", "").lower() == "true"
+    if _v664_enabled:
+        v664_tasks = build_v664_tasks(
+            db_path=_DB_PATH,
+            universe_config=universe_config,
+            telegram=notifier,
+            scan_interval=timedelta(minutes=15),
+            settle_interval=timedelta(minutes=15),
+            report_interval=timedelta(hours=1),
+            dedup_hours=24,
+            max_open_orders=5,
+        )
+        tasks.extend(v664_tasks)
+        _log.info("[startup] V664 enabled — paper-only (精准回踩+量缩，多空双向)")
 
     # ── Build hotlist_reversal tasks (V-Reversal, paper-only, no live mirror) ─
     _reversal_enabled = os.environ.get("ENABLE_HOTLIST_REVERSAL", "").lower() == "true"
