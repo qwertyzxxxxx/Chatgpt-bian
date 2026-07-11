@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from binance_ai_trader.config import UniverseConfig
-from binance_ai_trader.hotlist.btc_regime import apply_btc_regime_filter
 from binance_ai_trader.hotlist.pg_watchlist_repo import V66WatchlistPgRepository
 from binance_ai_trader.hotlist.watchlist import HotlistWatchlist, HotlistWatchlistPolicy
 from binance_ai_trader.infrastructure.binance_public import BinancePublicClient
@@ -121,8 +120,7 @@ class HotlistStrategyV662(V3Strategy):
                 )
             )
 
-        candidates = apply_btc_regime_filter(candidates, self._client, strategy_tag="V662")
-        log.info("[V662] %d candidates after BTC regime filter", len(candidates))
+        log.info("[V662] %d candidates generated", len(candidates))
         return candidates
 
     def features(self, inp: CandidateInput) -> dict:
