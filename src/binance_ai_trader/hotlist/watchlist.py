@@ -29,6 +29,8 @@ class HotlistWatchlistPolicy:
     min_volume_ratio: Decimal = Decimal("0")
     require_trend_aligned_1h: bool = False
     require_trend_aligned_4h: bool = False
+    require_triple_ema_1h: bool = False
+    require_triple_ema_4h: bool = False
 
     def __post_init__(self) -> None:
         if min(self.gainers, self.losers, self.max_opportunities) < 1:
@@ -118,7 +120,7 @@ class HotlistWatchlist:
             )
             plan = watcher.plan_candidate(
                 candidate, observed_at,
-                fetch_4h=self._policy.require_trend_aligned_4h,
+                fetch_4h=(self._policy.require_trend_aligned_4h or self._policy.require_triple_ema_4h),
             )
             if plan is None or plan.rr < self._policy.min_rr:
                 continue
@@ -130,6 +132,10 @@ class HotlistWatchlist:
             if self._policy.require_trend_aligned_1h and not plan.trend_aligned:
                 continue
             if self._policy.require_trend_aligned_4h and not plan.trend_4h_aligned:
+                continue
+            if self._policy.require_triple_ema_1h and not plan.trend_aligned_triple_1h:
+                continue
+            if self._policy.require_triple_ema_4h and not plan.trend_aligned_triple_4h:
                 continue
             plans.append(plan)
         plans.sort(

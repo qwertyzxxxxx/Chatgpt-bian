@@ -27,5 +27,15 @@ description: V662 is a V66 upgrade with volume ratio + 1h/4h trend gates. V66 li
 - `v3/runner/tasks.py`: `build_v662_tasks()` added, paper-only
 - `run_server.py`: gated behind `ENABLE_V662=true` (already set)
 
+## V663 — 三线排列升级版（EMA10>20>50）
+
+V663 = V662 基础上把趋势判断从"价格在EMA某侧"改为"三线排列"：
+- 1h: EMA10 > EMA20 > EMA50（多头）/ 反向（空头）
+- 4h: 同上
+- Policy 字段: `require_triple_ema_1h=True`, `require_triple_ema_4h=True`
+- 注意: 1h 抓取从30条改为60条（全局），以支持 EMA50 计算
+
+**Why:** 三线排列比单纯价格位置更强的趋势确认，过滤震荡行情假突破。
+
 ## How to apply for future new strategies
 When adding gates to `HotlistWatchlistPolicy`, use default values that preserve existing V66 behavior (0 / False). Gate logic lives in `HotlistWatchlist.review()`. 4h data fetch is lazy — only fetched when `require_trend_aligned_4h=True`.

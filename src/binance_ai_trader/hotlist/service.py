@@ -108,7 +108,7 @@ class HotlistWatcher:
         plans = []
         for candidate in self.candidates():
             fifteen = self._client.klines(candidate.symbol, "15m", limit=60)
-            hourly = self._client.klines(candidate.symbol, "1h", limit=30)
+            hourly = self._client.klines(candidate.symbol, "1h", limit=60)
             if len(fifteen) < 21 or len(hourly) < 20:
                 continue
             plans.append(self._plan(candidate, fifteen, hourly, generated_at))
@@ -133,7 +133,7 @@ class HotlistWatcher:
         plans = []
         for candidate in candidates:
             fifteen = self._client.klines(candidate.symbol, "15m", limit=60)
-            hourly = self._client.klines(candidate.symbol, "1h", limit=30)
+            hourly = self._client.klines(candidate.symbol, "1h", limit=60)
             if len(fifteen) < 21 or len(hourly) < 20:
                 continue
             plans.append(self._plan(candidate, fifteen, hourly, generated_at))
@@ -147,7 +147,7 @@ class HotlistWatcher:
     ) -> HotlistEntryPlan | None:
         generated_at = (now or datetime.now(UTC)).astimezone(UTC)
         fifteen = self._client.klines(candidate.symbol, "15m", limit=60)
-        hourly = self._client.klines(candidate.symbol, "1h", limit=30)
+        hourly = self._client.klines(candidate.symbol, "1h", limit=60)
         if len(fifteen) < 21 or len(hourly) < 20:
             return None
         fourh = self._client.klines(candidate.symbol, "4h", limit=60) if fetch_4h else None
@@ -182,10 +182,29 @@ class HotlistWatcher:
         trend_aligned = above_ema if candidate.direction == "LONG" else not above_ema
 
         trend_4h_aligned = True
+        trend_aligned_triple_4h = True
         if fourh and len(fourh) >= 50:
-            ema50_4h = _ema(tuple(k.close for k in fourh), 50)
+            closes_4h = tuple(k.close for k in fourh)
+            ema50_4h = _ema(closes_4h, 50)
             above_4h_ema = current >= ema50_4h
             trend_4h_aligned = above_4h_ema if candidate.direction == "LONG" else not above_4h_ema
+            ema10_4h = _ema(closes_4h, 10)
+            ema20_4h = _ema(closes_4h, 20)
+            if candidate.direction == "LONG":
+                trend_aligned_triple_4h = ema10_4h > ema20_4h > ema50_4h
+            else:
+                trend_aligned_triple_4h = ema10_4h < ema20_4h < ema50_4h
+
+        trend_aligned_triple_1h = True
+        if len(hourly) >= 50:
+            closes_1h = tuple(k.close for k in hourly)
+            ema10_1h = _ema(closes_1h, 10)
+            ema20_1h = _ema(closes_1h, 20)
+            ema50_1h = _ema(closes_1h, 50)
+            if candidate.direction == "LONG":
+                trend_aligned_triple_1h = ema10_1h > ema20_1h > ema50_1h
+            else:
+                trend_aligned_triple_1h = ema10_1h < ema20_1h < ema50_1h
 
         if candidate.direction == "LONG":
             entry = min(ema20, current - buffer)
@@ -236,6 +255,8 @@ class HotlistWatcher:
             sentiment=sentiment,
             trend_aligned=trend_aligned,
             trend_4h_aligned=trend_4h_aligned,
+            trend_aligned_triple_1h=trend_aligned_triple_1h,
+            trend_aligned_triple_4h=trend_aligned_triple_4h,
         )
 
 

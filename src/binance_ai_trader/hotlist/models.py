@@ -34,6 +34,8 @@ class HotlistEntryPlan:
     sentiment: str = ""
     trend_aligned: bool = True
     trend_4h_aligned: bool = True
+    trend_aligned_triple_1h: bool = True
+    trend_aligned_triple_4h: bool = True
 
 
 @dataclass(frozen=True, slots=True)
