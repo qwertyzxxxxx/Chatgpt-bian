@@ -40,8 +40,8 @@ _MAX_ENTRY_DIST_PCT    = Decimal("1.5")   # 当前价必须在EMA20 1.5% 以内
 _GAINERS               = 6
 _LOSERS                = 6
 _MAX_OPP               = 3
-_EXPIRY_MIN            = 60
-_MAX_TTL_MIN           = 60               # 比V663更短的TTL
+_EXPIRY_MIN            = 480              # 8小时，给回踩充足时间
+_MAX_TTL_MIN           = 480              # 8小时内持续监控该币
 _REFRESH_MIN           = 15
 
 
