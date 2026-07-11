@@ -1,6 +1,6 @@
 """V3 Telegram Notifier — candidate push messages with Signal ID.
 
-Format (fixed, do not change without explicit instruction):
+Format:
 
   [V3] 🔥 Hotlist
   ━━━━━━━━━━━━━━
@@ -8,7 +8,8 @@ Format (fixed, do not change without explicit instruction):
   BTCUSDT  LONG
   Entry    100.00
   SL       95.00   (-5.0%)
-  TP1      110.00  (+10.0%)
+  TP1      105.00  (+5.0%)   ← 1:1 半仓减仓参考
+  TP2      110.00  (+10.0%)  ← 实际止盈目标 (RR 2.0)
   RR       2.0
   Regime   BULL
   Reason   Hotlist momentum breakout
@@ -64,6 +65,8 @@ def _format_candidate(
 ) -> str:
     sl_pct  = _pct(c.sl,  c.entry)
     tp1_pct = _pct(c.tp1, c.entry)
+    tp2     = c.tp2 if c.tp2 else c.tp1
+    tp2_pct = _pct(tp2, c.entry)
     regime  = f"\nRegime   {c.market_regime}" if c.market_regime else ""
     reason  = f"\nReason   {c.reason}"        if c.reason        else ""
     prefix  = f"{live_prefix}\n" if live_prefix else ""
@@ -77,6 +80,7 @@ def _format_candidate(
         f"Entry    {c.entry}\n"
         f"SL       {c.sl}  {sl_pct}\n"
         f"TP1      {c.tp1}  {tp1_pct}\n"
+        f"TP2      {tp2}  {tp2_pct}\n"
         f"RR       {c.rr}"
         f"{regime}"
         f"{reason}\n"
