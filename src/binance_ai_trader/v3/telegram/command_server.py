@@ -515,7 +515,7 @@ def _cmd_orders() -> str:
         lines.append("[当前无开仓单]")
     else:
         lines.append(f"[开仓中 — {len(open_orders)}单]")
-        _STRAT_TAG = {"hotlist_momentum_v3": "V3", "hotlist_v66": "V66", "hotlist_reversal": "REV"}
+        _STRAT_TAG = {"hotlist_momentum_v3": "V3", "hotlist_v66": "V66", "hotlist_reversal": "REV", "hotlist_v662": "V662"}
         for o in open_orders:
             strat = _STRAT_TAG.get(o.strategy_id, o.strategy_id[:4])
             sl_pct = abs(Decimal(o.entry) - o.stop_loss) / Decimal(o.entry) * 100
@@ -562,7 +562,7 @@ def _cmd_perf() -> str:
 
     lines = ["🏆 模拟盘绩效", "━━━━━━━━━━━━━━"]
 
-    for strat_id, label in [("hotlist_momentum_v3", "V3"), ("hotlist_v66", "V66"), ("hotlist_reversal", "REV")]:
+    for strat_id, label in [("hotlist_momentum_v3", "V3"), ("hotlist_v66", "V66"), ("hotlist_reversal", "REV"), ("hotlist_v662", "V662")]:
         orders = [o for o in all_orders if o.strategy_id == strat_id]
         s = _stats(orders)
         lines.append(f"[{label} — {strat_id}]")
@@ -581,6 +581,7 @@ _PORTFOLIO_STRATEGIES = {
     "v66": "hotlist_v66",
     "rev": "hotlist_reversal",
     "reversal": "hotlist_reversal",
+    "v662": "hotlist_v662",
 }
 
 

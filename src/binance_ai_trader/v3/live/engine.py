@@ -118,7 +118,7 @@ class LiveMirrorEngine:
                 return PlaceResult(ok=False, reason=reason, live_order_id=live_order_id)
 
             sl    = Decimal(candidate.sl)
-            tp    = Decimal(candidate.tp1)
+            tp    = Decimal(candidate.tp2 if candidate.tp2 else candidate.tp1)
             side  = "BUY" if candidate.direction == "LONG" else "SELL"
             pos_side = candidate.direction  # "LONG" or "SHORT"
 
@@ -814,7 +814,7 @@ class LiveMirrorEngine:
             direction      = candidate.direction,
             entry          = candidate.entry,
             sl             = candidate.sl,
-            tp             = candidate.tp1,
+            tp             = (candidate.tp2 or candidate.tp1),
             notional       = str(self.effective_notional()),
             leverage       = 0,
             quantity       = "0",

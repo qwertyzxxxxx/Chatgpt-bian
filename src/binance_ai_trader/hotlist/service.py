@@ -140,14 +140,18 @@ class HotlistWatcher:
         return tuple(plans)
 
     def plan_candidate(
-        self, candidate: HotlistCandidate, now: datetime | None = None
+        self,
+        candidate: HotlistCandidate,
+        now: datetime | None = None,
+        fetch_4h: bool = False,
     ) -> HotlistEntryPlan | None:
         generated_at = (now or datetime.now(UTC)).astimezone(UTC)
         fifteen = self._client.klines(candidate.symbol, "15m", limit=60)
         hourly = self._client.klines(candidate.symbol, "1h", limit=30)
         if len(fifteen) < 21 or len(hourly) < 20:
             return None
-        return self._plan(candidate, fifteen, hourly, generated_at)
+        fourh = self._client.klines(candidate.symbol, "4h", limit=60) if fetch_4h else None
+        return self._plan(candidate, fifteen, hourly, generated_at, fourh=fourh)
 
     def _plan(
         self,
@@ -155,6 +159,8 @@ class HotlistWatcher:
         fifteen: tuple[Kline, ...],
         hourly: tuple[Kline, ...],
         generated_at: datetime,
+        *,
+        fourh: tuple[Kline, ...] | None = None,
     ) -> HotlistEntryPlan:
         current = fifteen[-1].close
         ema20 = _ema(tuple(item.close for item in fifteen), 20)
@@ -174,6 +180,13 @@ class HotlistWatcher:
         trend_str = "上方" if above_ema else "下方"
         sentiment = _sentiment(candidate.direction, chg, volume_ratio, above_ema)
         trend_aligned = above_ema if candidate.direction == "LONG" else not above_ema
+
+        trend_4h_aligned = True
+        if fourh and len(fourh) >= 50:
+            ema50_4h = _ema(tuple(k.close for k in fourh), 50)
+            above_4h_ema = current >= ema50_4h
+            trend_4h_aligned = above_4h_ema if candidate.direction == "LONG" else not above_4h_ema
+
         if candidate.direction == "LONG":
             entry = min(ema20, current - buffer)
             stop = min(swing_low, entry - atr14)
@@ -222,6 +235,7 @@ class HotlistWatcher:
             reason=reason,
             sentiment=sentiment,
             trend_aligned=trend_aligned,
+            trend_4h_aligned=trend_4h_aligned,
         )
 
 

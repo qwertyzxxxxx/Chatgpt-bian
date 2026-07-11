@@ -25,6 +25,10 @@ class HotlistWatchlistPolicy:
     min_rr: Decimal = Decimal("2")
     max_stop_pct: Decimal = Decimal("5")
     min_quote_volume: Decimal = Decimal("5000000")
+    min_move_pct: Decimal = Decimal("0")
+    min_volume_ratio: Decimal = Decimal("0")
+    require_trend_aligned_1h: bool = False
+    require_trend_aligned_4h: bool = False
 
     def __post_init__(self) -> None:
         if min(self.gainers, self.losers, self.max_opportunities) < 1:
@@ -37,6 +41,8 @@ class HotlistWatchlistPolicy:
             raise ValueError("expiry_minutes cannot exceed max_ttl_minutes")
         if self.min_rr < 1 or self.max_stop_pct <= 0 or self.min_quote_volume < 0:
             raise ValueError("invalid opportunity thresholds")
+        if self.min_move_pct < 0 or self.min_volume_ratio < 0:
+            raise ValueError("min_move_pct and min_volume_ratio cannot be negative")
 
 
 class HotlistWatchlist:
@@ -102,17 +108,28 @@ class HotlistWatchlist:
             ticker = tickers.get(item.symbol)
             if ticker is None or ticker.quote_volume < self._policy.min_quote_volume:
                 continue
+            if self._policy.min_move_pct > 0 and abs(ticker.price_change_percent) < self._policy.min_move_pct:
+                continue
             candidate = HotlistCandidate(
                 symbol=item.symbol,
                 direction="LONG" if item.source == "GAINER" else "SHORT",
                 change_24h_pct=ticker.price_change_percent,
                 quote_volume=ticker.quote_volume,
             )
-            plan = watcher.plan_candidate(candidate, observed_at)
+            plan = watcher.plan_candidate(
+                candidate, observed_at,
+                fetch_4h=self._policy.require_trend_aligned_4h,
+            )
             if plan is None or plan.rr < self._policy.min_rr:
                 continue
             stop_pct = abs(plan.suggested_limit_entry - plan.stop_loss) / plan.suggested_limit_entry * 100
             if stop_pct > self._policy.max_stop_pct:
+                continue
+            if self._policy.min_volume_ratio > 0 and plan.volume_ratio_15m < self._policy.min_volume_ratio:
+                continue
+            if self._policy.require_trend_aligned_1h and not plan.trend_aligned:
+                continue
+            if self._policy.require_trend_aligned_4h and not plan.trend_4h_aligned:
                 continue
             plans.append(plan)
         plans.sort(
