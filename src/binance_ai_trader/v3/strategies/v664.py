@@ -110,7 +110,7 @@ class HotlistStrategyV664(V3Strategy):
                     direction=plan.direction,
                     entry=str(plan.suggested_limit_entry),
                     sl=str(plan.stop_loss),
-                    tp1=str(plan.tp1),
+                    tp1=str(plan.tp2),   # 目标改为TP2 (2:1 RR)，结算器检查order.tp1
                     tp2=str(plan.tp2),
                     rr=str(plan.rr),
                     confidence=float(plan.rr) / 5.0,
