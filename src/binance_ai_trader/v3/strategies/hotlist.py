@@ -103,6 +103,10 @@ class HotlistStrategyV3(V3Strategy):
                 log.info("[V3/Hotlist] %s SKIP stop=%.1f%%>%.1f%%(纸面上限)", plan.symbol, stop_pct, self._max_stop_pct)
                 continue
 
+            if plan.direction == "SHORT" and stop_pct > Decimal("6"):
+                log.info("[V3/Hotlist] %s SKIP SHORT stop=%.1f%%>6%%(空头SL上限)", plan.symbol, stop_pct)
+                continue
+
             scored.append({
                 "plan": plan,
                 "stop_pct": stop_pct,
