@@ -136,11 +136,17 @@ class WaveWatchlistRepo:
 
     def expire_old(self, now: datetime) -> None:
         now_str = now.isoformat(timespec="seconds")
+        cutoff = (now - timedelta(days=7)).isoformat(timespec="seconds")
         with self._conn() as con:
             con.execute(
                 "UPDATE wave_watchlist SET status='EXPIRED' "
                 "WHERE status='WATCHING' AND expires_at < ?",
                 (now_str,),
+            )
+            con.execute(
+                "DELETE FROM wave_watchlist "
+                "WHERE status IN ('EXPIRED','ENTERED','INVALIDATED') AND created_at < ?",
+                (cutoff,),
             )
 
     # ── reads ──────────────────────────────────────────────────────────────
