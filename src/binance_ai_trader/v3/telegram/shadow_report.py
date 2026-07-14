@@ -178,10 +178,7 @@ class V3ShadowReporter:
 
         sid = self._strategy_id
         open_orders    = self._order_repo.load_open_by_strategy(sid)
-        recent_settled = [
-            o for o in self._order_repo.load_recent_settled(14)
-            if o.strategy_id == sid
-        ][:7]
+        recent_settled = self._order_repo.load_recent_settled(7, strategy_id=sid)
 
         filled  = [o for o in open_orders if o.status == "FILLED"]
         pending = [o for o in open_orders if o.status == "OPEN"]

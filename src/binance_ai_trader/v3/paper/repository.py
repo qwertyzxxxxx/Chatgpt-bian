@@ -172,20 +172,33 @@ class V3PaperOrderRepository:
             conn.close()
         return [_row_to_order(r) for r in rows]
 
-    def load_recent_settled(self, n: int = 7) -> list[V3PaperOrder]:
+    def load_recent_settled(self, n: int = 7, strategy_id: str | None = None) -> list[V3PaperOrder]:
         conn = get_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT order_id, signal_id, strategy_id, symbol, direction,
-                              entry, stop_loss, tp1, tp2, rr, status, result,
-                              created_at, filled_at, closed_at, expires_at,
-                              pnl_pct, rr_realized, pushed, metadata_json
-                       FROM v3_paper_orders
-                       WHERE status='CLOSED' AND result IN ('TP1','TP2','SL','TIMEOUT')
-                       ORDER BY closed_at DESC LIMIT %s""",
-                    (n,),
-                )
+                if strategy_id is not None:
+                    cur.execute(
+                        """SELECT order_id, signal_id, strategy_id, symbol, direction,
+                                  entry, stop_loss, tp1, tp2, rr, status, result,
+                                  created_at, filled_at, closed_at, expires_at,
+                                  pnl_pct, rr_realized, pushed, metadata_json
+                           FROM v3_paper_orders
+                           WHERE status='CLOSED' AND result IN ('TP1','TP2','SL','TIMEOUT')
+                             AND strategy_id=%s
+                           ORDER BY closed_at DESC LIMIT %s""",
+                        (strategy_id, n),
+                    )
+                else:
+                    cur.execute(
+                        """SELECT order_id, signal_id, strategy_id, symbol, direction,
+                                  entry, stop_loss, tp1, tp2, rr, status, result,
+                                  created_at, filled_at, closed_at, expires_at,
+                                  pnl_pct, rr_realized, pushed, metadata_json
+                           FROM v3_paper_orders
+                           WHERE status='CLOSED' AND result IN ('TP1','TP2','SL','TIMEOUT')
+                           ORDER BY closed_at DESC LIMIT %s""",
+                        (n,),
+                    )
                 rows = cur.fetchall()
         finally:
             conn.close()
