@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -12,6 +13,8 @@ from binance_ai_trader.hotlist.models import (
 )
 from binance_ai_trader.hotlist.repository import HotlistWatchlistRepository
 from binance_ai_trader.hotlist.service import HotlistWatcher, HotlistWatcherPolicy, PublicMarketData
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,11 +111,21 @@ class HotlistWatchlist:
             ),
         )
         plans = []
-        for item in self._repository.active():
+        active_items = list(self._repository.active())
+        rej = {
+            "no_ticker": 0, "min_move": 0, "no_plan_rr": 0,
+            "stop_pct": 0, "vol_ratio": 0,
+            "trend_1h": 0, "trend_4h": 0,
+            "triple_ema_1h": 0, "triple_ema_4h": 0,
+            "entry_dist": 0, "low_vol": 0,
+        }
+        for item in active_items:
             ticker = tickers.get(item.symbol)
             if ticker is None or ticker.quote_volume < self._policy.min_quote_volume:
+                rej["no_ticker"] += 1
                 continue
             if self._policy.min_move_pct > 0 and abs(ticker.price_change_percent) < self._policy.min_move_pct:
+                rej["min_move"] += 1
                 continue
             candidate = HotlistCandidate(
                 symbol=item.symbol,
@@ -125,19 +138,26 @@ class HotlistWatchlist:
                 fetch_4h=(self._policy.require_trend_aligned_4h or self._policy.require_triple_ema_4h),
             )
             if plan is None or plan.rr < self._policy.min_rr:
+                rej["no_plan_rr"] += 1
                 continue
             stop_pct = abs(plan.suggested_limit_entry - plan.stop_loss) / plan.suggested_limit_entry * 100
             if stop_pct > self._policy.max_stop_pct:
+                rej["stop_pct"] += 1
                 continue
             if self._policy.min_volume_ratio > 0 and plan.volume_ratio_15m < self._policy.min_volume_ratio:
+                rej["vol_ratio"] += 1
                 continue
             if self._policy.require_trend_aligned_1h and not plan.trend_aligned:
+                rej["trend_1h"] += 1
                 continue
             if self._policy.require_trend_aligned_4h and not plan.trend_4h_aligned:
+                rej["trend_4h"] += 1
                 continue
             if self._policy.require_triple_ema_1h and not plan.trend_aligned_triple_1h:
+                rej["triple_ema_1h"] += 1
                 continue
             if self._policy.require_triple_ema_4h and not plan.trend_aligned_triple_4h:
+                rej["triple_ema_4h"] += 1
                 continue
             if self._policy.max_entry_distance_pct < Decimal("100"):
                 dist_pct = (
@@ -145,10 +165,21 @@ class HotlistWatchlist:
                     / plan.suggested_limit_entry * 100
                 )
                 if dist_pct > self._policy.max_entry_distance_pct:
+                    rej["entry_dist"] += 1
                     continue
             if self._policy.require_low_volume and plan.volume_ratio_15m >= Decimal("1.0"):
+                rej["low_vol"] += 1
                 continue
             plans.append(plan)
+
+        total_rej = sum(rej.values())
+        if total_rej or active_items:
+            rej_detail = " ".join(f"{k}={v}" for k, v in rej.items() if v)
+            log.info(
+                "[Watchlist] active=%d passed=%d rejected=%d | %s",
+                len(active_items), len(plans), total_rej,
+                rej_detail or "none",
+            )
         plans.sort(
             key=lambda item: (-abs(item.change_24h_pct), -item.quote_volume, item.symbol)
         )
