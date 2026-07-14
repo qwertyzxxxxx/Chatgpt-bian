@@ -82,7 +82,8 @@ class HotlistStrategyV663(V3Strategy):
             min_move_pct=_MIN_MOVE_PCT,
             min_volume_ratio=_MIN_VOL_RATIO,
             require_triple_ema_1h=True,
-            require_triple_ema_4h=True,
+            require_triple_ema_4h=False,
+            require_trend_aligned_4h=True,
         )
         watcher = HotlistWatchlist(
             self._client, self._repo, self._universe_config, policy

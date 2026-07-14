@@ -48,6 +48,11 @@ _STRAT_TITLE: dict[str, str] = {
     "hotlist_v664":        "📊 V664 纸盘 Paper",
     "wave_long":           "📊 Wave↑ 放量突破回踩 Paper",
     "wave_short":          "📊 Wave↓ 放量跌破反抽 Paper",
+    "classic_c1":          "📊 Classic C1 回踩多 Paper",
+    "classic_c2":          "📊 Classic C2 突破多 Paper",
+    "classic_c3":          "📊 Classic C3 反弹空 Paper",
+    "classic_c4_top":      "📊 Classic C4 顶部空 Paper",
+    "classic_c4_bot":      "📊 Classic C4 底部多 Paper",
 }
 
 
@@ -164,9 +169,16 @@ class V3ShadowReporter:
 
     def send_report(self) -> None:
         try:
+            # Skip report entirely if this strategy has never produced any activity.
+            # Prevents spam from newly-enabled or zero-signal strategies.
+            alltime     = self._perf_calc.calculate(self._strategy_id, "all_time")
+            open_orders = self._order_repo.load_open_by_strategy(self._strategy_id)
+            if alltime.pushed == 0 and not open_orders:
+                log.info("[V3] skip empty report for %s (no activity)", self._strategy_id)
+                return
             msg = self._build_message()
             self._notifier.send(msg)
-            log.info("[V3] shadow report sent")
+            log.info("[V3] shadow report sent for %s", self._strategy_id)
         except Exception:
             log.exception("[V3] failed to send shadow report")
             raise
