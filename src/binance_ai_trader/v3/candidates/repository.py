@@ -17,13 +17,18 @@ from datetime import UTC, datetime, timedelta
 from binance_ai_trader.v3.storage.pg import get_conn
 
 _STRATEGY_PREFIXES: dict[str, str] = {
-    "reversal":  "REV",
-    "hotlist":   "HOT",
-    "monster":   "MON",
-    "breakout":  "BRK",
-    "bear":      "BER",
-    "ai_macro":  "AIX",
-    "future_ai": "AIX",
+    "reversal":    "REV",
+    "hotlist":     "HOT",
+    "monster":     "MON",
+    "breakout":    "BRK",
+    "bear":        "BER",
+    "ai_macro":    "AIX",
+    "future_ai":   "AIX",
+    "classic_c1":  "CLN",
+    "classic_c2":  "CLN",
+    "classic_c3":  "CLN",
+    "classic_c4":  "CLN",
+    "classic":     "CLN",
 }
 
 

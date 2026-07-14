@@ -88,7 +88,7 @@ if __name__ == "__main__":
     from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
     from binance_ai_trader.notifications.telegram import TelegramNotifier
     from binance_ai_trader.runner.engine import ProductionRunner, RunnerLockError
-    from binance_ai_trader.v3.runner.tasks import build_reversal_tasks, build_v3_tasks, build_v66_tasks, build_v662_tasks, build_v663_tasks, build_v664_tasks, build_wave_long_tasks, build_wave_short_tasks
+    from binance_ai_trader.v3.runner.tasks import build_reversal_tasks, build_v3_tasks, build_v66_tasks, build_v662_tasks, build_v663_tasks, build_v664_tasks, build_wave_long_tasks, build_wave_short_tasks, build_classic_tasks
     from binance_ai_trader.v3.storage.migration import run_migration
     from binance_ai_trader.v3.storage.pg import init_schema
     from binance_ai_trader.v3.telegram.startup import send_v3_startup
@@ -354,6 +354,19 @@ if __name__ == "__main__":
         )
         tasks.extend(wave_short_tasks)
         _log.info("[startup] wave_short enabled — paper-only (放量跌破反抽做空)")
+
+    # ── Classic C1-C4 tasks (经典量价策略，paper-only) ──────────────────────
+    _classic_enabled = os.environ.get("ENABLE_CLASSIC", "").lower() == "true"
+    if _classic_enabled:
+        classic_tasks = build_classic_tasks(
+            db_path=_DB_PATH,
+            telegram=notifier,
+            scan_interval=timedelta(minutes=15),
+            settle_interval=timedelta(minutes=15),
+            report_interval=timedelta(hours=1),
+        )
+        tasks.extend(classic_tasks)
+        _log.info("[startup] Classic C1-C4 enabled — paper-only (经典量价策略)")
 
     _log.info("[startup] All tasks: %s", [t.event_type for t in tasks])
 

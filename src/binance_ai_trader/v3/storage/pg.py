@@ -260,6 +260,45 @@ CREATE TABLE IF NOT EXISTS v3_runtime_settings (
 -- notional_usdt: per-strategy live position size override (NULL = hardcoded default).
 ALTER TABLE v3_runtime_settings ADD COLUMN IF NOT EXISTS live_enabled  BOOLEAN;
 ALTER TABLE v3_runtime_settings ADD COLUMN IF NOT EXISTS notional_usdt NUMERIC;
+
+-- ── Classic C1-C4 scan records ──────────────────────────────────────────────
+-- Permanently stores every evaluated coin per cycle, signal or not.
+CREATE TABLE IF NOT EXISTS classic_scan_records (
+    scan_id         TEXT PRIMARY KEY,
+    strategy_id     TEXT NOT NULL,
+    scanned_at      TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    pool_type       TEXT NOT NULL,
+    pool_rank       INTEGER NOT NULL,
+    direction       TEXT NOT NULL,
+    change_24h      REAL,
+    quote_volume    REAL,
+    change_3d       REAL,
+    change_7d       REAL,
+    range_pos_30d   REAL,
+    consec_days     INTEGER,
+    trend_4h        TEXT,
+    atr_dist_4h     REAL,
+    vol_ratio_1h    REAL,
+    vol_ratio_15m   REAL,
+    vol_grade       TEXT,
+    price_pattern   TEXT,
+    score           INTEGER NOT NULL DEFAULT 0,
+    passed          BOOLEAN NOT NULL DEFAULT FALSE,
+    entry           TEXT,
+    sl              TEXT,
+    tp1             TEXT,
+    tp2             TEXT,
+    rr              TEXT,
+    rejection       TEXT,
+    signal_id       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_classic_scan_strategy_time
+    ON classic_scan_records(strategy_id, scanned_at);
+CREATE INDEX IF NOT EXISTS idx_classic_scan_symbol
+    ON classic_scan_records(symbol, direction, scanned_at);
+CREATE INDEX IF NOT EXISTS idx_classic_scan_signal
+    ON classic_scan_records(signal_id) WHERE signal_id IS NOT NULL;
 """
 
 
