@@ -178,14 +178,17 @@ def _cmd_setlimit(args: list[str], user_id: int | None) -> str:
 
 def _cmd_livestatus() -> str:
     from binance_ai_trader.v3.settings.repository import (
-        V3_STRATEGY_ID, V66_STRATEGY_ID, V3RuntimeSettingsRepository,
+        LIVE_DEFAULTS, STRATEGY_ALIASES, V3RuntimeSettingsRepository,
     )
 
     repo = V3RuntimeSettingsRepository()
     master_on = os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
     lines = ["🟢 实盘交易状态", "━━━━━━━━━━━━━━"]
     lines.append(f"全局开关(LIVE_TRADING_ENABLED): {'✅ ON' if master_on else '⛔ OFF（优先级最高，覆盖下方策略开关）'}")
-    for alias, strategy_id in (("v3", V3_STRATEGY_ID), ("v66", V66_STRATEGY_ID)):
+
+    id_to_alias = {v: k for k, v in STRATEGY_ALIASES.items()}
+    for strategy_id in LIVE_DEFAULTS:
+        alias = id_to_alias.get(strategy_id, strategy_id)
         on, notional = repo.resolve_live(strategy_id)
         s = repo.get(strategy_id)
         on_tag = "（默认）" if s.live_enabled is None else f"（已调整，{_ago(s.updated_at)}）"
@@ -194,8 +197,10 @@ def _cmd_livestatus() -> str:
         lines.append(f"\n【{alias}】{effective}")
         lines.append(f"策略开关: {'ON' if on else 'OFF'} {on_tag}")
         lines.append(f"仓位大小: {notional} USDT {notional_tag}")
-    lines.append("\n用法: /livemode v3 on|off")
-    lines.append("      /setlive v66 3000")
+
+    all_aliases = "|".join(STRATEGY_ALIASES.keys())
+    lines.append(f"\n用法: /livemode <{all_aliases}> on|off")
+    lines.append(f"      /setlive <{all_aliases}> <USDT>")
     return "\n".join(lines)
 
 
@@ -204,13 +209,14 @@ def _cmd_livemode(args: list[str], user_id: int | None) -> str:
         STRATEGY_ALIASES, V3RuntimeSettingsRepository,
     )
 
+    all_aliases = "|".join(STRATEGY_ALIASES.keys())
     if len(args) < 2 or args[1].lower() not in ("on", "off"):
-        return "❌ 用法: /livemode <v3|v66> <on|off>\n示例: /livemode v66 on"
+        return f"❌ 用法: /livemode <{all_aliases}> <on|off>\n示例: /livemode v663 on"
 
     alias = args[0].lower()
     strategy_id = STRATEGY_ALIASES.get(alias)
     if strategy_id is None:
-        return f"❌ 未知策略 '{alias}'，可选: {', '.join(STRATEGY_ALIASES)}"
+        return f"❌ 未知策略 '{alias}'，可选: {all_aliases}"
 
     enabled = args[1].lower() == "on"
     updated_by = str(user_id) if user_id is not None else None
@@ -227,13 +233,14 @@ def _cmd_setlive(args: list[str], user_id: int | None) -> str:
         STRATEGY_ALIASES, V3RuntimeSettingsRepository,
     )
 
+    all_aliases = "|".join(STRATEGY_ALIASES.keys())
     if len(args) < 2:
-        return "❌ 用法: /setlive <v3|v66> <数值USDT>\n示例: /setlive v66 3000"
+        return f"❌ 用法: /setlive <{all_aliases}> <数值USDT>\n示例: /setlive v663 2000"
 
     alias = args[0].lower()
     strategy_id = STRATEGY_ALIASES.get(alias)
     if strategy_id is None:
-        return f"❌ 未知策略 '{alias}'，可选: {', '.join(STRATEGY_ALIASES)}"
+        return f"❌ 未知策略 '{alias}'，可选: {all_aliases}"
 
     updated_by = str(user_id) if user_id is not None else None
     repo = V3RuntimeSettingsRepository()
