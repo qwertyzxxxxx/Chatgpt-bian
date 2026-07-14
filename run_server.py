@@ -146,8 +146,9 @@ if __name__ == "__main__":
     # "true", neither engine is even constructed. Per-strategy on/off and
     # position size are then controlled at runtime via DB settings
     # (V3RuntimeSettingsRepository / Telegram /livemode /setlive commands).
-    live_mirror = None       # V3
-    v66_live_mirror = None   # V66
+    live_mirror     = None   # V3 (paper-controlled via DB)
+    v66_live_mirror = None   # V66 → paper only (no live engine)
+    v663_live_mirror = None  # V663 → live test 2000 USDT
     _live_enabled = os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
     if _live_enabled:
         _api_key    = os.environ.get("BINANCE_API_KEY", "")
@@ -159,7 +160,7 @@ if __name__ == "__main__":
                 from binance_ai_trader.v3.live.engine import LiveMirrorEngine
                 from binance_ai_trader.v3.live.repository import LiveOrderRepository
                 from binance_ai_trader.v3.settings.repository import (
-                    V3_STRATEGY_ID, V66_STRATEGY_ID,
+                    V3_STRATEGY_ID, V66_STRATEGY_ID, V663_STRATEGY_ID,
                 )
                 _live_client = BinanceFuturesClient(_api_key, _api_secret)
                 _live_repo   = LiveOrderRepository()
@@ -176,35 +177,38 @@ if __name__ == "__main__":
                     tag="V3",
                 )
 
-                _v66_notional = _Dec(os.environ.get("V66_ORDER_NOTIONAL_USDT", "2000"))
-                v66_live_mirror = LiveMirrorEngine(
+                _v663_notional = _Dec(os.environ.get("V663_ORDER_NOTIONAL_USDT", "2000"))
+                v663_live_mirror = LiveMirrorEngine(
                     _live_client, _live_repo, notifier,
-                    notional_usdt=_v66_notional,
+                    notional_usdt=_v663_notional,
                     max_pending=_max_pending,
                     max_positions=_max_pos,
-                    strategy_id=V66_STRATEGY_ID,
-                    tag="V66",
+                    strategy_id=V663_STRATEGY_ID,
+                    tag="V663",
                 )
 
                 _log.info(
-                    "[startup] Live Mirror initialised — V3 notional=%sU (live_enabled db-controlled), "
-                    "V66 notional=%sU (live_enabled db-controlled), max_pending=%d max_pos=%d",
-                    _v3_notional, _v66_notional, _max_pending, _max_pos,
+                    "[startup] Live Mirror initialised — V3 notional=%sU (db-controlled), "
+                    "V663 notional=%sU (db-controlled), max_pending=%d max_pos=%d",
+                    _v3_notional, _v663_notional, _max_pending, _max_pos,
                 )
                 if notifier:
                     try:
                         from binance_ai_trader.v3.settings.repository import V3RuntimeSettingsRepository
                         _settings_repo = V3RuntimeSettingsRepository()
-                        _v3_on, _v3_amt = _settings_repo.resolve_live(V3_STRATEGY_ID)
-                        _v66_on, _v66_amt = _settings_repo.resolve_live(V66_STRATEGY_ID)
+                        _v3_on,   _v3_amt   = _settings_repo.resolve_live(V3_STRATEGY_ID)
+                        _v663_on, _v663_amt = _settings_repo.resolve_live(V663_STRATEGY_ID)
+                        _v66_on,  _v66_amt  = _settings_repo.resolve_live(V66_STRATEGY_ID)
                     except Exception:
-                        _v3_on, _v3_amt = False, _v3_notional
-                        _v66_on, _v66_amt = True, _v66_notional
+                        _v3_on,   _v3_amt   = False, _v3_notional
+                        _v663_on, _v663_amt = True,  _v663_notional
+                        _v66_on,  _v66_amt  = False, _Dec("2000")
                     notifier.send(
                         "[LIVE] 实盘模块启动\n"
                         f"━━━━━━━━━━━━━━\n"
-                        f"V3  实盘 {'ON' if _v3_on else 'OFF'}  仓位 {_v3_amt} USDT\n"
-                        f"V66 实盘 {'ON' if _v66_on else 'OFF'}  仓位 {_v66_amt} USDT\n"
+                        f"V3   实盘 {'ON' if _v3_on else 'OFF'}   仓位 {_v3_amt} USDT\n"
+                        f"V663 实盘 {'ON' if _v663_on else 'OFF'}  仓位 {_v663_amt} USDT ← 新\n"
+                        f"V66  实盘 OFF (已切模拟盘)\n"
                         f"最大挂单  {_max_pending}\n"
                         f"最大持仓  {_max_pos}\n"
                         f"使用 /livestatus /livemode /setlive 调整"
@@ -278,9 +282,12 @@ if __name__ == "__main__":
             report_interval=timedelta(hours=1),
             dedup_hours=24,
             max_open_orders=5,
+            live_mirror=v663_live_mirror,
+            live_sync_interval=timedelta(minutes=int(os.environ.get("LIVE_SYNC_INTERVAL_MIN", "3"))),
+            live_report_interval=timedelta(minutes=int(os.environ.get("LIVE_REPORT_INTERVAL_MIN", "60"))),
         )
         tasks.extend(v663_tasks)
-        _log.info("[startup] V663 enabled — paper-only (EMA三线排列升级版)")
+        _log.info("[startup] V663 enabled — live mirror wired (EMA三线排列升级版，实盘测试2000U)")
 
     # ── Build V664 tasks (精准回踩+量缩，多空双向，paper-only) ──────────────
     _v664_enabled = os.environ.get("ENABLE_V664", "").lower() == "true"

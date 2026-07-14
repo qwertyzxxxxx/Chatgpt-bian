@@ -24,17 +24,20 @@ MAX_MAX_OPEN_ORDERS = 50
 
 # Strategy id + defaults the bot is deployed with (single source of truth —
 # run_server.py and tasks.py should not hardcode these again).
-V3_STRATEGY_ID = "hotlist_momentum_v3"
+V3_STRATEGY_ID  = "hotlist_momentum_v3"
 V66_STRATEGY_ID = "hotlist_v66"
+V663_STRATEGY_ID = "hotlist_v663"
 
 STRATEGY_ALIASES: dict[str, str] = {
-    "v3": V3_STRATEGY_ID,
+    "v3":  V3_STRATEGY_ID,
     "v66": V66_STRATEGY_ID,
+    "v663": V663_STRATEGY_ID,
 }
 
 DEFAULTS: dict[str, dict[str, int]] = {
-    V3_STRATEGY_ID: {"dedup_hours": 24, "max_open_orders": 10},
+    V3_STRATEGY_ID:  {"dedup_hours": 24, "max_open_orders": 10},
     V66_STRATEGY_ID: {"dedup_hours": 24, "max_open_orders": 5},
+    V663_STRATEGY_ID: {"dedup_hours": 24, "max_open_orders": 5},
 }
 
 
@@ -49,12 +52,12 @@ class RuntimeSettings:
     notional_usdt: str | None = None
 
 
-# Hardcoded fallback live-trading defaults, used only when there is no DB row
-# yet (fresh deploy). Per the 2026-07 rollout: V3 live trading is OFF (paper
-# continues), V66 goes live with a 2000 USDT position size.
+# Hardcoded fallback live-trading defaults.
+# 2026-07 rollout: V66 → paper, V663 → live 2000 USDT test.
 LIVE_DEFAULTS: dict[str, dict[str, object]] = {
-    V3_STRATEGY_ID:  {"live_enabled": False, "notional_usdt": "1000"},
-    V66_STRATEGY_ID: {"live_enabled": True,  "notional_usdt": "2000"},
+    V3_STRATEGY_ID:   {"live_enabled": False, "notional_usdt": "1000"},
+    V66_STRATEGY_ID:  {"live_enabled": False, "notional_usdt": "2000"},
+    V663_STRATEGY_ID: {"live_enabled": True,  "notional_usdt": "2000"},
 }
 
 
