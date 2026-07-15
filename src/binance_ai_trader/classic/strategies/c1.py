@@ -74,8 +74,8 @@ def evaluate(
     impulse_seg = klines_1h[:split]
     pullback_seg = klines_1h[split:]
 
-    vr_impulse  = vol_ratio_for_segment(impulse_seg)
-    vr_pullback = vol_ratio_for_segment(pullback_seg)
+    vr_impulse  = vol_ratio_for_segment(impulse_seg,  baseline=klines_1h)
+    vr_pullback = vol_ratio_for_segment(pullback_seg, baseline=klines_1h)
 
     if vr_impulse < CFG.c1_rally_vol_min:
         rejs.append(f"impulse_vol_low_{float(vr_impulse):.2f}<{CFG.c1_rally_vol_min}")

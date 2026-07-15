@@ -1464,9 +1464,12 @@ def build_classic_tasks(
             if order_repo.exists_open_for_symbol_direction(strategy_id, symbol, direction):
                 log.info("[Classic/%s] dedup SKIP %s %s (open order exists)", strategy_id, symbol, direction)
                 continue
-            if scan_repo.exists_open_24h(symbol, direction, strategy_id, dedup_since):
-                log.info("[Classic/%s] dedup SKIP %s %s (24h record exists)", strategy_id, symbol, direction)
-                continue
+            try:
+                if scan_repo.exists_open_24h(symbol, direction, strategy_id, dedup_since):
+                    log.info("[Classic/%s] dedup SKIP %s %s (24h record exists)", strategy_id, symbol, direction)
+                    continue
+            except Exception as exc:
+                log.warning("[Classic/%s] exists_open_24h failed (table missing?): %s — proceeding", strategy_id, exc)
 
             # Generate signal_id
             try:

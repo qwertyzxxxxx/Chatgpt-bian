@@ -67,8 +67,8 @@ def evaluate(
     decline_seg = klines_1h[:split]
     rally_seg   = klines_1h[split:]
 
-    vr_decline = vol_ratio_for_segment(decline_seg)
-    vr_rally   = vol_ratio_for_segment(rally_seg)
+    vr_decline = vol_ratio_for_segment(decline_seg, baseline=klines_1h)
+    vr_rally   = vol_ratio_for_segment(rally_seg,   baseline=klines_1h)
 
     if vr_decline < CFG.c3_decline_vol_min:
         rejs.append(f"decline_vol_low_{float(vr_decline):.2f}<{CFG.c3_decline_vol_min}")

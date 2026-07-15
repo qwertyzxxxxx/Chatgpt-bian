@@ -75,20 +75,46 @@ def vol_ratio(klines: tuple[Kline, ...], lookback: int = 20) -> Decimal:
     return klines[-1].quote_volume / Decimal(str(med))
 
 
-def vol_ratio_for_segment(klines: tuple[Kline, ...], lookback: int = 20) -> Decimal:
-    """Average vol_ratio across a segment (used for multi-bar rally/decline check)."""
-    if not klines:
+def vol_ratio_for_segment(
+    segment: tuple[Kline, ...],
+    baseline: tuple[Kline, ...] | None = None,
+    lookback: int = 20,
+) -> Decimal:
+    """Volume ratio for a segment.
+
+    Preferred usage — pass *baseline* (e.g. the full 1H history):
+        returns  median(segment_vols) / median(baseline_vols)
+    This correctly answers "is this segment louder/quieter than the overall
+    baseline?" which is what impulse-vs-pullback checks need.
+
+    Legacy (no baseline): rolling-lookback within the segment itself.
+    Avoid for impulse/pullback checks — the self-referential window makes
+    the 1.5x / 0.8x thresholds near-impossible to hit in flat vol regimes.
+    """
+    if not segment:
         return Decimal("0")
+
+    if baseline is not None:
+        seg_vols  = [float(k.quote_volume) for k in segment]
+        base_vols = [float(k.quote_volume) for k in baseline]
+        if not base_vols:
+            return Decimal("0")
+        base_med = statistics.median(base_vols)
+        if base_med == 0:
+            return Decimal("0")
+        return Decimal(str(statistics.median(seg_vols) / base_med))
+
+    # Legacy: rolling window within the segment
     ratios = []
-    for i in range(len(klines)):
-        window = klines[max(0, i - lookback):i]
+    for i in range(len(segment)):
+        window = segment[max(0, i - lookback):i]
         if not window:
             continue
         prev_vols = [float(k.quote_volume) for k in window]
         med = statistics.median(prev_vols) if prev_vols else 0
         if med == 0:
             continue
-        ratios.append(float(klines[i].quote_volume) / med)
+        ratios.append(float(segment[i].quote_volume) / med)
     if not ratios:
         return Decimal("0")
     return Decimal(str(statistics.median(ratios)))

@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
+import dataclasses
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -188,6 +191,8 @@ def scan(client: BinancePublicClient, now: datetime | None = None) -> ClassicSca
 
     # Collect best signal per strategy (score ≥ 75)
     best_per_strategy: dict[str, dict] = {}
+    # Collect rejection reasons per strategy for INFO-level summary
+    rej_counter: dict[str, list[str]] = defaultdict(list)
 
     for entry, rank, strategy_ids in pool_tasks:
         klines = _fetch_klines(client, entry.symbol)
@@ -204,22 +209,26 @@ def scan(client: BinancePublicClient, now: datetime | None = None) -> ClassicSca
                 continue
 
             # Patch pool_rank onto ctx (dataclass frozen → rebuild)
-            import dataclasses
             ctx = dataclasses.replace(ctx_base, pool_rank=rank)
 
-            sig, rejs = _run_strategy(strategy_id, ctx, klines)
+            try:
+                sig, rejs = _run_strategy(strategy_id, ctx, klines)
+            except Exception as exc:
+                log.warning(
+                    "[Classic/%s] _run_strategy error on %s: %s",
+                    strategy_id, entry.symbol, exc,
+                )
+                sig, rejs = None, [f"strategy_exc_{type(exc).__name__}"]
 
             # Build scan record regardless of signal
             score   = sig["score"] if sig else 0
             passed  = sig is not None and score >= CFG.score_signal_min
-            k15     = klines["15m"]
             trend_4h = (
                 "BULL" if ctx.ema20_4h > ctx.ema60_4h
                 else "BEAR" if ctx.ema20_4h < ctx.ema60_4h
                 else "FLAT"
             )
 
-            import uuid
             rec = ScanRecord(
                 scan_id=str(uuid.uuid4()),
                 strategy_id=strategy_id,
@@ -253,9 +262,10 @@ def scan(client: BinancePublicClient, now: datetime | None = None) -> ClassicSca
             result.records.append(rec)
 
             if not passed:
+                rej_counter[strategy_id].extend(rejs)
                 log.debug(
                     "[Classic/%s] %s SKIP score=%d rejs=%s",
-                    strategy_id, entry.symbol, score, rejs[:2],
+                    strategy_id, entry.symbol, score, rejs,
                 )
                 continue
 
@@ -287,9 +297,21 @@ def scan(client: BinancePublicClient, now: datetime | None = None) -> ClassicSca
     for sig in sorted_sigs[: CFG.max_total]:
         result.signals[sig["strategy_id"]] = sig
 
+    # INFO-level rejection summary — critical for diagnosing zero-signal situations
+    for sid, rejs in rej_counter.items():
+        if rejs:
+            top5 = Counter(rejs).most_common(5)
+            log.info(
+                "[Classic/%s] evaluated=%d rejected=%d | top reasons: %s",
+                sid,
+                sum(1 for e, _, ids in pool_tasks for s in ids if s == sid),
+                len(rejs),
+                top5,
+            )
+
     log.info(
         "[Classic] scan done — coins=%d evaluated=%d signals=%d (%s)",
         result.total_coins, result.total_evaluated, len(result.signals),
-        ", ".join(result.signals.keys()),
+        ", ".join(result.signals.keys()) or "none",
     )
     return result
