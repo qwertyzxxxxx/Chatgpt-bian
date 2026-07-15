@@ -54,6 +54,14 @@ from binance_ai_trader.v3.strategies.v663 import HotlistStrategyV663
 from binance_ai_trader.v3.strategies.v664 import HotlistStrategyV664
 from binance_ai_trader.v3.strategies.wave_long import WaveLongStrategy
 from binance_ai_trader.v3.strategies.wave_short import WaveShortStrategy
+from binance_ai_trader.sma120.strategy import SMA120Strategy
+from binance_ai_trader.sma120.config import (
+    STRATEGY_ID as _SMA120_STRATEGY_ID,
+    SYMBOL      as _SMA120_SYMBOL,
+    HOLD_HOURS  as _SMA120_HOLD_HOURS,
+    MAX_DAILY_TRADES as _SMA120_MAX_DAILY,
+)
+from binance_ai_trader.sma120.telegram import send_sma120_signal
 from binance_ai_trader.v3.telegram.notifier import V3TelegramNotifier
 from binance_ai_trader.v3.telegram.shadow_report import V3ShadowReporter
 from binance_ai_trader.v3.telegram.weekly_review import send_weekly_review
@@ -1567,3 +1575,143 @@ def build_classic_tasks(
         RunnerTask("classic_report", _classic_report_task, interval=report_interval),
     ]
     return tuple(tasks)
+
+
+# ── SMA120 V1.9-D — XAUUSDT single-symbol strategy ───────────────────────────
+
+def build_sma120_tasks(
+    base_url: str = "https://fapi.binance.com",
+    timeout: float = 15.0,
+    max_retries: int = 3,
+    telegram: TelegramNotifier | None = None,
+    scan_interval: timedelta = timedelta(minutes=5),
+    settle_interval: timedelta = timedelta(minutes=5),
+    report_interval: timedelta = timedelta(hours=1),
+) -> tuple[RunnerTask, ...]:
+    """Bootstrap SMA120 V1.9-D paper-trading tasks for XAUUSDT futures.
+
+    Entry: M15 EMA20/60 trend + M5 SMA120-extension pullback-breakout + H1 filter (long).
+    Fixed: SL=$8, TP=$16 (1:2 RR), ATR∈[4.00,6.67], max 3 trades/day.
+    """
+    client     = BinancePublicClient(base_url=base_url, timeout_seconds=timeout, max_retries=max_retries)
+    strategy   = SMA120Strategy(client)
+    order_repo = V3PaperOrderRepository()
+    perf_calc  = V3PerformanceCalculator(order_repo)
+    settler    = V3Settler(order_repo, client, notifier=telegram, live_repo=None)
+    reporter   = V3ShadowReporter(
+        telegram, order_repo, perf_calc, _SMA120_STRATEGY_ID,
+        client=client,
+        scan_interval_minutes=int(scan_interval.total_seconds() // 60),
+        settle_interval_minutes=int(settle_interval.total_seconds() // 60),
+        summary_interval_hours=int(report_interval.total_seconds() // 3600),
+    ) if telegram else None
+
+    def _sma120_scan_task() -> RunnerTaskResult:
+        now      = datetime.now(UTC)
+        today    = now.strftime("%Y-%m-%d")
+
+        # ── Daily trade limit ──────────────────────────────────────────
+        all_orders = order_repo.load_all()
+        today_count = sum(
+            1 for o in all_orders
+            if o.strategy_id == _SMA120_STRATEGY_ID
+            and (o.created_at or "").startswith(today)
+        )
+        if today_count >= _SMA120_MAX_DAILY:
+            log.info("[SMA120] daily limit %d/%d reached — skipping scan", today_count, _SMA120_MAX_DAILY)
+            return RunnerTaskResult("SUCCEEDED", {"event_type": "sma120_scan", "daily_limit": True})
+
+        # ── Run strategy ───────────────────────────────────────────────
+        signal = strategy.scan()
+        if signal is None:
+            return RunnerTaskResult("SUCCEEDED", {"event_type": "sma120_scan", "signal": False})
+
+        # ── Direction dedup: skip if already have open order same direction
+        open_orders = order_repo.load_open_by_strategy(_SMA120_STRATEGY_ID)
+        if any(o.direction == signal.direction for o in open_orders):
+            log.info("[SMA120] open %s order exists — skipping duplicate", signal.direction)
+            return RunnerTaskResult("SUCCEEDED", {"event_type": "sma120_scan", "skipped_dup": True})
+
+        # ── Create paper order ─────────────────────────────────────────
+        ts_seq   = int(now.timestamp()) % 100000
+        signal_id = f"SMA-{now.strftime('%Y%m%d')}-{ts_seq:05d}"
+        expires_at = (now + timedelta(hours=_SMA120_HOLD_HOURS)).isoformat(timespec="seconds")
+        meta = json.dumps({
+            "m5_atr":    str(signal.m5_atr),
+            "m5_ema20":  str(signal.m5_ema20),
+            "m5_sma120": str(signal.m5_sma120),
+            "max_hold_minutes": _SMA120_HOLD_HOURS * 60,
+        })
+
+        order = V3PaperOrder(
+            order_id=make_order_id(),
+            signal_id=signal_id,
+            strategy_id=_SMA120_STRATEGY_ID,
+            symbol=_SMA120_SYMBOL,
+            direction=signal.direction,
+            entry=signal.entry,
+            stop_loss=signal.stop_loss,
+            tp1=signal.tp1,
+            tp2=signal.tp1,
+            rr=signal.rr,
+            status="OPEN",
+            result=None,
+            created_at=now.isoformat(timespec="seconds"),
+            filled_at=None,
+            closed_at=None,
+            expires_at=expires_at,
+            pnl_pct=None,
+            rr_realized=None,
+            pushed=True,
+            metadata_json=meta,
+        )
+        order_repo.save(order)
+        order_repo.append_event(V3OrderEvent(
+            event_id=make_event_id(),
+            order_id=order.order_id,
+            signal_id=signal_id,
+            event_type="CREATED",
+            old_status=None,
+            new_status="OPEN",
+            candle_high=None,
+            candle_low=None,
+            triggered_at=now.isoformat(timespec="seconds"),
+            metadata_json=meta,
+        ))
+
+        if telegram:
+            try:
+                send_sma120_signal(telegram, signal, signal_id)
+            except Exception as exc:
+                log.warning("[SMA120] telegram send failed: %s", exc)
+
+        log.info(
+            "[SMA120] order created %s %s entry=%.2f SL=%.2f TP=%.2f today=%d/%d",
+            signal_id, signal.direction, signal.entry, signal.stop_loss, signal.tp1,
+            today_count + 1, _SMA120_MAX_DAILY,
+        )
+        return RunnerTaskResult("SUCCEEDED", {
+            "event_type":  "sma120_scan",
+            "signal":      True,
+            "direction":   signal.direction,
+            "signal_id":   signal_id,
+            "today_count": today_count + 1,
+        })
+
+    def _sma120_settle_task() -> RunnerTaskResult:
+        settled = settler.settle_all(strategy_id=_SMA120_STRATEGY_ID)
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "sma120_settle", "settled": settled})
+
+    def _sma120_report_task() -> RunnerTaskResult:
+        if reporter:
+            try:
+                reporter.send_report()
+            except Exception as exc:
+                log.warning("[SMA120] report failed: %s", exc)
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "sma120_report"})
+
+    return (
+        RunnerTask("sma120_scan",   _sma120_scan_task,   interval=scan_interval,   startup_immediate=True),
+        RunnerTask("sma120_settle", _sma120_settle_task, interval=settle_interval, startup_immediate=True),
+        RunnerTask("sma120_report", _sma120_report_task, interval=report_interval),
+    )

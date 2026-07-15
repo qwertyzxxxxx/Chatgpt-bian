@@ -53,6 +53,7 @@ _STRAT_TITLE: dict[str, str] = {
     "classic_c3":          "📊 Classic C3 反弹空 Paper",
     "classic_c4_top":      "📊 Classic C4 顶部空 Paper",
     "classic_c4_bot":      "📊 Classic C4 底部多 Paper",
+    "xau_sma120":          "📊 SMA120 V1.9-D XAUUSDT Paper",
 }
 
 
