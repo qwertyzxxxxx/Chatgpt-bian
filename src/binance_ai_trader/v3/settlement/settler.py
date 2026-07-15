@@ -28,7 +28,8 @@ from binance_ai_trader.v3.telegram.labels import strategy_tag
 log = logging.getLogger(__name__)
 
 _INTERVAL = "15m"
-_KLINE_LIMIT = 4
+_KLINE_LIMIT = 8          # 2 hours of 15m candles — enough even if settler is briefly delayed
+_15M_MS = 15 * 60 * 1000  # milliseconds in one 15-min candle
 _REVERSAL_META_MARKER = "max_hold_minutes"
 
 
@@ -100,7 +101,11 @@ class V3Settler:
             if not klines:
                 return False
 
-            for k in klines:
+            # Only consider candles at/after the order-creation candle to
+            # avoid "filling" from a historical candle that predates this order.
+            post_create_klines = _filter_klines_after(klines, order.created_at)
+
+            for k in post_create_klines:
                 high, low = k["high"], k["low"]
                 filled = (
                     low <= order.entry if order.direction == "LONG"
@@ -138,7 +143,13 @@ class V3Settler:
             if not klines:
                 return False
 
-            for k in klines:
+            # ── KEY FIX: only check candles at/after the fill candle ───────
+            # Without this filter, a pre-fill candle whose high/low already
+            # crossed TP1/SL would be mistakenly used to settle the order,
+            # producing TP1 results for orders that in reality hit SL.
+            post_fill_klines = _filter_klines_after(klines, order.filled_at)
+
+            for k in post_fill_klines:
                 high, low = k["high"], k["low"]
 
                 if order.direction == "LONG":
@@ -231,7 +242,9 @@ class V3Settler:
             exit_price = klines[-1]["close"] if "close" in klines[-1] else order.entry
             return self._close_reversal(order, "TIMEOUT_FORCED", now, exit_price)
 
-        for k in klines:
+        post_fill_klines = _filter_klines_after(klines, order.filled_at)
+
+        for k in post_fill_klines:
             high, low = k["high"], k["low"]
             if order.direction == "LONG":
                 tp_hit = high >= order.tp1
@@ -474,6 +487,31 @@ def _fmt_settlement_msg(
         f"持仓    {_holding(order.filled_at, closed_at)}"
         f"{note}"
     )
+
+
+def _filter_klines_after(klines: list[dict], timestamp_iso: str | None) -> list[dict]:
+    """Return only klines whose 15-min window started at or after the
+    15-min boundary that contains *timestamp_iso*.
+
+    This prevents a pre-fill (or pre-creation) candle whose high/low already
+    crossed TP1 or SL from being used to settle an order — the most common
+    cause of spurious TP1 results when the real trade hit SL.
+
+    Falls back to the full list if the timestamp is missing or unparseable,
+    so existing behaviour is preserved in edge cases.
+    """
+    if not timestamp_iso:
+        return klines
+    try:
+        dt = datetime.fromisoformat(timestamp_iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        ts_ms = int(dt.timestamp() * 1000)
+        candle_start_ms = (ts_ms // _15M_MS) * _15M_MS
+        filtered = [k for k in klines if k.get("open_time_ms", 0) >= candle_start_ms]
+        return filtered if filtered else klines  # safety: never return empty
+    except Exception:
+        return klines
 
 
 def _calc_pnl(order: V3PaperOrder, result: str) -> tuple[Decimal, Decimal]:
