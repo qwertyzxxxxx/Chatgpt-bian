@@ -101,9 +101,24 @@ class V3Settler:
             if not klines:
                 return False
 
-            # Only consider candles at/after the order-creation candle to
-            # avoid "filling" from a historical candle that predates this order.
-            post_create_klines = _filter_klines_after(klines, order.created_at)
+            # ── FIX: use exact creation timestamp, NOT 15-min boundary rounding ──
+            # _filter_klines_after rounds created_at DOWN to the nearest 15-min
+            # boundary, which can include a candle that OPENED before the order
+            # existed (e.g. order placed at 05:28 → boundary 05:15 → 05:15 candle
+            # included).  That causes paper fills from pre-order market moves,
+            # mismatching real exchange behaviour where the limit order didn't exist
+            # until 05:28 and therefore missed the 05:15 candle's dip.
+            try:
+                created_ms = int(
+                    datetime.fromisoformat(
+                        order.created_at.replace("Z", "+00:00")
+                    ).timestamp() * 1000
+                )
+            except Exception:
+                created_ms = 0
+            post_create_klines = [
+                k for k in klines if k.get("open_time_ms", 0) >= created_ms
+            ]
 
             for k in post_create_klines:
                 high, low = k["high"], k["low"]
@@ -112,7 +127,19 @@ class V3Settler:
                     else high >= order.entry
                 )
                 if filled:
-                    filled_at = now.isoformat(timespec="seconds")
+                    # ── FIX: set filled_at to the NEXT candle's open time ─────────
+                    # Recording filled_at = now (settler run time) and then rounding
+                    # back to a 15-min boundary re-includes the fill candle itself in
+                    # post_fill_klines, letting its high/low immediately settle TP1/SL
+                    # even though the fill only happened at the candle's extreme edge.
+                    # Setting filled_at to the next candle's start means
+                    # _filter_klines_after will start TP1/SL checking from the NEXT
+                    # candle onward, giving a more realistic simulation of what
+                    # happens after the real order is executed.
+                    next_candle_open_ms = k["close_time_ms"] + 1
+                    filled_at = datetime.fromtimestamp(
+                        next_candle_open_ms / 1000, tz=UTC
+                    ).isoformat(timespec="seconds")
                     self._order_repo.update_filled(order.order_id, filled_at)
                     self._order_repo.append_event(V3OrderEvent(
                         event_id=make_event_id(),
@@ -123,10 +150,12 @@ class V3Settler:
                         new_status="FILLED",
                         candle_high=high,
                         candle_low=low,
-                        triggered_at=filled_at,
+                        triggered_at=now.isoformat(timespec="seconds"),
                         metadata_json="{}",
                     ))
-                    log.info("[V3] %s FILLED at %s", order.order_id, order.entry)
+                    log.info("[V3] %s FILLED at %s (candle %s–%s)",
+                             order.order_id, order.entry,
+                             k.get("open_time_ms"), k.get("close_time_ms"))
                     return True
 
         # ── FILLED: check TP1 / SL / TIMEOUT ──────────────────────────
