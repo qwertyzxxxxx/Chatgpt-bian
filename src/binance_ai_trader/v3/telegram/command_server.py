@@ -37,6 +37,7 @@ _COMMANDS = {
     "/signals", "/orders", "/perf", "/v66", "/portfolio",
     "/limits", "/setlimit",
     "/livestatus", "/livemode", "/setlive",
+    "/paperon", "/paperoff", "/paperstatus",
 }
 
 
@@ -105,6 +106,9 @@ def _cmd_help() -> str:
         "/livestatus 🟢 查看实盘开关/仓位状态\n"
         "/livemode   🔌 开关某策略实盘交易\n"
         "/setlive    💰 调整实盘仓位大小(USDT)\n"
+        "/paperstatus 📋 查看模拟扫描策略开关状态\n"
+        "/paperon  <策略> ▶️ 开启模拟扫描（如 /paperon sma120）\n"
+        "/paperoff <策略> ⏸ 暂停模拟扫描（如 /paperoff sma120）\n"
         "/help    📖 显示此帮助"
     )
 
@@ -226,6 +230,66 @@ def _cmd_livemode(args: list[str], user_id: int | None) -> str:
     master_on = os.environ.get("LIVE_TRADING_ENABLED", "").lower() == "true"
     warn = "" if master_on else "\n⚠️ 注意: 全局开关 LIVE_TRADING_ENABLED 当前为 OFF，此设置暂不会实际生效"
     return f"✅ {alias} 实盘交易已设为 {'ON' if enabled else 'OFF'}{warn}"
+
+
+def _cmd_paperstatus() -> str:
+    from binance_ai_trader.v3.settings.repository import (
+        PAPER_ONLY_STRATEGIES, STRATEGY_ALIASES, V3RuntimeSettingsRepository,
+    )
+
+    repo = V3RuntimeSettingsRepository()
+    id_to_alias = {v: k for k, v in STRATEGY_ALIASES.items()}
+    lines = ["📋 模拟扫描策略开关状态", "━━━━━━━━━━━━━━"]
+    for strategy_id in sorted(PAPER_ONLY_STRATEGIES):
+        alias = id_to_alias.get(strategy_id, strategy_id)
+        s = repo.get(strategy_id)
+        # None = default ON; False = explicitly paused
+        active = s.live_enabled is not False
+        tag = "（默认）" if s.live_enabled is None else f"（已调整，{_ago(s.updated_at)}）"
+        status = "▶️ 扫描中" if active else "⏸ 已暂停"
+        lines.append(f"【{alias}】{status} {tag}")
+    lines.append("\n用法: /paperon sma120  /paperoff sma120")
+    return "\n".join(lines)
+
+
+def _cmd_paperon(args: list[str], user_id: int | None) -> str:
+    from binance_ai_trader.v3.settings.repository import (
+        PAPER_ONLY_STRATEGIES, STRATEGY_ALIASES, V3RuntimeSettingsRepository,
+    )
+
+    if not args:
+        aliases = [k for k, v in STRATEGY_ALIASES.items() if v in PAPER_ONLY_STRATEGIES]
+        return f"❌ 用法: /paperon <策略>\n可选策略: {', '.join(aliases)}"
+
+    alias = args[0].lower()
+    strategy_id = STRATEGY_ALIASES.get(alias)
+    if strategy_id is None or strategy_id not in PAPER_ONLY_STRATEGIES:
+        aliases = [k for k, v in STRATEGY_ALIASES.items() if v in PAPER_ONLY_STRATEGIES]
+        return f"❌ 未知策略 '{alias}'，可选: {', '.join(aliases)}"
+
+    updated_by = str(user_id) if user_id is not None else None
+    V3RuntimeSettingsRepository().set_live_enabled(strategy_id, True, updated_by=updated_by)
+    return f"✅ {alias} 模拟扫描已开启 ▶️"
+
+
+def _cmd_paperoff(args: list[str], user_id: int | None) -> str:
+    from binance_ai_trader.v3.settings.repository import (
+        PAPER_ONLY_STRATEGIES, STRATEGY_ALIASES, V3RuntimeSettingsRepository,
+    )
+
+    if not args:
+        aliases = [k for k, v in STRATEGY_ALIASES.items() if v in PAPER_ONLY_STRATEGIES]
+        return f"❌ 用法: /paperoff <策略>\n可选策略: {', '.join(aliases)}"
+
+    alias = args[0].lower()
+    strategy_id = STRATEGY_ALIASES.get(alias)
+    if strategy_id is None or strategy_id not in PAPER_ONLY_STRATEGIES:
+        aliases = [k for k, v in STRATEGY_ALIASES.items() if v in PAPER_ONLY_STRATEGIES]
+        return f"❌ 未知策略 '{alias}'，可选: {', '.join(aliases)}"
+
+    updated_by = str(user_id) if user_id is not None else None
+    V3RuntimeSettingsRepository().set_live_enabled(strategy_id, False, updated_by=updated_by)
+    return f"⏸ {alias} 模拟扫描已暂停（结算/报告任务继续运行）"
 
 
 def _cmd_setlive(args: list[str], user_id: int | None) -> str:
@@ -776,6 +840,12 @@ class TelegramCommandServer:
                 return _cmd_livemode(args, user_id)
             if cmd == "/setlive":
                 return _cmd_setlive(args, user_id)
+            if cmd == "/paperstatus":
+                return _cmd_paperstatus()
+            if cmd == "/paperon":
+                return _cmd_paperon(args, user_id)
+            if cmd == "/paperoff":
+                return _cmd_paperoff(args, user_id)
             return "❓ 未知指令，发送 /help 查看列表"
         except Exception as exc:
             log.exception("[CmdServer] command %s failed", cmd)

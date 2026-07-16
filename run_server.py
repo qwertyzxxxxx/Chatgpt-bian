@@ -369,17 +369,17 @@ if __name__ == "__main__":
         _log.info("[startup] Classic C1-C4 enabled — paper-only (经典量价策略)")
 
     # ── SMA120 V1.9-D — XAUUSDT 模拟盘 ──────────────────────────────────────────
-    _sma120_enabled = os.environ.get("ENABLE_SMA120", "").lower() == "true"
-    if _sma120_enabled:
-        sma120_tasks = build_sma120_tasks(
-            base_url=_base_url,
-            telegram=notifier,
-            scan_interval=timedelta(minutes=5),
-            settle_interval=timedelta(minutes=5),
-            report_interval=timedelta(hours=1),
-        )
-        tasks.extend(sma120_tasks)
-        _log.info("[startup] SMA120 V1.9-D enabled — XAUUSDT paper-only (模拟盘)")
+    # Always started; on/off controlled at runtime via Telegram /paperon sma120 /
+    # /paperoff sma120 (stored in v3_runtime_settings, no redeploy needed).
+    sma120_tasks = build_sma120_tasks(
+        base_url=_base_url,
+        telegram=notifier,
+        scan_interval=timedelta(minutes=5),
+        settle_interval=timedelta(minutes=5),
+        report_interval=timedelta(hours=1),
+    )
+    tasks.extend(sma120_tasks)
+    _log.info("[startup] SMA120 V1.9-D loaded — XAUUSDT paper-only (模拟盘, runtime-toggleable)")
 
     _log.info("[startup] All tasks: %s", [t.event_type for t in tasks])
 

@@ -1613,6 +1613,18 @@ def build_sma120_tasks(
         now      = datetime.now(UTC)
         today    = now.strftime("%Y-%m-%d")
 
+        # ── Runtime on/off toggle (Telegram /paperon sma120 / /paperoff sma120) ──
+        # live_enabled=None → default ON (paper-only strategy, safe to run always)
+        # live_enabled=False → user explicitly paused scanning via Telegram
+        try:
+            from binance_ai_trader.v3.settings.repository import V3RuntimeSettingsRepository, SMA120_STRATEGY_ID as _SETT_ID
+            _sett = V3RuntimeSettingsRepository().get(_SETT_ID)
+            if _sett.live_enabled is False:
+                log.info("[SMA120] scanning paused via /paperoff — skipping")
+                return RunnerTaskResult("SUCCEEDED", {"event_type": "sma120_scan", "paused": True})
+        except Exception as _e:
+            log.warning("[SMA120] settings check failed (non-fatal): %s", _e)
+
         # ── Daily trade limit ──────────────────────────────────────────
         all_orders = order_repo.load_all()
         today_count = sum(

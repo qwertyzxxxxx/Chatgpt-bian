@@ -24,21 +24,29 @@ MAX_MAX_OPEN_ORDERS = 50
 
 # Strategy id + defaults the bot is deployed with (single source of truth —
 # run_server.py and tasks.py should not hardcode these again).
-V3_STRATEGY_ID  = "hotlist_momentum_v3"
-V66_STRATEGY_ID = "hotlist_v66"
+V3_STRATEGY_ID   = "hotlist_momentum_v3"
+V66_STRATEGY_ID  = "hotlist_v66"
 V663_STRATEGY_ID = "hotlist_v663"
+SMA120_STRATEGY_ID = "xau_sma120"
 
 STRATEGY_ALIASES: dict[str, str] = {
-    "v3":  V3_STRATEGY_ID,
-    "v66": V66_STRATEGY_ID,
-    "v663": V663_STRATEGY_ID,
+    "v3":    V3_STRATEGY_ID,
+    "v66":   V66_STRATEGY_ID,
+    "v663":  V663_STRATEGY_ID,
+    "sma120": SMA120_STRATEGY_ID,
 }
 
 DEFAULTS: dict[str, dict[str, int]] = {
-    V3_STRATEGY_ID:  {"dedup_hours": 24, "max_open_orders": 10},
-    V66_STRATEGY_ID: {"dedup_hours": 24, "max_open_orders": 5},
-    V663_STRATEGY_ID: {"dedup_hours": 24, "max_open_orders": 5},
+    V3_STRATEGY_ID:    {"dedup_hours": 24, "max_open_orders": 10},
+    V66_STRATEGY_ID:   {"dedup_hours": 24, "max_open_orders": 5},
+    V663_STRATEGY_ID:  {"dedup_hours": 24, "max_open_orders": 5},
+    SMA120_STRATEGY_ID: {"dedup_hours": 24, "max_open_orders": 3},
 }
+
+# Paper-only strategies that can be toggled on/off via /paperon / /paperoff.
+# For these strategies live_enabled=True (or None=default) means "paper scanning
+# is active"; False means "scanning paused".  There is no real-money dimension.
+PAPER_ONLY_STRATEGIES: frozenset[str] = frozenset({SMA120_STRATEGY_ID})
 
 
 @dataclass(frozen=True, slots=True)
