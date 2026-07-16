@@ -372,7 +372,6 @@ if __name__ == "__main__":
     # Always started; on/off controlled at runtime via Telegram /paperon sma120 /
     # /paperoff sma120 (stored in v3_runtime_settings, no redeploy needed).
     sma120_tasks = build_sma120_tasks(
-        base_url=_base_url,
         telegram=notifier,
         scan_interval=timedelta(minutes=5),
         settle_interval=timedelta(minutes=5),
