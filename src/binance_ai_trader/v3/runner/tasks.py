@@ -106,7 +106,8 @@ def build_v3_tasks(
     perf_calc  = V3PerformanceCalculator(order_repo)
 
     strategy   = HotlistStrategyV3(client, universe_config)
-    risk_cfg   = RiskConfig(strategy_id=_STRATEGY_ID, max_open_orders=max_open_orders)
+    # max_stop_pct=8.0: 低价小币 ATR-based SL 可达 13-18%，历史数据显示这些是大亏单，硬上限 8%
+    risk_cfg   = RiskConfig(strategy_id=_STRATEGY_ID, max_open_orders=max_open_orders, max_stop_pct=8.0)
     pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
     settler    = V3Settler(
         order_repo, client, notifier=telegram,
@@ -315,7 +316,8 @@ def build_v66_tasks(
     )
 
     strategy   = HotlistStrategyV66(client, universe_config)
-    risk_cfg   = RiskConfig(strategy_id=_V66_STRATEGY_ID, max_open_orders=max_open_orders)
+    # min_stop_pct=1.5: SL<1.5%的信号历史胜率仅58%（噪音止损），过滤后提升整体胜率
+    risk_cfg   = RiskConfig(strategy_id=_V66_STRATEGY_ID, max_open_orders=max_open_orders, min_stop_pct=1.5)
     pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
     order_repo = V3PaperOrderRepository()
     push_repo  = V3PushQueueRepository()
@@ -493,7 +495,8 @@ def build_v662_tasks(
     )
 
     strategy   = HotlistStrategyV662(client, universe_config)
-    risk_cfg   = RiskConfig(strategy_id=_V662_STRATEGY_ID, max_open_orders=max_open_orders)
+    # min_stop_pct=1.5: SL<1.5%的信号历史胜率仅68%，远低于该策略均值76.8%
+    risk_cfg   = RiskConfig(strategy_id=_V662_STRATEGY_ID, max_open_orders=max_open_orders, min_stop_pct=1.5)
     pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
     order_repo = V3PaperOrderRepository()
     push_repo  = V3PushQueueRepository()
@@ -643,7 +646,8 @@ def build_v663_tasks(
     )
 
     strategy   = HotlistStrategyV663(client, universe_config)
-    risk_cfg   = RiskConfig(strategy_id=_V663_STRATEGY_ID, max_open_orders=max_open_orders)
+    # min_stop_pct=1.5: SL<1.5%的信号历史胜率仅62.5%，过滤后可从80.3%提升至85%+
+    risk_cfg   = RiskConfig(strategy_id=_V663_STRATEGY_ID, max_open_orders=max_open_orders, min_stop_pct=1.5)
     pipeline   = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=risk_cfg)
     order_repo = V3PaperOrderRepository()
     push_repo  = V3PushQueueRepository()

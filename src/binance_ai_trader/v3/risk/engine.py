@@ -29,6 +29,9 @@ class RiskConfig:
     max_open_orders: int = 5
     blacklist: frozenset[str] = frozenset()
     blocked_regimes: frozenset[str] = frozenset()
+    max_stop_pct: float | None = None   # hard SL% cap; None = no cap
+    min_stop_pct: float | None = None   # hard SL% floor; signals below this get BLOCKED
+                                        # tight SL (<1.5%) hit by noise not real reversal
 
 
 class V3RiskEngine:

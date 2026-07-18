@@ -102,6 +102,34 @@ class V3Pipeline:
 
         for inp in candidates:
             try:
+                # ── Pre-filter: SL% hard cap / floor (RiskConfig) ────────────
+                if effective_risk_config is not None and inp.stop_pct is not None:
+                    _sp = inp.stop_pct
+                    _block_reason: str | None = None
+                    if (
+                        effective_risk_config.max_stop_pct is not None
+                        and _sp > effective_risk_config.max_stop_pct
+                    ):
+                        _block_reason = (
+                            f"stop_pct {_sp:.1f}% > cap "
+                            f"{effective_risk_config.max_stop_pct:.0f}%"
+                        )
+                    elif (
+                        effective_risk_config.min_stop_pct is not None
+                        and _sp < effective_risk_config.min_stop_pct
+                    ):
+                        _block_reason = (
+                            f"stop_pct {_sp:.2f}% < floor "
+                            f"{effective_risk_config.min_stop_pct:.1f}% "
+                            f"(noise-prone, win rate <70%)"
+                        )
+                    if _block_reason:
+                        log.info("[V3] BLOCKED(sl_filter) %s/%s: %s", inp.symbol, inp.direction, _block_reason)
+                        signal_id = self._candidate_repo.generate_signal_id(inp.strategy_id, now=run_at)
+                        self._candidate_repo.save(inp, signal_id, status="BLOCKED", reason_override=_block_reason)
+                        result.blocked_risk += 1
+                        continue
+
                 self._process_one(
                     inp, result, market_regime, run_at, effective_dedup_hours, effective_risk_config
                 )

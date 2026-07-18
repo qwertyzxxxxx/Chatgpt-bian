@@ -100,6 +100,11 @@ class HotlistStrategyV664(V3Strategy):
 
         candidates: list[CandidateInput] = []
         for plan in plans:
+            # ── Fix: V664 SHORT 历史胜率 45.5%（接近随机），暂停做空只做多 ──
+            if plan.direction == "SHORT":
+                log.info("[V664] skip SHORT %s (LONG-only mode, SHORT win rate 45%%)", plan.symbol)
+                continue
+
             entry    = plan.suggested_limit_entry
             stop_pct = abs(entry - plan.stop_loss) / entry * 100
 

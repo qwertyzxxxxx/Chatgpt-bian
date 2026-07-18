@@ -197,7 +197,10 @@ class V3Settler:
                     return self._close(order, "SL", now, high, low)
 
             if now >= expires:
-                return self._close(order, "TIMEOUT", now, None, None)
+                # Pass last available kline close as the TIMEOUT exit price so PnL
+                # reflects actual market value, not the entry (which always gave 0%).
+                last_close = klines[-1]["close"] if klines else None
+                return self._close(order, "TIMEOUT", now, None, None, exit_price=last_close)
 
         return False
 
@@ -208,9 +211,10 @@ class V3Settler:
         now: datetime,
         candle_high: Decimal | None,
         candle_low: Decimal | None,
+        exit_price: Decimal | None = None,
     ) -> bool:
         closed_at = now.isoformat(timespec="seconds")
-        pnl_pct, rr_realized = _calc_pnl(order, result)
+        pnl_pct, rr_realized = _calc_pnl(order, result, exit_price=exit_price)
         self._order_repo.update_settled(
             order.order_id, result, closed_at, pnl_pct, rr_realized
         )
@@ -543,14 +547,20 @@ def _filter_klines_after(klines: list[dict], timestamp_iso: str | None) -> list[
         return klines
 
 
-def _calc_pnl(order: V3PaperOrder, result: str) -> tuple[Decimal, Decimal]:
+def _calc_pnl(
+    order: V3PaperOrder,
+    result: str,
+    exit_price: Decimal | None = None,
+) -> tuple[Decimal, Decimal]:
     ZERO = Decimal("0")
     if result == "TP1":
         price = order.tp1
     elif result == "SL":
         price = order.stop_loss
     elif result == "TIMEOUT":
-        price = order.entry
+        # Use actual last-candle close if available; fall back to entry (0%) only
+        # when no kline data is accessible.
+        price = exit_price if exit_price is not None else order.entry
     else:
         return ZERO, ZERO
 
