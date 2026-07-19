@@ -337,13 +337,30 @@ def get_conn() -> psycopg2.extensions.connection:
     raise last_err
 
 
+_SCORE_COLUMNS: tuple[str, ...] = (
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS score_total           INTEGER",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS score_grade           TEXT",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS score_version         TEXT",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS volume_score          INTEGER",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS trend_structure_score INTEGER",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS entry_position_score  INTEGER",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS risk_reward_score     INTEGER",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS strategy_fit_score    INTEGER",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS score_summary         TEXT",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS score_details_json    TEXT",
+    "ALTER TABLE v3_candidates ADD COLUMN IF NOT EXISTS scored_at             TEXT",
+)
+
+
 def init_schema() -> None:
     """Create all V3 tables in PostgreSQL (idempotent)."""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(_PG_DDL)
+            for stmt in _SCORE_COLUMNS:
+                cur.execute(stmt)
         conn.commit()
-        log.info("[PG] V3 schema initialised")
+        log.info("[PG] V3 schema initialised (including score columns)")
     finally:
         conn.close()

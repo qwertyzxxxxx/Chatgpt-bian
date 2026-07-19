@@ -124,6 +124,7 @@ def _top_short(
         "stop_pct": stop_pct, "score": sb.total, "vol_grade": grade,
         "pattern_desc": pattern_desc, "block_checks": "N/A",
         "vr_impulse": vr_top, "vr_pullback": vr_rally, "cl": cl,
+        "score_breakdown": sb,
     }, []
 
 
@@ -225,6 +226,7 @@ def _bot_long(
         "stop_pct": stop_pct, "score": sb.total, "vol_grade": grade,
         "pattern_desc": pattern_desc, "block_checks": "N/A",
         "vr_impulse": vr_bot, "vr_pullback": vr_bounce, "cl": cl,
+        "score_breakdown": sb,
     }, []
 
 

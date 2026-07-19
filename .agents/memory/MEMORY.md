@@ -8,3 +8,4 @@
 - [New paper-only strategy checklist](new-strategy-checklist.md) — run_server.py is prod entrypoint, not cli.py; a strategy's tasks must be wired into both (env var vs CLI flag) or it never runs in prod.
 - [BinancePublicClient interval whitelist](binance-client-interval-whitelist.md) — klines()/historical_klines() hardcode an allowed-interval set; any new timeframe (e.g. 1d) a strategy uses must be added there or every call silently raises and the strategy scans 0 candidates forever.
 - [V662 strategy and V66 TP fix](v662-strategy.md) — V66 live was using TP1 (1:1 RR) not TP2; fixed. V662 adds volume ratio + 1h/4h trend gates via HotlistWatchlistPolicy new fields (backward-compatible defaults).
+- [Unified scoring SCORE_V1_UNIFIED](unified-scoring.md) — 5-category 100pt system in v3/scoring/; C1-4 map old ScoreBreakdown via adapter; V3 strategies get score via client=client in send_candidate(); never blocks push.

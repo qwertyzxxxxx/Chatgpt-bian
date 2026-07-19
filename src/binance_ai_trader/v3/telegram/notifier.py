@@ -26,6 +26,13 @@ from binance_ai_trader.v3.telegram.labels import strategy_label, strategy_tag
 
 log = logging.getLogger(__name__)
 
+_SCORING_AVAILABLE: bool
+try:
+    from binance_ai_trader.v3.scoring import format_score_block, score_signal_with_client
+    _SCORING_AVAILABLE = True
+except Exception:
+    _SCORING_AVAILABLE = False
+
 
 def _pct(raw: str, ref: str) -> str:
     try:
@@ -45,11 +52,16 @@ class V3TelegramNotifier:
         candidate: V3Candidate,
         hold_hours: int = 24,
         live_prefix: str | None = None,
+        client=None,
     ) -> None:
-        msg = _format_candidate(candidate, hold_hours, live_prefix=live_prefix)
+        score = None
+        if client is not None and _SCORING_AVAILABLE:
+            score = score_signal_with_client(candidate, client)
+        msg = _format_candidate(candidate, hold_hours, live_prefix=live_prefix, score=score)
         try:
             self._notifier.send(msg)
-            log.info("[V3] candidate sent: %s", candidate.signal_id)
+            log.info("[V3] candidate sent: %s  score=%s", candidate.signal_id,
+                     f"{score.score_total}/100 {score.score_grade}" if score else "N/A")
         except Exception:
             log.exception("[V3] failed to send candidate %s", candidate.signal_id)
             raise
@@ -62,6 +74,7 @@ def _format_candidate(
     c: V3Candidate,
     hold_hours: int,
     live_prefix: str | None = None,
+    score=None,
 ) -> str:
     sl_pct  = _pct(c.sl,  c.entry)
     tp1_pct = _pct(c.tp1, c.entry)
@@ -70,6 +83,10 @@ def _format_candidate(
     regime  = f"\nRegime   {c.market_regime}" if c.market_regime else ""
     reason  = f"\nReason   {c.reason}"        if c.reason        else ""
     prefix  = f"{live_prefix}\n" if live_prefix else ""
+
+    score_block = ""
+    if _SCORING_AVAILABLE and score is not None:
+        score_block = format_score_block(score)
 
     return (
         f"{prefix}"
@@ -85,4 +102,5 @@ def _format_candidate(
         f"{regime}"
         f"{reason}\n"
         f"有效期   {hold_hours}h"
+        f"{score_block}"
     )

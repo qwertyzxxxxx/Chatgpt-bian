@@ -781,6 +781,16 @@ def _cmd_conditions(args: list[str]) -> str:
             f"expire={c['expiry_min']}min  max_signals={c['max_opp']}/次"
         )
 
+    lines.append("")
+    lines.append("📊 统一评分 (SCORE_V1_UNIFIED):")
+    _ADAPTERS = {
+        "v66":  "v66_hotlist       (量能30+趋势25+位置20+RR15+匹配10)",
+        "v662": "v662_trend_aligned",
+        "v663": "v663_triple_ema",
+        "v664": "v664_pullback     (量能: 量缩=优质; M15量比<0.8最佳)",
+    }
+    for alias in (targets if key else ALIASES):
+        lines.append(f"  {alias}: {_ADAPTERS.get(alias, 'default')}")
     lines.append("\n用法: /conditions v663  /conditions v664")
     return "\n".join(lines)
 

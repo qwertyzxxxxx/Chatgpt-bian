@@ -143,4 +143,5 @@ def evaluate(
         "stop_pct": stop_pct, "score": sb.total, "vol_grade": grade,
         "pattern_desc": pattern_desc, "block_checks": block_checks,
         "vr_impulse": vr_break, "vr_pullback": vr_pullback, "cl": cl,
+        "score_breakdown": sb,
     }, []

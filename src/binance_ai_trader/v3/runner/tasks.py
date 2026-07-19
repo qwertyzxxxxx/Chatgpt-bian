@@ -202,7 +202,7 @@ def build_v3_tasks(
                     live_prefix = "【实盘未下单：内部错误】"
 
             if v3_tg:
-                v3_tg.send_candidate(candidate, hold_hours=_HOLD_HOURS, live_prefix=live_prefix)
+                v3_tg.send_candidate(candidate, hold_hours=_HOLD_HOURS, live_prefix=live_prefix, client=client)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
@@ -415,7 +415,7 @@ def build_v66_tasks(
                     live_prefix = "【实盘未下单：内部错误】"
 
             if v66_tg:
-                v66_tg.send_candidate(candidate, hold_hours=_V66_HOLD_HOURS, live_prefix=live_prefix)
+                v66_tg.send_candidate(candidate, hold_hours=_V66_HOLD_HOURS, live_prefix=live_prefix, client=client)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
@@ -577,7 +577,7 @@ def build_v662_tasks(
             orders_created += 1
 
             if v662_tg:
-                v662_tg.send_candidate(candidate, hold_hours=_V662_HOLD_HOURS, live_prefix="【V662 模拟盘】")
+                v662_tg.send_candidate(candidate, hold_hours=_V662_HOLD_HOURS, live_prefix="【V662 模拟盘】", client=client)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
@@ -745,7 +745,7 @@ def build_v663_tasks(
                     live_prefix = "【实盘未下单：内部错误】"
 
             if v663_tg:
-                v663_tg.send_candidate(candidate, hold_hours=_V663_HOLD_HOURS, live_prefix=live_prefix)
+                v663_tg.send_candidate(candidate, hold_hours=_V663_HOLD_HOURS, live_prefix=live_prefix, client=client)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
@@ -905,7 +905,7 @@ def build_v664_tasks(
             orders_created += 1
 
             if v664_tg:
-                v664_tg.send_candidate(candidate, hold_hours=_V664_HOLD_HOURS, live_prefix="【V664 模拟盘】")
+                v664_tg.send_candidate(candidate, hold_hours=_V664_HOLD_HOURS, live_prefix="【V664 模拟盘】", client=client)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
@@ -1065,6 +1065,7 @@ def build_reversal_tasks(
                     candidate,
                     hold_hours=MAX_HOLD_MINUTES / 60,
                     live_prefix="【V-Reversal 模拟盘】",
+                    client=client,
                 )
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
@@ -1212,7 +1213,7 @@ def build_wave_long_tasks(
             orders_created += 1
 
             if wave_long_tg:
-                wave_long_tg.send_candidate(candidate, hold_hours=_WAVE_LONG_HOLD_HOURS, live_prefix="【Wave↑ 模拟盘】")
+                wave_long_tg.send_candidate(candidate, hold_hours=_WAVE_LONG_HOLD_HOURS, live_prefix="【Wave↑ 模拟盘】", client=client)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:
@@ -1358,7 +1359,7 @@ def build_wave_short_tasks(
             orders_created += 1
 
             if wave_short_tg:
-                wave_short_tg.send_candidate(candidate, hold_hours=_WAVE_SHORT_HOLD_HOURS, live_prefix="【Wave↓ 模拟盘】")
+                wave_short_tg.send_candidate(candidate, hold_hours=_WAVE_SHORT_HOLD_HOURS, live_prefix="【Wave↓ 模拟盘】", client=client)
 
             push_items = push_repo.load_by_signal(candidate.signal_id)
             if push_items:

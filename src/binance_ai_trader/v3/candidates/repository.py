@@ -64,6 +64,16 @@ class V3Candidate:
     reason: str | None
     status: str
     repeat_count: int
+    score_total: int | None = None
+    score_grade: str | None = None
+    score_version: str | None = None
+    volume_score: int | None = None
+    trend_structure_score: int | None = None
+    entry_position_score: int | None = None
+    risk_reward_score: int | None = None
+    strategy_fit_score: int | None = None
+    score_summary: str | None = None
+    scored_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +279,45 @@ class V3CandidateRepository:
             conn.close()
 
 
+    def save_score(self, signal_id: str, score) -> None:
+        """Persist unified score fields onto an existing v3_candidates row.
+
+        score: UnifiedScore from binance_ai_trader.v3.scoring.models.
+        Silently ignores DB errors — scoring never blocks signal push.
+        """
+        import json
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE v3_candidates
+                       SET score_total=%s, score_grade=%s, score_version=%s,
+                           volume_score=%s, trend_structure_score=%s,
+                           entry_position_score=%s, risk_reward_score=%s,
+                           strategy_fit_score=%s,
+                           score_summary=%s, score_details_json=%s, scored_at=%s
+                       WHERE signal_id=%s""",
+                    (
+                        score.score_total, score.score_grade, score.score_version,
+                        score.volume_score, score.trend_structure_score,
+                        score.entry_position_score, score.risk_reward_score,
+                        score.strategy_fit_score,
+                        score.score_summary,
+                        json.dumps(score.score_details, default=str),
+                        score.scored_at,
+                        signal_id,
+                    ),
+                )
+            conn.commit()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug(
+                "[repo] save_score failed for %s: %s", signal_id, exc
+            )
+        finally:
+            conn.close()
+
+
 def _row_to_candidate(row: dict) -> V3Candidate:
     return V3Candidate(
         signal_id=row["signal_id"],
@@ -293,4 +342,14 @@ def _row_to_candidate(row: dict) -> V3Candidate:
         reason=row["reason"],
         status=row["status"],
         repeat_count=row["repeat_count"],
+        score_total=row.get("score_total"),
+        score_grade=row.get("score_grade"),
+        score_version=row.get("score_version"),
+        volume_score=row.get("volume_score"),
+        trend_structure_score=row.get("trend_structure_score"),
+        entry_position_score=row.get("entry_position_score"),
+        risk_reward_score=row.get("risk_reward_score"),
+        strategy_fit_score=row.get("strategy_fit_score"),
+        score_summary=row.get("score_summary"),
+        scored_at=row.get("scored_at"),
     )
