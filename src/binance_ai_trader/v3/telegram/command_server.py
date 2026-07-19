@@ -692,98 +692,104 @@ def _cmd_portfolio(args: list[str], notifier, db_path: Path) -> str:
     return reporter._build_message()
 
 
-_STRATEGY_CONDITIONS: dict[str, dict] = {
-    "v66": {
-        "label": "V66",
-        "id":    "hotlist_v66",
-        "lines": [
-            "宇宙: USDT永续合约 | 成交量≥500万USDT",
-            "选币: 涨幅榜Top6 + 跌幅榜Top6（无24h涨跌幅下限）",
-            "监控: 观测窗口120min，每15min刷新，最多3信号/次",
-            "入场: 15m EMA20 ∓0.25×ATR 限价挂单",
-            "止损: 近20根K最低/最高 ∓1×ATR | ≤5%",
-            "止盈: TP1=1R  TP2=2R | RR≥2",
-            "趋势: ❌ 无过滤（V1风格，宽松进场）",
-            "量比: ❌ 无要求",
-            "TTL: 60min 限价单超时未成交放弃",
-            "★ 新增: min_stop_pct=1.5%（止损<1.5%不入场）",
-        ],
-    },
-    "v662": {
-        "label": "V662",
-        "id":    "hotlist_v662",
-        "lines": [
-            "宇宙: USDT永续合约 | 成交量≥500万USDT",
-            "选币: 涨幅榜Top6 + 跌幅榜Top6 | |24h涨跌|≥5%",
-            "监控: 观测窗口60min，每15min刷新，最多3信号/次",
-            "入场: 15m EMA20 ∓0.25×ATR 限价挂单",
-            "止损: 近20根K最低/最高 ∓1×ATR | ≤3%",
-            "止盈: TP1=1R  TP2=2R | RR≥2",
-            "趋势: 1h 价格在EMA20上方(多)/下方(空)",
-            "趋势: 4h 价格在EMA20上方(多)/下方(空)",
-            "量比: ≥1.2x（放量确认）",
-            "TTL: 90min 限价单超时未成交放弃",
-            "★ 新增: min_stop_pct=1.5%",
-        ],
-    },
-    "v663": {
-        "label": "V663",
-        "id":    "hotlist_v663",
-        "lines": [
-            "宇宙: USDT永续合约 | 成交量≥500万USDT",
-            "选币: 涨幅榜Top6 + 跌幅榜Top6 | |24h涨跌|≥5%",
-            "监控: 观测窗口60min，每15min刷新，最多3信号/次",
-            "入场: 15m EMA20 ∓0.25×ATR 限价挂单",
-            "止损: 近20根K最低/最高 ∓1×ATR | ≤3%",
-            "止盈: TP1=1R  TP2=2R | RR≥2",
-            "趋势: 1h EMA10>EMA20>EMA50 三线排列（多头/空头反向）",
-            "趋势: 4h EMA10>EMA20>EMA50 三线排列（同上）",
-            "量比: ≥1.2x（放量确认）",
-            "TTL: 90min 限价单超时未成交放弃",
-            "★ 新增: min_stop_pct=1.5%",
-            "升级vs V662: 三线排列 替代 简单价格位置",
-        ],
-    },
-    "v664": {
-        "label": "V664",
-        "id":    "hotlist_v664",
-        "lines": [
-            "宇宙: USDT永续合约 | 成交量≥500万USDT",
-            "选币: 涨幅榜Top6 + 跌幅榜Top6 | |24h涨跌|≥5%",
-            "监控: 观测窗口480min(8h)，每15min刷新，最多3信号/次",
-            "入场: 当前价在15m EMA20 ±1.5% 以内（精准回踩到位）",
-            "止损: 近20根K最低/最高 ∓1×ATR | ≤2.5%",
-            "止盈: 目标TP2=2R（直接打2R，不止盈TP1）",
-            "趋势: 1h + 4h EMA10>EMA20>EMA50 三线排列",
-            "量缩: 量比<1.0（回踩时逆势力量弱）",
-            "方向: 🔴 仅做多LONG（SHORT历史胜率45.5%已禁用）",
-            "TTL: 60min 限价单超时",
-            "升级vs V663: 精准等回踩 + 量缩 + 更紧止损",
-        ],
-    },
-}
-
-
 def _cmd_conditions(args: list[str]) -> str:
-    key = (args[0].lower() if args else "").replace("hotlist_", "")
-    if key and key not in _STRATEGY_CONDITIONS:
-        valid = " / ".join(_STRATEGY_CONDITIONS.keys())
-        return f"❓ 未知策略 '{key}'，可选: {valid}\n用法: /conditions v663"
+    """Read filter conditions from each strategy module's CONDITIONS dict (code constants)."""
+    import subprocess
 
-    targets = ([key] if key else list(_STRATEGY_CONDITIONS.keys()))
-    lines   = ["📋 策略过滤条件", "━━━━━━━━━━━━━━"]
-    for k in targets:
-        cfg = _STRATEGY_CONDITIONS[k]
-        lines.append(f"\n【{cfg['label']}】({cfg['id']})")
-        for i, cond in enumerate(cfg["lines"], 1):
-            lines.append(f"  {i:2d}. {cond}")
+    ALIASES = {
+        "v66":  ("binance_ai_trader.v3.strategies.v66",  "V66"),
+        "v662": ("binance_ai_trader.v3.strategies.v662", "V662"),
+        "v663": ("binance_ai_trader.v3.strategies.v663", "V663"),
+        "v664": ("binance_ai_trader.v3.strategies.v664", "V664"),
+    }
+
+    key = (args[0].lower() if args else "").replace("hotlist_", "")
+    if key and key not in ALIASES:
+        return f"❓ 未知策略 '{key}'，可选: {' / '.join(ALIASES)}\n用法: /conditions v663"
+    targets = {key: ALIASES[key]} if key else ALIASES
+
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            capture_output=True, text=True,
+        ).stdout.strip() or "unknown"
+        commit_date = subprocess.run(
+            ["git", "log", "-1", "--format=%ci"],
+            capture_output=True, text=True,
+        ).stdout.strip()[:16] or "unknown"
+    except Exception:
+        commit, commit_date = "unknown", "unknown"
+
+    _TREND_DESC = {
+        None:            "❌ 无过滤（V1宽松风格）",
+        "trend_aligned": "✅ 价格在EMA20/50正确一侧（trend_aligned）",
+        "triple_ema":    "✅ EMA10>EMA20>EMA50 三线排列（triple_ema）",
+    }
+
+    lines = [
+        "📋 策略过滤条件（读取自策略模块 CONDITIONS 常量）",
+        "━━━━━━━━━━━━━━",
+        f"代码版本: {commit}  {commit_date}",
+    ]
+
+    for alias, (mod_path, label) in targets.items():
+        try:
+            import importlib
+            mod = importlib.import_module(mod_path)
+            c = mod.CONDITIONS
+        except Exception as exc:
+            lines.append(f"\n[{label}] ❌ 加载失败: {exc}")
+            continue
+
+        ver  = c["strategy_version"]
+        lines.append(f"\n【{label}】strategy_id={c['strategy_id']}  version={ver}")
+        lines.append(f"  代码版本: {commit}  {commit_date}")
+        lines.append(f"  min_quote_volume: ≥{float(c['min_quote_volume']):,.0f} USDT")
+
+        mm = c["min_move_pct"]
+        lines.append(f"  min_move_pct:     |24h|≥{mm}%" if mm > 0 else "  min_move_pct:     无（≥0%）")
+        lines.append(f"  max_stop_pct:     ≤{c['max_stop_pct']}%")
+
+        ms = c["min_stop_pct"]
+        lines.append(
+            f"  min_stop_pct:     ≥{ms}%（RiskEngine）" if ms
+            else "  min_stop_pct:     未设置（RiskEngine无过滤）"
+        )
+        lines.append(f"  min_rr:           ≥{c['min_rr']}")
+
+        vr = c["min_vol_ratio"]
+        if vr:
+            lines.append(f"  vol_ratio:        量比≥{vr}x（放量确认）")
+        elif c["require_low_vol"]:
+            lines.append(f"  vol_ratio:        量比<1.0（量缩确认）")
+        else:
+            lines.append(f"  vol_ratio:        无要求")
+
+        ed = c["max_entry_dist"]
+        lines.append(
+            f"  entry_dist:       EMA20±{ed}%以内（精准回踩到位）" if ed
+            else "  entry_dist:       无限制（EMA20±0.25ATR限价挂单）"
+        )
+        lines.append(f"  trend_1h:         {_TREND_DESC.get(c['trend_1h'], c['trend_1h'])}")
+        lines.append(f"  trend_4h:         {_TREND_DESC.get(c['trend_4h'], c['trend_4h'])}")
+
+        d = c["direction"]
+        lines.append(f"  direction:        {'🔴 仅LONG（SHORT胜率45.5%已禁用，见v664.py:104）' if d == 'LONG' else d}")
+        lines.append(
+            f"  watchlist:        Top{c['gainers']}涨+Top{c['losers']}跌  "
+            f"TTL={c['max_ttl_min']}min  refresh={c['refresh_min']}min  "
+            f"expire={c['expiry_min']}min  max_signals={c['max_opp']}/次"
+        )
+
     lines.append("\n用法: /conditions v663  /conditions v664")
     return "\n".join(lines)
 
 
 def _cmd_winrates() -> str:
     from binance_ai_trader.v3.paper.repository import V3PaperOrderRepository
+    from decimal import Decimal
     from datetime import UTC, datetime
+
     repo       = V3PaperOrderRepository()
     all_orders = repo.load_all()
     today_str  = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -795,75 +801,147 @@ def _cmd_winrates() -> str:
         ("hotlist_v664", "V664"),
     ]
 
-    def _row(orders):
-        closed  = [o for o in orders if o.status == "CLOSED"
-                   and o.result in ("TP1", "TP2", "SL", "TIMEOUT")]
-        tp1     = sum(1 for o in closed if o.result in ("TP1", "TP2"))
-        sl      = sum(1 for o in closed if o.result == "SL")
-        timeout = sum(1 for o in closed if o.result == "TIMEOUT")
-        pushed  = sum(1 for o in orders if o.pushed)
-        filled  = sum(1 for o in orders if o.filled_at)
-        denom   = tp1 + sl
-        wr      = tp1 / denom * 100 if denom else 0
-        pnls    = [float(o.pnl_pct) for o in closed
-                   if o.pnl_pct and o.result in ("TP1", "SL")]
-        avg_pnl = sum(pnls) / len(pnls) if pnls else 0
+    def _compute(orders):
+        # signals: all records for this strategy
+        signals       = len(orders)
+        # trades: actually filled (entered the market)
+        trades        = sum(1 for o in orders if o.filled_at is not None)
+        # open_tracking: currently live
+        open_tracking = sum(1 for o in orders if o.status in ("OPEN", "FILLED"))
+        # closed_trades: all CLOSED — includes TP, SL, TIMEOUT (market-settled), EXPIRED
+        closed        = [o for o in orders if o.status == "CLOSED"]
+        closed_trades = len(closed)
+
+        tp_orders = [o for o in closed if o.result in ("TP1", "TP2")]
+        sl_orders = [o for o in closed if o.result == "SL"]
+        tp_count  = len(tp_orders)
+        sl_count  = len(sl_orders)
+        # TP/SL已判定: only TP+SL (TIMEOUT excluded from denominator)
+        tp_sl_resolved = tp_count + sl_count
+
+        # timeout: all timeout results; settled = has pnl_pct (market price closed)
+        timeout_orders   = [o for o in orders if o.result == "TIMEOUT"]
+        timeout_settled  = [o for o in timeout_orders if o.pnl_pct is not None]
+        timeout_count    = len(timeout_orders)
+
+        # tp_sl_hit_rate = TP / (TP + SL), TIMEOUT excluded
+        tp_sl_hit_rate = tp_count / tp_sl_resolved * 100 if tp_sl_resolved else None
+
+        # net_win_rate = closed with pnl_pct > 0 / all closed_trades
+        # TIMEOUT with pnl_pct counts (market-settled = real P&L realized)
+        winning = [o for o in closed if o.pnl_pct is not None and o.pnl_pct > 0]
+        net_win_rate = len(winning) / closed_trades * 100 if closed_trades else None
+
+        # PnL stats over all closed orders that have a realized pnl_pct
+        pnl_closed = [o for o in closed if o.pnl_pct is not None]
+        wins_pnl   = [float(o.pnl_pct) for o in pnl_closed if o.pnl_pct > 0]
+        loss_pnl   = [float(o.pnl_pct) for o in pnl_closed if o.pnl_pct < 0]
+        total_net_pnl = sum(float(o.pnl_pct) for o in pnl_closed)
+        avg_win       = sum(wins_pnl) / len(wins_pnl)   if wins_pnl else None
+        avg_loss      = sum(loss_pnl) / len(loss_pnl)   if loss_pnl else None
+        profit_factor = (sum(wins_pnl) / abs(sum(loss_pnl))
+                         if wins_pnl and loss_pnl else None)
+        max_loss      = min(loss_pnl) if loss_pnl else None
+
         return dict(
-            pushed=pushed, filled=filled, closed=len(closed),
-            tp1=tp1, sl=sl, timeout=timeout,
-            denom=denom, wr=wr, avg_pnl=avg_pnl,
+            signals=signals, trades=trades, open_tracking=open_tracking,
+            closed_trades=closed_trades, tp=tp_count, sl=sl_count,
+            tp_sl_resolved=tp_sl_resolved, timeout_count=timeout_count,
+            timeout_settled=len(timeout_settled),
+            tp_sl_hit_rate=tp_sl_hit_rate, net_win_rate=net_win_rate,
+            total_net_pnl=total_net_pnl,
+            avg_win=avg_win, avg_loss=avg_loss,
+            profit_factor=profit_factor, max_loss=max_loss,
         )
 
+    def _p(v, dec=1):
+        return f"{v:+.{dec}f}%" if v is not None else "—"
+    def _r(v, dec=1):
+        return f"{v:.{dec}f}%" if v is not None else "—"
+    def _pf(v):
+        return f"{v:.2f}" if v is not None else "—"
+
     lines = ["📊 策略胜率横向对比 (All Time)", "━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+
     for sid, label in STRATEGIES:
         orders = [o for o in all_orders if o.strategy_id == sid]
-        r      = _row(orders)
-        if r["denom"] == 0:
-            lines.append(f"\n[{label}] 暂无结算数据")
-            continue
-        bar    = "█" * int(r["wr"] // 10) + "░" * (10 - int(r["wr"] // 10))
-        lines.append(f"\n[{label}]  {bar} {r['wr']:.1f}%")
-        lines.append(f"  推送:{r['pushed']}  成交:{r['filled']}  结算:{r['closed']}")
-        lines.append(f"  TP:{r['tp1']}  SL:{r['sl']}  超时:{r['timeout']}  (分母={r['denom']})")
-        lines.append(f"  Avg PnL: {r['avg_pnl']:+.2f}%")
+        r = _compute(orders)
+        lines.append(f"\n【{label}】{sid}")
+        lines.append(f"  signals:        {r['signals']}")
+        lines.append(f"  trades:         {r['trades']}  (已成交入场)")
+        lines.append(f"  open_tracking:  {r['open_tracking']}  (当前OPEN/FILLED)")
+        lines.append(f"  closed_trades:  {r['closed_trades']}")
+        lines.append(f"  TP/SL已判定:   {r['tp_sl_resolved']}  (TP={r['tp']} SL={r['sl']})")
+        lines.append(
+            f"  timeout_count:  {r['timeout_count']}"
+            + (f"  (已市价结算={r['timeout_settled']})" if r['timeout_count'] else "")
+        )
+        lines.append("  ─────────────────────────────")
+        if r["tp_sl_hit_rate"] is not None:
+            bar = "█" * int(r["tp_sl_hit_rate"] // 10) + "░" * (10 - int(r["tp_sl_hit_rate"] // 10))
+            lines.append(f"  tp_sl_hit_rate: {bar} {_r(r['tp_sl_hit_rate'])}")
+        else:
+            lines.append("  tp_sl_hit_rate: — (暂无TP/SL结算)")
+        lines.append(f"  net_win_rate:   {_r(r['net_win_rate'])}  (含TIMEOUT已结算)")
+        lines.append("  ─────────────────────────────")
+        lines.append(f"  total_net_pnl:  {_p(r['total_net_pnl'])}")
+        lines.append(f"  avg_win:        {_p(r['avg_win'])}")
+        lines.append(f"  avg_loss:       {_p(r['avg_loss'])}")
+        lines.append(f"  profit_factor:  {_pf(r['profit_factor'])}")
+        lines.append(f"  max_loss:       {_p(r['max_loss'])}")
 
     lines.append("\n【今日 Today】")
     any_today = False
     for sid, label in STRATEGIES:
-        orders = [o for o in all_orders
-                  if o.strategy_id == sid and (o.created_at or "").startswith(today_str)]
-        r = _row(orders)
-        if r["denom"] == 0:
+        o2 = [o for o in all_orders
+              if o.strategy_id == sid and (o.created_at or "").startswith(today_str)]
+        r = _compute(o2)
+        if r["closed_trades"] == 0 and r["open_tracking"] == 0:
             continue
         any_today = True
-        lines.append(f"  [{label}] TP:{r['tp1']} SL:{r['sl']} 胜率:{r['wr']:.0f}%")
+        lines.append(
+            f"  [{label}] "
+            f"TP:{r['tp']} SL:{r['sl']} TOUT:{r['timeout_count']}  "
+            f"hit_rate:{_r(r['tp_sl_hit_rate'])}  "
+            f"net_wr:{_r(r['net_win_rate'])}"
+        )
     if not any_today:
-        lines.append("  今日暂无结算")
+        lines.append("  今日暂无活动")
 
-    lines.append("\n发送 /conditions <策略> 查看完整过滤条件")
+    lines.append("\n发送 /conditions <策略> 查看过滤条件")
     return "\n".join(lines)
 
 
 def _cmd_data() -> str:
-    port = os.environ.get("DATA_API_PORT", "8765")
-    auth = "需要 key 参数" if os.environ.get("DATA_API_KEY") else "⚠️ 未设置 DATA_API_KEY（无鉴权）"
     enabled = bool(os.environ.get("DATA_API_PORT") or os.environ.get("DATA_API_KEY"))
-    status = "✅ 已启动" if enabled else "⛔ 未启用（设置 DATA_API_PORT 或 DATA_API_KEY 环境变量以启用）"
+    status  = "✅ 已启动" if enabled else "⛔ 未启用（需设置 DATA_API_PORT 或 DATA_API_KEY）"
+    has_key = bool(os.environ.get("DATA_API_KEY"))
+    auth    = "✅ 需要 X-API-Key 请求头（或 ?key= 参数）" if has_key else "⚠️ 未设置 DATA_API_KEY（无鉴权，仅限内网）"
+    host    = os.environ.get("DATA_API_HOST", "0.0.0.0")
+    port    = os.environ.get("DATA_API_PORT", "8765")
 
     return (
         f"🔌 生产只读数据 API\n"
         f"━━━━━━━━━━━━━━\n"
         f"状态: {status}\n"
-        f"端口: {port}  鉴权: {auth}\n"
+        f"监听: {host}:{port}  |  鉴权: {auth}\n"
         f"\n接口列表:\n"
-        f"  GET /api/health\n"
-        f"  GET /api/orders?strategy=hotlist_v663&days=30&key=<KEY>\n"
-        f"  GET /api/stats?strategy=hotlist_v663&key=<KEY>\n"
-        f"  GET /api/signals?strategy=hotlist_v663&hours=48&key=<KEY>\n"
-        f"\n示例（在开发端调用）:\n"
+        f"  GET /api/health          — 无需鉴权，返回状态+DB连通性\n"
+        f"  GET /api/orders?strategy=hotlist_v663&days=30\n"
+        f"  GET /api/stats?strategy=hotlist_v663\n"
+        f"  GET /api/signals?strategy=hotlist_v663&hours=48\n"
+        f"\n鉴权方式（任选一）:\n"
+        f"  请求头: X-API-Key: <KEY>  ← 推荐\n"
+        f"  参数:   ?key=<KEY>         ← 日志中key会被遮蔽\n"
+        f"\n示例（externalPort=80，无需写端口号）:\n"
+        f"  curl https://<prod-domain>/api/health\n"
+        f"  curl -H 'X-API-Key: <KEY>' \\\n"
+        f"    'https://<prod-domain>/api/orders?strategy=hotlist_v663&days=7'\n"
+        f"\nPython:\n"
         f"  import requests\n"
-        f"  r = requests.get('https://<prod-domain>:{port}/api/orders',\n"
-        f"      params={{'strategy':'hotlist_v663','days':7,'key':'<KEY>'}})\n"
+        f"  r = requests.get('https://<prod-domain>/api/orders',\n"
+        f"      headers={{'X-API-Key':'<KEY>'}},\n"
+        f"      params={{'strategy':'hotlist_v663','days':7}})\n"
         f"  orders = r.json()['orders']"
     )
 

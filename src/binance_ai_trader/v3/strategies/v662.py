@@ -39,6 +39,28 @@ _EXPIRY_MIN            = 60
 _MAX_TTL_MIN           = 90
 _REFRESH_MIN           = 15
 
+CONDITIONS = {
+    "strategy_id":      _STRATEGY_ID,
+    "strategy_version": "v662",
+    "min_quote_volume": _MIN_VOLUME,
+    "min_move_pct":     _MIN_MOVE_PCT,
+    "max_stop_pct":     _MAX_STOP_PCT,
+    "min_stop_pct":     Decimal("1.5"),
+    "min_rr":           _MIN_RR,
+    "min_vol_ratio":    _MIN_VOL_RATIO,
+    "max_entry_dist":   None,
+    "require_low_vol":  False,
+    "trend_1h":         "trend_aligned",
+    "trend_4h":         "trend_aligned",
+    "direction":        "LONG+SHORT",
+    "max_ttl_min":      _MAX_TTL_MIN,
+    "expiry_min":       _EXPIRY_MIN,
+    "refresh_min":      _REFRESH_MIN,
+    "gainers":          _GAINERS,
+    "losers":           _LOSERS,
+    "max_opp":          _MAX_OPP,
+}
+
 
 class HotlistStrategyV662(V3Strategy):
     """V662: V66 加强版 — 量比+1h趋势+4h趋势三道硬门槛，止损收紧至3%。

@@ -44,6 +44,28 @@ _EXPIRY_MIN            = 480              # 8小时，给回踩充足时间
 _MAX_TTL_MIN           = 480              # 8小时内持续监控该币
 _REFRESH_MIN           = 15
 
+CONDITIONS = {
+    "strategy_id":      _STRATEGY_ID,
+    "strategy_version": "v664",
+    "min_quote_volume": _MIN_VOLUME,
+    "min_move_pct":     _MIN_MOVE_PCT,
+    "max_stop_pct":     _MAX_STOP_PCT,
+    "min_stop_pct":     None,
+    "min_rr":           _MIN_RR,
+    "min_vol_ratio":    None,
+    "max_entry_dist":   _MAX_ENTRY_DIST_PCT,
+    "require_low_vol":  True,
+    "trend_1h":         "triple_ema",
+    "trend_4h":         "triple_ema",
+    "direction":        "LONG",
+    "max_ttl_min":      _MAX_TTL_MIN,
+    "expiry_min":       _EXPIRY_MIN,
+    "refresh_min":      _REFRESH_MIN,
+    "gainers":          _GAINERS,
+    "losers":           _LOSERS,
+    "max_opp":          _MAX_OPP,
+}
+
 
 class HotlistStrategyV664(V3Strategy):
     """V664: 精准回踩做法 — 三线排列 + EMA20 到位 + 量缩，多空双向。

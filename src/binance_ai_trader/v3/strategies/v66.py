@@ -35,6 +35,28 @@ _EXPIRY_MIN       = 60
 _MAX_TTL_MIN      = 120
 _REFRESH_MIN      = 15
 
+CONDITIONS = {
+    "strategy_id":      _STRATEGY_ID,
+    "strategy_version": "v66",
+    "min_quote_volume": _MIN_VOLUME,
+    "min_move_pct":     Decimal("0"),
+    "max_stop_pct":     _MAX_STOP_PCT,
+    "min_stop_pct":     Decimal("1.5"),
+    "min_rr":           _MIN_RR,
+    "min_vol_ratio":    None,
+    "max_entry_dist":   None,
+    "require_low_vol":  False,
+    "trend_1h":         None,
+    "trend_4h":         None,
+    "direction":        "LONG+SHORT",
+    "max_ttl_min":      _MAX_TTL_MIN,
+    "expiry_min":       _EXPIRY_MIN,
+    "refresh_min":      _REFRESH_MIN,
+    "gainers":          _GAINERS,
+    "losers":           _LOSERS,
+    "max_opp":          _MAX_OPP,
+}
+
 
 class HotlistStrategyV66(V3Strategy):
     """V66: V1-style watchlist — top 6 gainers + top 6 losers, stop ≤ 5%.

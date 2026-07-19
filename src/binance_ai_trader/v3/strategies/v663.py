@@ -37,6 +37,28 @@ _EXPIRY_MIN            = 60
 _MAX_TTL_MIN           = 90
 _REFRESH_MIN           = 15
 
+CONDITIONS = {
+    "strategy_id":      _STRATEGY_ID,
+    "strategy_version": "v663",
+    "min_quote_volume": _MIN_VOLUME,
+    "min_move_pct":     _MIN_MOVE_PCT,
+    "max_stop_pct":     _MAX_STOP_PCT,
+    "min_stop_pct":     Decimal("1.5"),
+    "min_rr":           _MIN_RR,
+    "min_vol_ratio":    _MIN_VOL_RATIO,
+    "max_entry_dist":   None,
+    "require_low_vol":  False,
+    "trend_1h":         "triple_ema",
+    "trend_4h":         "triple_ema",
+    "direction":        "LONG+SHORT",
+    "max_ttl_min":      _MAX_TTL_MIN,
+    "expiry_min":       _EXPIRY_MIN,
+    "refresh_min":      _REFRESH_MIN,
+    "gainers":          _GAINERS,
+    "losers":           _LOSERS,
+    "max_opp":          _MAX_OPP,
+}
+
 
 class HotlistStrategyV663(V3Strategy):
     """V663: V662 趋势升级版 — 三线排列 EMA10>20>50 替代简单价格位置判断。
