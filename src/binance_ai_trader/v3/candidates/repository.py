@@ -29,6 +29,9 @@ _STRATEGY_PREFIXES: dict[str, str] = {
     "classic_c3":  "CLN",
     "classic_c4":  "CLN",
     "classic":     "CLN",
+    "rsd_long":    "RSD",
+    "rsd_short":   "RSD",
+    "rsd":         "RSD",
 }
 
 
@@ -97,6 +100,7 @@ class CandidateInput:
     ema60: float | None = None
     market_regime: str | None = None
     reason: str | None = None
+    meta_json: str = "{}"
 
 
 class V3CandidateRepository:

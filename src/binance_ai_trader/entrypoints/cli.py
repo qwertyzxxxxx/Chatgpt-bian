@@ -488,6 +488,14 @@ def build_parser() -> argparse.ArgumentParser:
                           help="hotlist_reversal dedup window in hours (default: 24)")
     run_loop.add_argument("--v3-reversal-max-open-orders", type=int, default=5, metavar="N",
                           help="hotlist_reversal max open paper orders (default: 5)")
+    run_loop.add_argument("--enable-rsd", action="store_true",
+                          help="Enable RSI Divergence strategies rsd_long + rsd_short (paper-only)")
+    run_loop.add_argument("--rsd-report-interval-hours", type=int, default=1, metavar="N",
+                          help="RSD shadow report interval in hours (default: 1)")
+    run_loop.add_argument("--rsd-dedup-hours", type=int, default=24, metavar="N",
+                          help="RSD dedup window in hours (default: 24)")
+    run_loop.add_argument("--rsd-max-open-orders", type=int, default=5, metavar="N",
+                          help="RSD max open paper orders per strategy (default: 5)")
     run_loop.add_argument("--enable-paper-portfolio", action="store_true",
                           help="Enable unified paper portfolio settle + summary tasks")
     run_loop.add_argument("--paper-settle-interval-minutes", type=int, default=15,
@@ -1845,6 +1853,22 @@ def _run_loop(args: argparse.Namespace) -> int:
             max_open_orders=_rev_max_open,
         )
         tasks = tasks + reversal_tasks
+    if getattr(args, "enable_rsd", False):
+        from binance_ai_trader.v3.runner.tasks import build_rsd_tasks
+        _rsd_report_hours = getattr(args, "rsd_report_interval_hours", 1)
+        _rsd_dedup_hours  = getattr(args, "rsd_dedup_hours", 24)
+        _rsd_max_open     = getattr(args, "rsd_max_open_orders", 5)
+        rsd_tasks = build_rsd_tasks(
+            db_path=database,
+            base_url=args.base_url,
+            timeout=args.timeout,
+            max_retries=args.max_retries,
+            telegram=notifier,
+            report_interval=timedelta(hours=_rsd_report_hours),
+            dedup_hours=_rsd_dedup_hours,
+            max_open_orders=_rsd_max_open,
+        )
+        tasks = tasks + rsd_tasks
     repository = MarketDataRepository(database)
     try:
         runner = ProductionRunner(

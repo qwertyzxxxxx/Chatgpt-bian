@@ -54,6 +54,8 @@ from binance_ai_trader.v3.strategies.v663 import HotlistStrategyV663
 from binance_ai_trader.v3.strategies.v664 import HotlistStrategyV664
 from binance_ai_trader.v3.strategies.wave_long import WaveLongStrategy
 from binance_ai_trader.v3.strategies.wave_short import WaveShortStrategy
+from binance_ai_trader.v3.strategies.rsd_long import RSDivLongStrategy
+from binance_ai_trader.v3.strategies.rsd_short import RSDivShortStrategy
 from binance_ai_trader.sma120.strategy import SMA120Strategy
 from binance_ai_trader.sma120.config import (
     STRATEGY_ID as _SMA120_STRATEGY_ID,
@@ -1393,6 +1395,235 @@ def build_wave_short_tasks(
         RunnerTask("wave_short_report", _wave_short_report_task, interval=report_interval),
     ]
     return tuple(tasks)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RSD Task Builder — RSI 背離策略 (rsd_long + rsd_short), paper-only
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RSD_LONG_STRATEGY_ID  = "rsd_long"
+_RSD_SHORT_STRATEGY_ID = "rsd_short"
+_RSD_HOLD_HOURS        = 48
+
+
+def build_rsd_tasks(
+    db_path: Path,
+    base_url: str = "https://fapi.binance.com",
+    timeout: float = 10.0,
+    max_retries: int = 3,
+    telegram: TelegramNotifier | None = None,
+    scan_interval: timedelta = timedelta(minutes=15),
+    settle_interval: timedelta = timedelta(minutes=15),
+    report_interval: timedelta = timedelta(hours=1),
+    dedup_hours: int = 24,
+    max_open_orders: int = 5,
+) -> tuple[RunnerTask, ...]:
+    """Bootstrap RSI Divergence strategy tasks. Paper-only (rsd_long + rsd_short)."""
+    client = BinancePublicClient(
+        base_url=base_url,
+        timeout_seconds=timeout,
+        max_retries=max_retries,
+    )
+
+    long_strategy  = RSDivLongStrategy(client, db_path)
+    short_strategy = RSDivShortStrategy(client, db_path)
+
+    long_risk  = RiskConfig(strategy_id=_RSD_LONG_STRATEGY_ID,  max_open_orders=max_open_orders)
+    short_risk = RiskConfig(strategy_id=_RSD_SHORT_STRATEGY_ID, max_open_orders=max_open_orders)
+
+    long_pipeline  = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=long_risk)
+    short_pipeline = V3Pipeline(db_path, dedup_hours=dedup_hours, risk_config=short_risk)
+
+    order_repo = V3PaperOrderRepository()
+    push_repo  = V3PushQueueRepository()
+    perf_calc  = V3PerformanceCalculator(order_repo)
+    settler    = V3Settler(order_repo, client, notifier=telegram, live_repo=None)
+    settings_repo = V3RuntimeSettingsRepository()
+
+    long_tg  = V3TelegramNotifier(telegram) if telegram else None
+    short_tg = V3TelegramNotifier(telegram) if telegram else None
+
+    long_reporter = (
+        V3ShadowReporter(
+            telegram, order_repo, perf_calc, _RSD_LONG_STRATEGY_ID,
+            client=client,
+            scan_interval_minutes=int(scan_interval.total_seconds() // 60),
+            settle_interval_minutes=int(settle_interval.total_seconds() // 60),
+            summary_interval_hours=int(report_interval.total_seconds() // 3600),
+        ) if telegram else None
+    )
+    short_reporter = (
+        V3ShadowReporter(
+            telegram, order_repo, perf_calc, _RSD_SHORT_STRATEGY_ID,
+            client=client,
+            scan_interval_minutes=int(scan_interval.total_seconds() // 60),
+            settle_interval_minutes=int(settle_interval.total_seconds() // 60),
+            summary_interval_hours=int(report_interval.total_seconds() // 3600),
+        ) if telegram else None
+    )
+
+    def _rsd_long_scan_task() -> RunnerTaskResult:
+        now = datetime.now(UTC)
+        try:
+            live_dedup, live_max = settings_repo.resolve(_RSD_LONG_STRATEGY_ID)
+            live_risk = RiskConfig(
+                strategy_id=_RSD_LONG_STRATEGY_ID,
+                max_open_orders=live_max,
+                blacklist=long_risk.blacklist,
+                blocked_regimes=long_risk.blocked_regimes,
+            )
+        except Exception:
+            log.exception("[rsd_long] failed to read runtime settings")
+            live_dedup, live_risk = dedup_hours, long_risk
+        result = long_pipeline.run(long_strategy, now=now, dedup_hours=live_dedup, risk_config=live_risk)
+        orders_created = 0
+        for candidate in result.candidates:
+            if order_repo.exists_open_for_symbol_direction(
+                _RSD_LONG_STRATEGY_ID, candidate.symbol, candidate.direction
+            ):
+                continue
+            expires_at = (now + timedelta(hours=_RSD_HOLD_HOURS)).isoformat(timespec="seconds")
+            order = V3PaperOrder(
+                order_id=make_order_id(),
+                signal_id=candidate.signal_id,
+                strategy_id=_RSD_LONG_STRATEGY_ID,
+                symbol=candidate.symbol,
+                direction=candidate.direction,
+                entry=Decimal(candidate.entry),
+                stop_loss=Decimal(candidate.sl),
+                tp1=Decimal(candidate.tp1),
+                tp2=Decimal(candidate.tp2) if candidate.tp2 else Decimal(candidate.tp1),
+                rr=Decimal(candidate.rr),
+                status="OPEN",
+                result=None,
+                created_at=now.isoformat(timespec="seconds"),
+                filled_at=None,
+                closed_at=None,
+                expires_at=expires_at,
+                pnl_pct=None,
+                rr_realized=None,
+                pushed=True,
+                metadata_json=candidate.meta_json,
+            )
+            order_repo.save(order)
+            order_repo.append_event(V3OrderEvent(
+                event_id=make_event_id(),
+                order_id=order.order_id,
+                signal_id=candidate.signal_id,
+                event_type="CREATED",
+                old_status=None,
+                new_status="OPEN",
+                candle_high=None,
+                candle_low=None,
+                triggered_at=now.isoformat(timespec="seconds"),
+                metadata_json="{}",
+            ))
+            orders_created += 1
+            if long_tg:
+                long_tg.send_candidate(candidate, hold_hours=_RSD_HOLD_HOURS, live_prefix="【RSD↑ 模擬盤】", client=client)
+            push_items = push_repo.load_by_signal(candidate.signal_id)
+            if push_items:
+                push_repo.mark_sent(push_id=push_items[0].push_id)
+        log.info("[rsd_long] scan done — pushed=%d orders_created=%d", result.pushed, orders_created)
+        return RunnerTaskResult("SUCCEEDED", {
+            "event_type": "rsd_long_scan", "scanned": result.scanned,
+            "pushed": result.pushed, "orders_created": orders_created,
+            "blocked_risk": result.blocked_risk, "blocked_dedup": result.blocked_dedup,
+        })
+
+    def _rsd_short_scan_task() -> RunnerTaskResult:
+        now = datetime.now(UTC)
+        try:
+            live_dedup, live_max = settings_repo.resolve(_RSD_SHORT_STRATEGY_ID)
+            live_risk = RiskConfig(
+                strategy_id=_RSD_SHORT_STRATEGY_ID,
+                max_open_orders=live_max,
+                blacklist=short_risk.blacklist,
+                blocked_regimes=short_risk.blocked_regimes,
+            )
+        except Exception:
+            log.exception("[rsd_short] failed to read runtime settings")
+            live_dedup, live_risk = dedup_hours, short_risk
+        result = short_pipeline.run(short_strategy, now=now, dedup_hours=live_dedup, risk_config=live_risk)
+        orders_created = 0
+        for candidate in result.candidates:
+            if order_repo.exists_open_for_symbol_direction(
+                _RSD_SHORT_STRATEGY_ID, candidate.symbol, candidate.direction
+            ):
+                continue
+            expires_at = (now + timedelta(hours=_RSD_HOLD_HOURS)).isoformat(timespec="seconds")
+            order = V3PaperOrder(
+                order_id=make_order_id(),
+                signal_id=candidate.signal_id,
+                strategy_id=_RSD_SHORT_STRATEGY_ID,
+                symbol=candidate.symbol,
+                direction=candidate.direction,
+                entry=Decimal(candidate.entry),
+                stop_loss=Decimal(candidate.sl),
+                tp1=Decimal(candidate.tp1),
+                tp2=Decimal(candidate.tp2) if candidate.tp2 else Decimal(candidate.tp1),
+                rr=Decimal(candidate.rr),
+                status="OPEN",
+                result=None,
+                created_at=now.isoformat(timespec="seconds"),
+                filled_at=None,
+                closed_at=None,
+                expires_at=expires_at,
+                pnl_pct=None,
+                rr_realized=None,
+                pushed=True,
+                metadata_json=candidate.meta_json,
+            )
+            order_repo.save(order)
+            order_repo.append_event(V3OrderEvent(
+                event_id=make_event_id(),
+                order_id=order.order_id,
+                signal_id=candidate.signal_id,
+                event_type="CREATED",
+                old_status=None,
+                new_status="OPEN",
+                candle_high=None,
+                candle_low=None,
+                triggered_at=now.isoformat(timespec="seconds"),
+                metadata_json="{}",
+            ))
+            orders_created += 1
+            if short_tg:
+                short_tg.send_candidate(candidate, hold_hours=_RSD_HOLD_HOURS, live_prefix="【RSD↓ 模擬盤】", client=client)
+            push_items = push_repo.load_by_signal(candidate.signal_id)
+            if push_items:
+                push_repo.mark_sent(push_id=push_items[0].push_id)
+        log.info("[rsd_short] scan done — pushed=%d orders_created=%d", result.pushed, orders_created)
+        return RunnerTaskResult("SUCCEEDED", {
+            "event_type": "rsd_short_scan", "scanned": result.scanned,
+            "pushed": result.pushed, "orders_created": orders_created,
+            "blocked_risk": result.blocked_risk, "blocked_dedup": result.blocked_dedup,
+        })
+
+    def _rsd_settle_task() -> RunnerTaskResult:
+        updated_l = settler.settle_all(strategy_id=_RSD_LONG_STRATEGY_ID)
+        updated_s = settler.settle_all(strategy_id=_RSD_SHORT_STRATEGY_ID)
+        return RunnerTaskResult("SUCCEEDED", {
+            "event_type": "rsd_settle", "settled_long": updated_l, "settled_short": updated_s,
+        })
+
+    def _rsd_long_report_task() -> RunnerTaskResult:
+        if long_reporter:
+            long_reporter.send_report()
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "rsd_long_report"})
+
+    def _rsd_short_report_task() -> RunnerTaskResult:
+        if short_reporter:
+            short_reporter.send_report()
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "rsd_short_report"})
+
+    return (
+        RunnerTask("rsd_long_scan",    _rsd_long_scan_task,    interval=scan_interval,   startup_immediate=True),
+        RunnerTask("rsd_short_scan",   _rsd_short_scan_task,   interval=scan_interval,   startup_immediate=True),
+        RunnerTask("rsd_settle",       _rsd_settle_task,       interval=settle_interval, startup_immediate=True),
+        RunnerTask("rsd_long_report",  _rsd_long_report_task,  interval=report_interval),
+        RunnerTask("rsd_short_report", _rsd_short_report_task, interval=report_interval),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
