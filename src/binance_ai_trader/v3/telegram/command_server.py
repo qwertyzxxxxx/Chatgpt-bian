@@ -38,6 +38,7 @@ _COMMANDS = {
     "/limits", "/setlimit",
     "/livestatus", "/livemode", "/setlive",
     "/paperon", "/paperoff", "/paperstatus",
+    "/winrates", "/conditions", "/data",
 }
 
 
@@ -99,6 +100,9 @@ def _cmd_help() -> str:
         "/signals 📋 最近10条推送信号（含实盘订单管理动作）\n"
         "/orders  📂 当前模拟单 + 最近成交\n"
         "/perf    🏆 模拟盘绩效统计\n"
+        "/winrates 📊 V66/V663/V664 策略胜率横向对比\n"
+        "/conditions [v66|v663|v664] 📋 策略过滤条件详情\n"
+        "/data    🔌 生产只读数据API接口说明\n"
         "/portfolio [v3|v66|rev] 📊 完整持仓报告（默认v3）\n"
         "/v66     📡 V66 监控池状态\n"
         "/limits  ⚙️ 查看去重窗口/持仓上限设置\n"
@@ -688,6 +692,182 @@ def _cmd_portfolio(args: list[str], notifier, db_path: Path) -> str:
     return reporter._build_message()
 
 
+_STRATEGY_CONDITIONS: dict[str, dict] = {
+    "v66": {
+        "label": "V66",
+        "id":    "hotlist_v66",
+        "lines": [
+            "宇宙: USDT永续合约 | 成交量≥500万USDT",
+            "选币: 涨幅榜Top6 + 跌幅榜Top6（无24h涨跌幅下限）",
+            "监控: 观测窗口120min，每15min刷新，最多3信号/次",
+            "入场: 15m EMA20 ∓0.25×ATR 限价挂单",
+            "止损: 近20根K最低/最高 ∓1×ATR | ≤5%",
+            "止盈: TP1=1R  TP2=2R | RR≥2",
+            "趋势: ❌ 无过滤（V1风格，宽松进场）",
+            "量比: ❌ 无要求",
+            "TTL: 60min 限价单超时未成交放弃",
+            "★ 新增: min_stop_pct=1.5%（止损<1.5%不入场）",
+        ],
+    },
+    "v662": {
+        "label": "V662",
+        "id":    "hotlist_v662",
+        "lines": [
+            "宇宙: USDT永续合约 | 成交量≥500万USDT",
+            "选币: 涨幅榜Top6 + 跌幅榜Top6 | |24h涨跌|≥5%",
+            "监控: 观测窗口60min，每15min刷新，最多3信号/次",
+            "入场: 15m EMA20 ∓0.25×ATR 限价挂单",
+            "止损: 近20根K最低/最高 ∓1×ATR | ≤3%",
+            "止盈: TP1=1R  TP2=2R | RR≥2",
+            "趋势: 1h 价格在EMA20上方(多)/下方(空)",
+            "趋势: 4h 价格在EMA20上方(多)/下方(空)",
+            "量比: ≥1.2x（放量确认）",
+            "TTL: 90min 限价单超时未成交放弃",
+            "★ 新增: min_stop_pct=1.5%",
+        ],
+    },
+    "v663": {
+        "label": "V663",
+        "id":    "hotlist_v663",
+        "lines": [
+            "宇宙: USDT永续合约 | 成交量≥500万USDT",
+            "选币: 涨幅榜Top6 + 跌幅榜Top6 | |24h涨跌|≥5%",
+            "监控: 观测窗口60min，每15min刷新，最多3信号/次",
+            "入场: 15m EMA20 ∓0.25×ATR 限价挂单",
+            "止损: 近20根K最低/最高 ∓1×ATR | ≤3%",
+            "止盈: TP1=1R  TP2=2R | RR≥2",
+            "趋势: 1h EMA10>EMA20>EMA50 三线排列（多头/空头反向）",
+            "趋势: 4h EMA10>EMA20>EMA50 三线排列（同上）",
+            "量比: ≥1.2x（放量确认）",
+            "TTL: 90min 限价单超时未成交放弃",
+            "★ 新增: min_stop_pct=1.5%",
+            "升级vs V662: 三线排列 替代 简单价格位置",
+        ],
+    },
+    "v664": {
+        "label": "V664",
+        "id":    "hotlist_v664",
+        "lines": [
+            "宇宙: USDT永续合约 | 成交量≥500万USDT",
+            "选币: 涨幅榜Top6 + 跌幅榜Top6 | |24h涨跌|≥5%",
+            "监控: 观测窗口480min(8h)，每15min刷新，最多3信号/次",
+            "入场: 当前价在15m EMA20 ±1.5% 以内（精准回踩到位）",
+            "止损: 近20根K最低/最高 ∓1×ATR | ≤2.5%",
+            "止盈: 目标TP2=2R（直接打2R，不止盈TP1）",
+            "趋势: 1h + 4h EMA10>EMA20>EMA50 三线排列",
+            "量缩: 量比<1.0（回踩时逆势力量弱）",
+            "方向: 🔴 仅做多LONG（SHORT历史胜率45.5%已禁用）",
+            "TTL: 60min 限价单超时",
+            "升级vs V663: 精准等回踩 + 量缩 + 更紧止损",
+        ],
+    },
+}
+
+
+def _cmd_conditions(args: list[str]) -> str:
+    key = (args[0].lower() if args else "").replace("hotlist_", "")
+    if key and key not in _STRATEGY_CONDITIONS:
+        valid = " / ".join(_STRATEGY_CONDITIONS.keys())
+        return f"❓ 未知策略 '{key}'，可选: {valid}\n用法: /conditions v663"
+
+    targets = ([key] if key else list(_STRATEGY_CONDITIONS.keys()))
+    lines   = ["📋 策略过滤条件", "━━━━━━━━━━━━━━"]
+    for k in targets:
+        cfg = _STRATEGY_CONDITIONS[k]
+        lines.append(f"\n【{cfg['label']}】({cfg['id']})")
+        for i, cond in enumerate(cfg["lines"], 1):
+            lines.append(f"  {i:2d}. {cond}")
+    lines.append("\n用法: /conditions v663  /conditions v664")
+    return "\n".join(lines)
+
+
+def _cmd_winrates() -> str:
+    from binance_ai_trader.v3.paper.repository import V3PaperOrderRepository
+    from datetime import UTC, datetime
+    repo       = V3PaperOrderRepository()
+    all_orders = repo.load_all()
+    today_str  = datetime.now(UTC).strftime("%Y-%m-%d")
+
+    STRATEGIES = [
+        ("hotlist_v66",  "V66"),
+        ("hotlist_v662", "V662"),
+        ("hotlist_v663", "V663"),
+        ("hotlist_v664", "V664"),
+    ]
+
+    def _row(orders):
+        closed  = [o for o in orders if o.status == "CLOSED"
+                   and o.result in ("TP1", "TP2", "SL", "TIMEOUT")]
+        tp1     = sum(1 for o in closed if o.result in ("TP1", "TP2"))
+        sl      = sum(1 for o in closed if o.result == "SL")
+        timeout = sum(1 for o in closed if o.result == "TIMEOUT")
+        pushed  = sum(1 for o in orders if o.pushed)
+        filled  = sum(1 for o in orders if o.filled_at)
+        denom   = tp1 + sl
+        wr      = tp1 / denom * 100 if denom else 0
+        pnls    = [float(o.pnl_pct) for o in closed
+                   if o.pnl_pct and o.result in ("TP1", "SL")]
+        avg_pnl = sum(pnls) / len(pnls) if pnls else 0
+        return dict(
+            pushed=pushed, filled=filled, closed=len(closed),
+            tp1=tp1, sl=sl, timeout=timeout,
+            denom=denom, wr=wr, avg_pnl=avg_pnl,
+        )
+
+    lines = ["📊 策略胜率横向对比 (All Time)", "━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+    for sid, label in STRATEGIES:
+        orders = [o for o in all_orders if o.strategy_id == sid]
+        r      = _row(orders)
+        if r["denom"] == 0:
+            lines.append(f"\n[{label}] 暂无结算数据")
+            continue
+        bar    = "█" * int(r["wr"] // 10) + "░" * (10 - int(r["wr"] // 10))
+        lines.append(f"\n[{label}]  {bar} {r['wr']:.1f}%")
+        lines.append(f"  推送:{r['pushed']}  成交:{r['filled']}  结算:{r['closed']}")
+        lines.append(f"  TP:{r['tp1']}  SL:{r['sl']}  超时:{r['timeout']}  (分母={r['denom']})")
+        lines.append(f"  Avg PnL: {r['avg_pnl']:+.2f}%")
+
+    lines.append("\n【今日 Today】")
+    any_today = False
+    for sid, label in STRATEGIES:
+        orders = [o for o in all_orders
+                  if o.strategy_id == sid and (o.created_at or "").startswith(today_str)]
+        r = _row(orders)
+        if r["denom"] == 0:
+            continue
+        any_today = True
+        lines.append(f"  [{label}] TP:{r['tp1']} SL:{r['sl']} 胜率:{r['wr']:.0f}%")
+    if not any_today:
+        lines.append("  今日暂无结算")
+
+    lines.append("\n发送 /conditions <策略> 查看完整过滤条件")
+    return "\n".join(lines)
+
+
+def _cmd_data() -> str:
+    port = os.environ.get("DATA_API_PORT", "8765")
+    auth = "需要 key 参数" if os.environ.get("DATA_API_KEY") else "⚠️ 未设置 DATA_API_KEY（无鉴权）"
+    enabled = bool(os.environ.get("DATA_API_PORT") or os.environ.get("DATA_API_KEY"))
+    status = "✅ 已启动" if enabled else "⛔ 未启用（设置 DATA_API_PORT 或 DATA_API_KEY 环境变量以启用）"
+
+    return (
+        f"🔌 生产只读数据 API\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"状态: {status}\n"
+        f"端口: {port}  鉴权: {auth}\n"
+        f"\n接口列表:\n"
+        f"  GET /api/health\n"
+        f"  GET /api/orders?strategy=hotlist_v663&days=30&key=<KEY>\n"
+        f"  GET /api/stats?strategy=hotlist_v663&key=<KEY>\n"
+        f"  GET /api/signals?strategy=hotlist_v663&hours=48&key=<KEY>\n"
+        f"\n示例（在开发端调用）:\n"
+        f"  import requests\n"
+        f"  r = requests.get('https://<prod-domain>:{port}/api/orders',\n"
+        f"      params={{'strategy':'hotlist_v663','days':7,'key':'<KEY>'}})\n"
+        f"  orders = r.json()['orders']"
+    )
+
+
 def _cmd_v66() -> str:
     from binance_ai_trader.hotlist.pg_watchlist_repo import V66WatchlistPgRepository
     repo = V66WatchlistPgRepository()
@@ -846,6 +1026,12 @@ class TelegramCommandServer:
                 return _cmd_paperon(args, user_id)
             if cmd == "/paperoff":
                 return _cmd_paperoff(args, user_id)
+            if cmd == "/winrates":
+                return _cmd_winrates()
+            if cmd == "/conditions":
+                return _cmd_conditions(args)
+            if cmd == "/data":
+                return _cmd_data()
             return "❓ 未知指令，发送 /help 查看列表"
         except Exception as exc:
             log.exception("[CmdServer] command %s failed", cmd)
@@ -865,7 +1051,17 @@ def start_command_server(
 
     Returns None (silently) if notifier is None or no admin IDs configured.
     Safe to call unconditionally — never raises.
+
+    Also starts the read-only HTTP data API if DATA_API_PORT or DATA_API_KEY
+    env vars are set (independent of Telegram — starts even if notifier is None).
     """
+    # Always attempt to start data API (independent of Telegram)
+    try:
+        from binance_ai_trader.v3.telegram.data_api import start_data_api
+        start_data_api()
+    except Exception:
+        log.exception("[CmdServer] failed to start data API — continuing")
+
     if notifier is None:
         return None
     try:
