@@ -356,19 +356,17 @@ if __name__ == "__main__":
         _log.info("[startup] wave_short enabled — paper-only (放量跌破反抽做空)")
 
     # ── RSD RSI Divergence tasks (rsd_long + rsd_short, paper-only) ──────────
-    _rsd_enabled = os.environ.get("ENABLE_RSD", "").lower() == "true"
-    if _rsd_enabled:
-        rsd_tasks = build_rsd_tasks(
-            db_path=_DB_PATH,
-            telegram=notifier,
-            scan_interval=timedelta(minutes=15),
-            settle_interval=timedelta(minutes=15),
-            report_interval=timedelta(hours=1),
-            dedup_hours=24,
-            max_open_orders=5,
-        )
-        tasks.extend(rsd_tasks)
-        _log.info("[startup] RSD enabled — paper-only (RSI背離策略 rsd_long + rsd_short)")
+    rsd_tasks = build_rsd_tasks(
+        db_path=_DB_PATH,
+        telegram=notifier,
+        scan_interval=timedelta(minutes=15),
+        settle_interval=timedelta(minutes=15),
+        report_interval=timedelta(hours=1),
+        dedup_hours=24,
+        max_open_orders=5,
+    )
+    tasks.extend(rsd_tasks)
+    _log.info("[startup] RSD — paper-only (RSI背離策略 rsd_long + rsd_short)")
 
     # ── Classic C1-C4 tasks (经典量价策略，paper-only) ──────────────────────
     _classic_enabled = os.environ.get("ENABLE_CLASSIC", "").lower() == "true"
