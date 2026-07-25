@@ -164,15 +164,20 @@ if __name__ == "__main__":
                 from binance_ai_trader.v3.live.engine import LiveMirrorEngine
                 from binance_ai_trader.v3.live.repository import LiveOrderRepository
                 from binance_ai_trader.v3.settings.repository import (
-                    V3_STRATEGY_ID, V663_STRATEGY_ID,
+                    V3_STRATEGY_ID, V66_STRATEGY_ID, V663_STRATEGY_ID,
                     LIVE_DEFAULTS, STRATEGY_ALIASES,
                     V3RuntimeSettingsRepository,
                 )
 
                 _LIVE_ENGINE_CFG: dict[str, tuple[str, str, str]] = {
                     V3_STRATEGY_ID:   ("V3",   "ORDER_NOTIONAL_USDT",      "1000"),
+                    V66_STRATEGY_ID:  ("V66",  "V66_ORDER_NOTIONAL_USDT",  "2000"),
                     V663_STRATEGY_ID: ("V663", "V663_ORDER_NOTIONAL_USDT", "2000"),
                     # ← add new live strategies here (one line each)
+                }
+                # V663 实盘只做空——数据显示 SHORT profit_factor 2.12 vs LONG 1.56
+                _LIVE_DIRECTION_FILTER: dict[str, set[str]] = {
+                    V663_STRATEGY_ID: {"SHORT"},
                 }
 
                 _live_client = BinanceFuturesClient(_api_key, _api_secret)
@@ -188,6 +193,7 @@ if __name__ == "__main__":
                         max_positions=_max_pos,
                         strategy_id=_sid,
                         tag=_tag,
+                        allowed_directions=_LIVE_DIRECTION_FILTER.get(_sid),
                     )
 
                 _log.info(

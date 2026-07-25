@@ -45,6 +45,7 @@ class LiveMirrorEngine:
         max_positions: int = 5,
         strategy_id: str = "hotlist_momentum_v3",
         tag: str | None = None,
+        allowed_directions: set[str] | None = None,
     ) -> None:
         self._client   = client
         self._repo     = repo
@@ -57,6 +58,9 @@ class LiveMirrorEngine:
         # the two strategies' live notifications are never confused with each
         # other. Defaults to a readable form of strategy_id if not given.
         self._tag = tag or strategy_id
+        # Optional direction whitelist — None means all directions allowed.
+        # Pass {"SHORT"} or {"LONG"} to restrict live mirroring to one side.
+        self._allowed_directions: set[str] | None = allowed_directions
         self._order_manager = LiveOrderManager()
 
     def is_enabled(self) -> bool:
@@ -96,6 +100,13 @@ class LiveMirrorEngine:
     def try_place(self, candidate: V3Candidate) -> PlaceResult:
         if not self.is_enabled():
             return PlaceResult(ok=False, reason="LIVE_TRADING_ENABLED!=true")
+
+        # Direction whitelist — reject silently if this side is not allowed
+        if self._allowed_directions and candidate.direction not in self._allowed_directions:
+            return PlaceResult(
+                ok=False,
+                reason=f"direction {candidate.direction} not in allowed_directions {self._allowed_directions}",
+            )
 
         now = datetime.now(UTC).isoformat(timespec="seconds")
         live_order_id = make_live_order_id()
