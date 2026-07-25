@@ -8,10 +8,13 @@ from decimal import Decimal
 STRATEGY_ID = "xau_sma120"
 SYMBOL      = "XAUUSDT"
 
-SL_DISTANCE      = Decimal("8")     # fixed SL in price points — NEVER CHANGE
-TP_DISTANCE      = Decimal("16")    # fixed TP in price points — NEVER CHANGE (1:2 RR)
-ATR_MIN          = Decimal("4.00")  # ATR filter lower bound   — NEVER CHANGE
-ATR_MAX          = Decimal("6.67")  # ATR filter upper bound   — NEVER CHANGE
+SL_DISTANCE      = Decimal("8")     # fixed SL in price points (~0.2% of $4000 gold)
+TP_DISTANCE      = Decimal("16")    # fixed TP in price points — 1:2 RR
+# ATR gate calibrated on XAUUSDT M5 at ~$4000 gold (Jul 2026):
+# observed ATR distribution: p25=0.24  p50=0.33  p75=0.39  p90=0.52
+# Lower bound filters dead/gap candles; upper bound filters extreme spikes
+ATR_MIN          = Decimal("0.10")  # ATR filter lower bound
+ATR_MAX          = Decimal("2.00")  # ATR filter upper bound
 MAX_EXTENSION_ATR = 3               # max extension from SMA120 in ATR multiples
 MAX_DAILY_TRADES = 3                # max new paper orders per UTC calendar day
 
