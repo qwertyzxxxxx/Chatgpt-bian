@@ -64,8 +64,8 @@ class RuntimeSettings:
 # 2026-07 rollout: V66 → live both directions, V663 → live SHORT only.
 LIVE_DEFAULTS: dict[str, dict[str, object]] = {
     V3_STRATEGY_ID:   {"live_enabled": False, "notional_usdt": "1000"},
-    V66_STRATEGY_ID:  {"live_enabled": True,  "notional_usdt": "2000"},
-    V663_STRATEGY_ID: {"live_enabled": True,  "notional_usdt": "2000"},
+    V66_STRATEGY_ID:  {"live_enabled": True,  "notional_usdt": "3000"},
+    V663_STRATEGY_ID: {"live_enabled": True,  "notional_usdt": "3000"},
 }
 
 
