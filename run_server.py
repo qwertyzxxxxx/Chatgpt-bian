@@ -171,8 +171,8 @@ if __name__ == "__main__":
 
                 _LIVE_ENGINE_CFG: dict[str, tuple[str, str, str]] = {
                     V3_STRATEGY_ID:   ("V3",   "ORDER_NOTIONAL_USDT",      "1000"),
-                    V66_STRATEGY_ID:  ("V66",  "V66_ORDER_NOTIONAL_USDT",  "3000"),
-                    V663_STRATEGY_ID: ("V663", "V663_ORDER_NOTIONAL_USDT", "3000"),
+                    V66_STRATEGY_ID:  ("V66",  "V66_ORDER_NOTIONAL_USDT",  "2000"),
+                    V663_STRATEGY_ID: ("V663", "V663_ORDER_NOTIONAL_USDT", "2000"),
                     # ← add new live strategies here (one line each)
                 }
                 # V663 实盘只做空——数据显示 SHORT profit_factor 2.12 vs LONG 1.56
