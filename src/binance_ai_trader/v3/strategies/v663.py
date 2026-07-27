@@ -45,7 +45,8 @@ CONDITIONS = {
     "max_stop_pct":     _MAX_STOP_PCT,
     "min_stop_pct":     Decimal("1.5"),
     "min_rr":           _MIN_RR,
-    "min_vol_ratio":    _MIN_VOL_RATIO,
+    "min_vol_ratio_long":  Decimal("1.2"),
+    "max_vol_ratio_short": Decimal("0.9"),
     "max_entry_dist":   None,
     "require_low_vol":  False,
     "trend_1h":         "triple_ema",
@@ -102,7 +103,8 @@ class HotlistStrategyV663(V3Strategy):
             max_stop_pct=_MAX_STOP_PCT,
             min_quote_volume=_MIN_VOLUME,
             min_move_pct=_MIN_MOVE_PCT,
-            min_volume_ratio=_MIN_VOL_RATIO,
+            # 量比：方向差異大，在 generate_candidates 裡按方向分別過濾
+            # LONG ≥1.2（放量追多）；SHORT <0.9（縮量才做空）
             require_triple_ema_1h=True,
             require_triple_ema_4h=True,
         )
@@ -118,6 +120,15 @@ class HotlistStrategyV663(V3Strategy):
 
         candidates: list[CandidateInput] = []
         for plan in plans:
+            # LONG：放量才入場（量比 ≥ 1.2，趨勢加速確認）
+            if plan.direction == "LONG" and plan.volume_ratio_15m < Decimal("1.2"):
+                log.debug("[V663] skip LONG %s vol_ratio=%.2f < 1.2", plan.symbol, plan.volume_ratio_15m)
+                continue
+            # SHORT：縮量才做空（量比 < 0.9，回調無力確認；回測顯示縮量空頭勝率 74-92%）
+            if plan.direction == "SHORT" and plan.volume_ratio_15m >= Decimal("0.9"):
+                log.debug("[V663] skip SHORT %s vol_ratio=%.2f >= 0.9", plan.symbol, plan.volume_ratio_15m)
+                continue
+
             entry    = plan.suggested_limit_entry
             stop_pct = abs(entry - plan.stop_loss) / entry * 100
 

@@ -43,7 +43,8 @@ CONDITIONS = {
     "max_stop_pct":     _MAX_STOP_PCT,
     "min_stop_pct":     Decimal("1.5"),
     "min_rr":           _MIN_RR,
-    "min_vol_ratio":    None,
+    "min_vol_ratio":    Decimal("1.2"),
+    "max_vol_ratio_short": Decimal("2.5"),
     "max_entry_dist":   None,
     "require_low_vol":  False,
     "trend_1h":         None,
@@ -91,6 +92,7 @@ class HotlistStrategyV66(V3Strategy):
             min_rr=_MIN_RR,
             max_stop_pct=_MAX_STOP_PCT,
             min_quote_volume=_MIN_VOLUME,
+            min_volume_ratio=Decimal("1.2"),   # 量比≥1.2：放量才入場
         )
         watcher = HotlistWatchlist(
             self._client, self._repo, self._universe_config, policy
@@ -104,6 +106,11 @@ class HotlistStrategyV66(V3Strategy):
 
         candidates: list[CandidateInput] = []
         for plan in plans:
+            # SHORT 爆量過濾：量比 > 2.5 不做空（回測顯示 3+ 爆量空頭勝率僅 38%）
+            if plan.direction == "SHORT" and plan.volume_ratio_15m > Decimal("2.5"):
+                log.debug("[V66] skip SHORT %s vol_ratio=%.2f > 2.5", plan.symbol, plan.volume_ratio_15m)
+                continue
+
             entry    = plan.suggested_limit_entry
             stop_pct = abs(entry - plan.stop_loss) / entry * 100
 

@@ -30,6 +30,7 @@ class HotlistWatchlistPolicy:
     min_quote_volume: Decimal = Decimal("5000000")
     min_move_pct: Decimal = Decimal("0")
     min_volume_ratio: Decimal = Decimal("0")
+    max_volume_ratio: Decimal = Decimal("0")   # 0 = 不限制上限
     require_trend_aligned_1h: bool = False
     require_trend_aligned_4h: bool = False
     require_triple_ema_1h: bool = False
@@ -48,8 +49,8 @@ class HotlistWatchlistPolicy:
             raise ValueError("expiry_minutes cannot exceed max_ttl_minutes")
         if self.min_rr < 1 or self.max_stop_pct <= 0 or self.min_quote_volume < 0:
             raise ValueError("invalid opportunity thresholds")
-        if self.min_move_pct < 0 or self.min_volume_ratio < 0:
-            raise ValueError("min_move_pct and min_volume_ratio cannot be negative")
+        if self.min_move_pct < 0 or self.min_volume_ratio < 0 or self.max_volume_ratio < 0:
+            raise ValueError("min_move_pct and volume_ratio bounds cannot be negative")
 
 
 class HotlistWatchlist:
@@ -145,6 +146,9 @@ class HotlistWatchlist:
                 rej["stop_pct"] += 1
                 continue
             if self._policy.min_volume_ratio > 0 and plan.volume_ratio_15m < self._policy.min_volume_ratio:
+                rej["vol_ratio"] += 1
+                continue
+            if self._policy.max_volume_ratio > 0 and plan.volume_ratio_15m > self._policy.max_volume_ratio:
                 rej["vol_ratio"] += 1
                 continue
             if self._policy.require_trend_aligned_1h and not plan.trend_aligned:
