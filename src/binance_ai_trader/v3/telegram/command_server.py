@@ -693,28 +693,24 @@ def _cmd_portfolio(args: list[str], notifier, db_path: Path) -> str:
 
 
 def _cmd_conditions(args: list[str]) -> str:
-    """Read filter conditions from each strategy module's CONDITIONS dict (code constants)."""
+    """Read filter conditions + all-time performance stats for every strategy."""
     import importlib
     import os
     import subprocess
 
     # ── 策略別名表：alias → (module_path, display_label, style) ──────────────
-    # style "watchlist" = hotlist系列舊格式；style "extended" = 通用新格式
     ALIASES: dict[str, tuple[str, str, str]] = {
-        # hotlist watchlist 系列（舊格式）
-        "v66":       ("binance_ai_trader.v3.strategies.v66",  "V66",  "watchlist"),
-        "v662":      ("binance_ai_trader.v3.strategies.v662", "V662", "watchlist"),
-        "v663":      ("binance_ai_trader.v3.strategies.v663", "V663", "watchlist"),
-        "v664":      ("binance_ai_trader.v3.strategies.v664", "V664", "watchlist"),
-        # 擴展新格式
-        "v3":        ("binance_ai_trader.v3.strategies.hotlist",              "V3/momentum",  "extended"),
-        "wave_long": ("binance_ai_trader.v3.strategies.wave_long",            "wave_long",    "extended"),
-        "wave_short":("binance_ai_trader.v3.strategies.wave_short",           "wave_short",   "extended"),
-        "c1":        ("binance_ai_trader.classic.strategies.c1",              "classic_c1",   "extended"),
-        "c2":        ("binance_ai_trader.classic.strategies.c2",              "classic_c2",   "extended"),
-        "c3":        ("binance_ai_trader.classic.strategies.c3",              "classic_c3",   "extended"),
+        "v66":       ("binance_ai_trader.v3.strategies.v66",           "V66",         "watchlist"),
+        "v662":      ("binance_ai_trader.v3.strategies.v662",          "V662",        "watchlist"),
+        "v663":      ("binance_ai_trader.v3.strategies.v663",          "V663",        "watchlist"),
+        "v664":      ("binance_ai_trader.v3.strategies.v664",          "V664",        "watchlist"),
+        "v3":        ("binance_ai_trader.v3.strategies.hotlist",       "V3/momentum", "extended"),
+        "wave_long": ("binance_ai_trader.v3.strategies.wave_long",     "wave_long",   "extended"),
+        "wave_short":("binance_ai_trader.v3.strategies.wave_short",    "wave_short",  "extended"),
+        "c1":        ("binance_ai_trader.classic.strategies.c1",       "classic_c1",  "extended"),
+        "c2":        ("binance_ai_trader.classic.strategies.c2",       "classic_c2",  "extended"),
+        "c3":        ("binance_ai_trader.classic.strategies.c3",       "classic_c3",  "extended"),
     }
-    # 允許別名：momentum_v3、hotlist_v3、classic_c1 等前綴
     _NORMALIZE = {
         "momentum_v3": "v3", "hotlist_momentum_v3": "v3",
         "hotlist_v66": "v66", "hotlist_v662": "v662",
@@ -727,10 +723,10 @@ def _cmd_conditions(args: list[str]) -> str:
     key = _NORMALIZE.get(raw, raw)
     if key and key not in ALIASES:
         all_keys = " / ".join(ALIASES)
-        return f"❓ 未知策略 '{raw}'，可选:\n{all_keys}\n\n用法: /conditions v66  /conditions c1  /conditions wave_long"
+        return f"❓ 未知策略 '{raw}'，可選:\n{all_keys}\n\n用法: /conditions  （全部）  /conditions v66  /conditions c1"
     targets = {key: ALIASES[key]} if key else ALIASES
 
-    # ── Git 版本信息 ─────────────────────────────────────────────────────────
+    # ── Git 版本 ──────────────────────────────────────────────────────────────
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "--short=7", "HEAD"], capture_output=True, text=True,
@@ -741,14 +737,104 @@ def _cmd_conditions(args: list[str]) -> str:
     except Exception:
         commit, commit_date = "unknown", "unknown"
 
-    # ── 啟用狀態判斷 ─────────────────────────────────────────────────────────
+    # ── 讀取全部訂單（用於績效統計）─────────────────────────────────────────
+    _all_orders: list = []
+    try:
+        from binance_ai_trader.v3.paper.repository import V3PaperOrderRepository
+        _all_orders = V3PaperOrderRepository().load_all()
+    except Exception:
+        pass
+
+    def _compute_stats(strategy_id: str) -> dict:
+        orders = [o for o in _all_orders if o.strategy_id == strategy_id]
+        signals       = len(orders)
+        trades        = sum(1 for o in orders if o.filled_at is not None)
+        open_tracking = sum(1 for o in orders if o.status in ("OPEN", "FILLED"))
+        closed        = [o for o in orders if o.status == "CLOSED"]
+        tp_orders     = [o for o in closed if o.result in ("TP1", "TP2")]
+        tp1_orders    = [o for o in closed if o.result == "TP1"]
+        tp2_orders    = [o for o in closed if o.result == "TP2"]
+        sl_orders     = [o for o in closed if o.result == "SL"]
+        timeout_orders = [o for o in orders if o.result == "TIMEOUT"]
+        timeout_settled = [o for o in timeout_orders if o.pnl_pct is not None]
+        tp_count, sl_count = len(tp_orders), len(sl_orders)
+        tp_sl_resolved = tp_count + sl_count
+        tp_sl_rate = tp_count / tp_sl_resolved * 100 if tp_sl_resolved else None
+        pnl_closed = [o for o in closed if o.pnl_pct is not None]
+        wins_pnl   = [float(o.pnl_pct) for o in pnl_closed if o.pnl_pct > 0]
+        loss_pnl   = [float(o.pnl_pct) for o in pnl_closed if o.pnl_pct < 0]
+        total_net  = sum(float(o.pnl_pct) for o in pnl_closed)
+        net_wr     = len(wins_pnl) / len(pnl_closed) * 100 if pnl_closed else None
+        avg_win    = sum(wins_pnl) / len(wins_pnl)   if wins_pnl else None
+        avg_loss   = sum(loss_pnl) / len(loss_pnl)   if loss_pnl else None
+        profit_factor = (sum(wins_pnl) / abs(sum(loss_pnl))
+                         if wins_pnl and loss_pnl else None)
+        max_loss   = min(loss_pnl) if loss_pnl else None
+        # per-direction breakdown
+        def _dir_stats(direction: str):
+            dc = [o for o in closed if getattr(o, "direction", None) == direction]
+            dp = [o for o in dc if o.pnl_pct is not None]
+            dw = [float(o.pnl_pct) for o in dp if o.pnl_pct > 0]
+            return len(dc), (len(dw)/len(dp)*100 if dp else None), (sum(float(o.pnl_pct) for o in dp) if dp else None)
+        long_n, long_wr, long_pnl   = _dir_stats("LONG")
+        short_n, short_wr, short_pnl = _dir_stats("SHORT")
+        return dict(
+            signals=signals, trades=trades, open_tracking=open_tracking,
+            closed=len(closed),
+            tp=tp_count, tp1=len(tp1_orders), tp2=len(tp2_orders),
+            sl=sl_count, tp_sl_resolved=tp_sl_resolved,
+            timeout=len(timeout_orders), timeout_settled=len(timeout_settled),
+            tp_sl_rate=tp_sl_rate, net_wr=net_wr,
+            total_net=total_net,
+            avg_win=avg_win, avg_loss=avg_loss,
+            profit_factor=profit_factor, max_loss=max_loss,
+            long_n=long_n, long_wr=long_wr, long_pnl=long_pnl,
+            short_n=short_n, short_wr=short_wr, short_pnl=short_pnl,
+        )
+
+    def _pct(v, sign=True, dec=1):
+        if v is None: return "—"
+        return f"{v:+.{dec}f}%" if sign else f"{v:.{dec}f}%"
+
+    def _append_stats(lines: list, strategy_id: str) -> None:
+        """Append performance stats block for a strategy."""
+        s = _compute_stats(strategy_id)
+        lines.append(f"  ── 📊 績效統計（全時段） ──────────────────────")
+        if s["signals"] == 0:
+            lines.append(f"  暫無訂單記錄")
+            return
+        lines.append(
+            f"  訂單:  信號{s['signals']}  成交{s['trades']}  持倉中{s['open_tracking']}  已結算{s['closed']}"
+        )
+        lines.append(
+            f"  結果:  TP1={s['tp1']} TP2={s['tp2']} SL={s['sl']}"
+            + (f" TIMEOUT={s['timeout']}(已市价={s['timeout_settled']})" if s["timeout"] else "")
+        )
+        # hit rate bar
+        if s["tp_sl_rate"] is not None:
+            filled = int(s["tp_sl_rate"] // 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            lines.append(f"  TP/(TP+SL): {bar} {s['tp_sl_rate']:.1f}%  （共{s['tp_sl_resolved']}筆已判定）")
+        else:
+            lines.append(f"  TP/(TP+SL): — （無已判定訂單）")
+        lines.append(f"  淨勝率:    {_pct(s['net_wr'], sign=False)}  （含TIMEOUT已結算）")
+        lines.append(f"  累計收益:  {_pct(s['total_net'])}  avg_win={_pct(s['avg_win'])}  avg_loss={_pct(s['avg_loss'])}")
+        pf_str = f"{s['profit_factor']:.2f}" if s['profit_factor'] else "—"
+        lines.append(f"  盈虧比:    {pf_str}  最大單筆虧損: {_pct(s['max_loss'])}")
+        # per-direction
+        if s["long_n"] > 0 or s["short_n"] > 0:
+            l_str = f"LONG  {s['long_n']}筆  勝率{_pct(s['long_wr'],False)}  淨{_pct(s['long_pnl'])}" if s["long_n"] else ""
+            s_str = f"SHORT {s['short_n']}筆  勝率{_pct(s['short_wr'],False)}  淨{_pct(s['short_pnl'])}" if s["short_n"] else ""
+            for ds in filter(None, [l_str, s_str]):
+                lines.append(f"    {ds}")
+
+    # ── 啟用狀態 ──────────────────────────────────────────────────────────────
     _ENV_STATUS: dict[str, str] = {
         "always_on（v3 主策略，默認啟動）": "✅ 啟用（默認）",
         "ENABLE_WAVE_LONG=true":  "✅ 啟用" if os.environ.get("ENABLE_WAVE_LONG","").lower()=="true" else "⏸ 停用（ENABLE_WAVE_LONG 未設）",
         "ENABLE_WAVE_SHORT=true": "✅ 啟用" if os.environ.get("ENABLE_WAVE_SHORT","").lower()=="true" else "⏸ 停用（ENABLE_WAVE_SHORT 未設）",
         "ENABLE_CLASSIC=true":    "✅ 啟用" if os.environ.get("ENABLE_CLASSIC","").lower()=="true" else "⏸ 停用（ENABLE_CLASSIC 未設）",
     }
-
     _TREND_DESC = {
         None:            "未使用",
         "trend_aligned": "價格在EMA20/50正確一側",
@@ -756,9 +842,10 @@ def _cmd_conditions(args: list[str]) -> str:
     }
 
     lines = [
-        "📋 策略過濾條件（讀取自策略模組 CONDITIONS 常量）",
+        "📋 策略條件 + 績效（讀取自策略模組 CONDITIONS 常量 + PaperOrder DB）",
         "━━━━━━━━━━━━━━",
         f"代碼版本: {commit}  {commit_date}",
+        f"訂單庫合計: {len(_all_orders)} 筆",
     ]
 
     for alias, (mod_path, label, style) in targets.items():
@@ -769,66 +856,62 @@ def _cmd_conditions(args: list[str]) -> str:
             lines.append(f"\n[{label}] ❌ 加載失敗: {exc}")
             continue
 
-        lines.append(f"\n{'━'*20}")
-        lines.append(f"【{label}】  strategy_id={c['strategy_id']}  version={c['strategy_version']}")
+        sid = c["strategy_id"]
+        lines.append(f"\n{'━'*22}")
+        lines.append(f"【{label}】  strategy_id={sid}  version={c['strategy_version']}")
 
         if style == "watchlist":
-            # ── 舊格式渲染（v66/v662/v663/v664 watchlist 系列）────────────────
             mm = c["min_move_pct"]
             lines.append(f"  方向:           {c['direction']}")
             lines.append(f"  使用周期:       15m（入場）/ 1h（趨勢）" + ("/ 4h（趨勢）" if c["trend_4h"] else ""))
             lines.append(f"  候選池:         Top{c['gainers']}漲+Top{c['losers']}跌  每輪最多{c['max_opp']}個信號")
             lines.append(f"  成交額門檻:     ≥{float(c['min_quote_volume']):,.0f} USDT")
-            lines.append(f"  漲跌幅門檻:     {'|24h|≥' + str(mm) + '%' if mm and mm > 0 else '無（≥0%）'}")
+            lines.append(f"  漲跌幅門檻:     {'|24h|≥'+str(mm)+'%' if mm and mm>0 else '無（≥0%）'}")
             lines.append(f"  D1條件:         未使用")
             lines.append(f"  H4條件:         {_TREND_DESC.get(c['trend_4h'], str(c['trend_4h']))}")
             lines.append(f"  H1條件:         {_TREND_DESC.get(c['trend_1h'], str(c['trend_1h']))}")
             lines.append(f"  M15條件:        EMA20 回踩入場")
-            # 量能
             vr = c.get("min_vol_ratio")
-            mvr = c.get("max_vol_ratio_short")
-            if vr and mvr:
-                vol_str = f"LONG量比≥{vr}x；SHORT量比≥{vr}x且≤{mvr}x（超量不做空）"
+            if c.get("min_vol_ratio_long") or c.get("max_vol_ratio_short"):
+                long_th = c.get("min_vol_ratio_long") or c.get("min_vol_ratio") or "—"
+                short_cap = c.get("max_vol_ratio_short")
+                if c.get("min_vol_ratio_long"):
+                    # v663 style: LONG放量, SHORT縮量
+                    vol_str = f"LONG量比≥{long_th}x；SHORT量比<{short_cap}x（縮量做空）"
+                else:
+                    # v66 style: 統一下限 + SHORT上限
+                    vol_str = f"量比≥{long_th}x；SHORT額外限制≤{short_cap}x（超量不做空）"
             elif vr:
                 vol_str = f"量比≥{vr}x（放量確認）"
             elif c.get("require_low_vol"):
                 vol_str = "量比<1.0（縮量確認）"
             else:
                 vol_str = "無要求"
-            # v663 per-direction special
-            if c.get("min_vol_ratio_long") or c.get("max_vol_ratio_short"):
-                vol_str = f"LONG量比≥{c.get('min_vol_ratio_long','—')}x；SHORT量比<{c.get('max_vol_ratio_short','—')}x（縮量做空）"
-            lines.append(f"  EMA條件:        15m EMA20（入場基準）；1h/4h EMA（趨勢判斷）")
-            lines.append(f"  RSI條件:        未使用")
-            lines.append(f"  ATR條件:        ATR14 → 入場price buffer(×0.25) + 止損下限")
             lines.append(f"  量能條件:       {vol_str}")
+            lines.append(f"  EMA條件:        15m EMA20（入場基準）；1h/4h EMA（趨勢判斷）")
+            lines.append(f"  ATR條件:        ATR14 → 入場price buffer(×0.25) + 止損下限")
             lines.append(f"  結構條件:       Swing High/Low（前20根）→ 止損基準")
             ed = c.get("max_entry_dist")
             lines.append(f"  入場觸發:       {'EMA20±'+str(ed)+'% 已到位直接觸發' if ed else 'EMA20±0.25ATR 限價掛單等待回踩'}")
-            lines.append(f"  止損計算:       LONG: min(swing_low_20, entry−ATR14)  SHORT: max(swing_high_20, entry+ATR14)")
+            lines.append(f"  止損計算:       LONG: min(swing_low_20,entry−ATR14)  SHORT: max(swing_high_20,entry+ATR14)")
             lines.append(f"  止盈計算:       TP1: entry±risk×1  TP2: entry±risk×2")
             lines.append(f"  RR:             ≥{c['min_rr']}")
             lines.append(f"  止損上限:       ≤{c['max_stop_pct']}%（{'止損下限≥'+str(c['min_stop_pct'])+'%' if c.get('min_stop_pct') else '無下限'}）")
-            lines.append(f"  TIMEOUT:        {c['expiry_min']}min（訂單有效期）")
-            lines.append(f"  TTL監控:        {c['max_ttl_min']}min  刷新間隔:{c['refresh_min']}min")
-            lines.append(f"  冷卻時間:       dedup_hours（V3 Pipeline，/setlimit 可調）")
-            lines.append(f"  同幣去重:       同幣同方向在 dedup_hours 內不重複")
-            lines.append(f"  每輪最大信號:   {c['max_opp']} 個/次")
-            # enabled status for watchlist strategies
+            lines.append(f"  TIMEOUT:        {c['expiry_min']}min  TTL監控:{c['max_ttl_min']}min  刷新:{c['refresh_min']}min")
+            lines.append(f"  冷卻/去重:      dedup_hours 同幣同方向（/setlimit 可調）  每輪≤{c['max_opp']}個")
             v66_live = os.environ.get("LIVE_TRADING_ENABLED","").lower()=="true"
             lines.append(f"  當前啟用:       ✅ 紙盤運行中" + ("  ✅ 實盤鏡像啟用" if v66_live else "  ⏸ 實盤未啟用"))
 
         else:
-            # ── 擴展新格式渲染（通用所有字段）────────────────────────────────
-            def _f(key: str) -> str:
-                v = c.get(key, "未使用")
+            def _f(k: str, _c: dict = c) -> str:  # noqa: E731
+                v = _c.get(k, "未使用")
                 return str(v) if v is not None else "未使用"
 
             lines.append(f"  方向:           {_f('direction')}")
             lines.append(f"  使用周期:       {_f('timeframes')}")
             lines.append(f"  候選池條件:     {_f('pool')}")
             vol_raw = c.get("min_quote_volume")
-            lines.append(f"  成交額門檻:     {('≥'+f'{float(vol_raw):,.0f} USDT') if isinstance(vol_raw, (int,float)) or hasattr(vol_raw,'__float__') else _f('min_quote_volume')}")
+            lines.append(f"  成交額門檻:     {('≥'+f'{float(vol_raw):,.0f} USDT') if isinstance(vol_raw,(int,float)) or hasattr(vol_raw,'__float__') else _f('min_quote_volume')}")
             lines.append(f"  漲跌幅門檻:     {_f('min_move_pct')}")
             lines.append(f"  D1條件:         {_f('d1')}")
             lines.append(f"  H4條件:         {_f('h4')}")
@@ -861,8 +944,11 @@ def _cmd_conditions(args: list[str]) -> str:
             env_key = _f("enabled_env")
             lines.append(f"  當前啟用:       {_ENV_STATUS.get(env_key, '⏸ 停用（'+env_key+'）')}")
 
+        # ── 績效統計（每個策略都附上）────────────────────────────────────────
+        _append_stats(lines, sid)
+
     lines.append("")
-    lines.append("用法: /conditions v66  /conditions v3  /conditions wave_long  /conditions c1")
+    lines.append("用法: /conditions  （全部策略）  /conditions v66  /conditions c1  /conditions wave_long")
     return "\n".join(lines)
 
 
