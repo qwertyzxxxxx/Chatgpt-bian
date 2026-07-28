@@ -36,7 +36,40 @@ _DEFAULT_POOL_SIZE       = 15
 # Mirrors LiveMirrorEngine._LIVE_MAX_STOP_PCT — used only to *rank* candidates
 # (live-eligible ones first); the live engine independently re-enforces this
 # limit before placing a real order.
-_LIVE_MAX_STOP_PCT = Decimal("8")
+_LIVE_MAX_STOP_PCT           = Decimal("8")
+_LIVE_MAX_STOP_PCT_SHORT     = Decimal("6")
+
+# 策略篩選條件常量索引（/conditions 命令從此讀取，勿手寫說明文字）
+CONDITIONS = {
+    "strategy_id":            _STRATEGY_ID,
+    "strategy_version":       "v3",
+    "direction":              "LONG+SHORT",
+    "timeframes":             "1H / 15m（1D/4H 未使用）",
+    "pool":                   f"|24h漲跌| ≥ {_DEFAULT_MIN_MOVE_PCT}% 且成交額 ≥ {int(_DEFAULT_MIN_VOL_USDT/1_000_000)}M USDT；取前 {_DEFAULT_POOL_SIZE} 名候選",
+    "min_quote_volume":       _DEFAULT_MIN_VOL_USDT,
+    "min_move_pct":           _DEFAULT_MIN_MOVE_PCT,
+    "d1":                     "未使用",
+    "h4":                     "未使用",
+    "h1":                     "EMA20 趨勢對齊 → 僅排序加分，非強制過濾",
+    "m15":                    "EMA20 回踩入場；Swing High/Low（前20根）止損",
+    "ema":                    "15m EMA20（入場基準）；1h EMA20（趨勢排序參考）",
+    "rsi":                    "未使用",
+    "atr":                    "ATR14×0.25 → 入場價微調 buffer；ATR14 → 止損補充下限",
+    "volume":                 "無量比強制過濾（v3 原始版本）",
+    "structure":              "未使用",
+    "entry_trigger":          "LONG: min(EMA20_15m, cur − 0.25×ATR14)  SHORT: max(EMA20_15m, cur + 0.25×ATR14)",
+    "sl_calc":                "LONG: min(swing_low_20, entry − ATR14)  SHORT: max(swing_high_20, entry + ATR14)",
+    "tp_calc":                "TP1: entry ± risk×1  TP2: entry ± risk×2",
+    "rr":                     _DEFAULT_MIN_RR,
+    "timeout_hours":          _DEFAULT_HOLD_HOURS,
+    "cooldown_hours":         24,
+    "dedup":                  "24h 同幣同方向去重（V3 Pipeline）",
+    "max_signals":            _DEFAULT_MAX_SIGNALS,
+    "enabled_env":            "always_on（v3 主策略，默認啟動）",
+    "max_stop_pct":           _DEFAULT_MAX_STOP_PCT,
+    "live_max_stop_pct":      _LIVE_MAX_STOP_PCT,
+    "live_short_max_stop_pct": _LIVE_MAX_STOP_PCT_SHORT,
+}
 
 
 class HotlistStrategyV3(V3Strategy):

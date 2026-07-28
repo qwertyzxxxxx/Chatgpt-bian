@@ -101,7 +101,7 @@ def _cmd_help() -> str:
         "/orders  📂 当前模拟单 + 最近成交\n"
         "/perf    🏆 模拟盘绩效统计\n"
         "/winrates 📊 V66/V663/V664 策略胜率横向对比\n"
-        "/conditions [v66|v663|v664] 📋 策略过滤条件详情\n"
+        "/conditions [v66|v663|v3|wave_long|wave_short|c1|c2|c3] 📋 策略過濾條件詳情\n"
         "/data    🔌 生产只读数据API接口说明\n"
         "/portfolio [v3|v66|rev] 📊 完整持仓报告（默认v3）\n"
         "/v66     📡 V66 监控池状态\n"
@@ -694,104 +694,175 @@ def _cmd_portfolio(args: list[str], notifier, db_path: Path) -> str:
 
 def _cmd_conditions(args: list[str]) -> str:
     """Read filter conditions from each strategy module's CONDITIONS dict (code constants)."""
+    import importlib
+    import os
     import subprocess
 
-    ALIASES = {
-        "v66":  ("binance_ai_trader.v3.strategies.v66",  "V66"),
-        "v662": ("binance_ai_trader.v3.strategies.v662", "V662"),
-        "v663": ("binance_ai_trader.v3.strategies.v663", "V663"),
-        "v664": ("binance_ai_trader.v3.strategies.v664", "V664"),
+    # ── 策略別名表：alias → (module_path, display_label, style) ──────────────
+    # style "watchlist" = hotlist系列舊格式；style "extended" = 通用新格式
+    ALIASES: dict[str, tuple[str, str, str]] = {
+        # hotlist watchlist 系列（舊格式）
+        "v66":       ("binance_ai_trader.v3.strategies.v66",  "V66",  "watchlist"),
+        "v662":      ("binance_ai_trader.v3.strategies.v662", "V662", "watchlist"),
+        "v663":      ("binance_ai_trader.v3.strategies.v663", "V663", "watchlist"),
+        "v664":      ("binance_ai_trader.v3.strategies.v664", "V664", "watchlist"),
+        # 擴展新格式
+        "v3":        ("binance_ai_trader.v3.strategies.hotlist",              "V3/momentum",  "extended"),
+        "wave_long": ("binance_ai_trader.v3.strategies.wave_long",            "wave_long",    "extended"),
+        "wave_short":("binance_ai_trader.v3.strategies.wave_short",           "wave_short",   "extended"),
+        "c1":        ("binance_ai_trader.classic.strategies.c1",              "classic_c1",   "extended"),
+        "c2":        ("binance_ai_trader.classic.strategies.c2",              "classic_c2",   "extended"),
+        "c3":        ("binance_ai_trader.classic.strategies.c3",              "classic_c3",   "extended"),
+    }
+    # 允許別名：momentum_v3、hotlist_v3、classic_c1 等前綴
+    _NORMALIZE = {
+        "momentum_v3": "v3", "hotlist_momentum_v3": "v3",
+        "hotlist_v66": "v66", "hotlist_v662": "v662",
+        "hotlist_v663": "v663", "hotlist_v664": "v664",
+        "classic_c1": "c1", "classic_c2": "c2", "classic_c3": "c3",
+        "wavelong": "wave_long", "waveshort": "wave_short",
     }
 
-    key = (args[0].lower() if args else "").replace("hotlist_", "")
+    raw = (args[0].lower() if args else "").strip()
+    key = _NORMALIZE.get(raw, raw)
     if key and key not in ALIASES:
-        return f"❓ 未知策略 '{key}'，可选: {' / '.join(ALIASES)}\n用法: /conditions v663"
+        all_keys = " / ".join(ALIASES)
+        return f"❓ 未知策略 '{raw}'，可选:\n{all_keys}\n\n用法: /conditions v66  /conditions c1  /conditions wave_long"
     targets = {key: ALIASES[key]} if key else ALIASES
 
+    # ── Git 版本信息 ─────────────────────────────────────────────────────────
     try:
         commit = subprocess.run(
-            ["git", "rev-parse", "--short=7", "HEAD"],
-            capture_output=True, text=True,
+            ["git", "rev-parse", "--short=7", "HEAD"], capture_output=True, text=True,
         ).stdout.strip() or "unknown"
         commit_date = subprocess.run(
-            ["git", "log", "-1", "--format=%ci"],
-            capture_output=True, text=True,
+            ["git", "log", "-1", "--format=%ci"], capture_output=True, text=True,
         ).stdout.strip()[:16] or "unknown"
     except Exception:
         commit, commit_date = "unknown", "unknown"
 
+    # ── 啟用狀態判斷 ─────────────────────────────────────────────────────────
+    _ENV_STATUS: dict[str, str] = {
+        "always_on（v3 主策略，默認啟動）": "✅ 啟用（默認）",
+        "ENABLE_WAVE_LONG=true":  "✅ 啟用" if os.environ.get("ENABLE_WAVE_LONG","").lower()=="true" else "⏸ 停用（ENABLE_WAVE_LONG 未設）",
+        "ENABLE_WAVE_SHORT=true": "✅ 啟用" if os.environ.get("ENABLE_WAVE_SHORT","").lower()=="true" else "⏸ 停用（ENABLE_WAVE_SHORT 未設）",
+        "ENABLE_CLASSIC=true":    "✅ 啟用" if os.environ.get("ENABLE_CLASSIC","").lower()=="true" else "⏸ 停用（ENABLE_CLASSIC 未設）",
+    }
+
     _TREND_DESC = {
-        None:            "❌ 无过滤（V1宽松风格）",
-        "trend_aligned": "✅ 价格在EMA20/50正确一侧（trend_aligned）",
-        "triple_ema":    "✅ EMA10>EMA20>EMA50 三线排列（triple_ema）",
+        None:            "未使用",
+        "trend_aligned": "價格在EMA20/50正確一側",
+        "triple_ema":    "EMA10>EMA20>EMA50 三線排列",
     }
 
     lines = [
-        "📋 策略过滤条件（读取自策略模块 CONDITIONS 常量）",
+        "📋 策略過濾條件（讀取自策略模組 CONDITIONS 常量）",
         "━━━━━━━━━━━━━━",
-        f"代码版本: {commit}  {commit_date}",
+        f"代碼版本: {commit}  {commit_date}",
     ]
 
-    for alias, (mod_path, label) in targets.items():
+    for alias, (mod_path, label, style) in targets.items():
         try:
-            import importlib
             mod = importlib.import_module(mod_path)
-            c = mod.CONDITIONS
+            c   = mod.CONDITIONS
         except Exception as exc:
-            lines.append(f"\n[{label}] ❌ 加载失败: {exc}")
+            lines.append(f"\n[{label}] ❌ 加載失敗: {exc}")
             continue
 
-        ver  = c["strategy_version"]
-        lines.append(f"\n【{label}】strategy_id={c['strategy_id']}  version={ver}")
-        lines.append(f"  代码版本: {commit}  {commit_date}")
-        lines.append(f"  min_quote_volume: ≥{float(c['min_quote_volume']):,.0f} USDT")
+        lines.append(f"\n{'━'*20}")
+        lines.append(f"【{label}】  strategy_id={c['strategy_id']}  version={c['strategy_version']}")
 
-        mm = c["min_move_pct"]
-        lines.append(f"  min_move_pct:     |24h|≥{mm}%" if mm > 0 else "  min_move_pct:     无（≥0%）")
-        lines.append(f"  max_stop_pct:     ≤{c['max_stop_pct']}%")
+        if style == "watchlist":
+            # ── 舊格式渲染（v66/v662/v663/v664 watchlist 系列）────────────────
+            mm = c["min_move_pct"]
+            lines.append(f"  方向:           {c['direction']}")
+            lines.append(f"  使用周期:       15m（入場）/ 1h（趨勢）" + ("/ 4h（趨勢）" if c["trend_4h"] else ""))
+            lines.append(f"  候選池:         Top{c['gainers']}漲+Top{c['losers']}跌  每輪最多{c['max_opp']}個信號")
+            lines.append(f"  成交額門檻:     ≥{float(c['min_quote_volume']):,.0f} USDT")
+            lines.append(f"  漲跌幅門檻:     {'|24h|≥' + str(mm) + '%' if mm and mm > 0 else '無（≥0%）'}")
+            lines.append(f"  D1條件:         未使用")
+            lines.append(f"  H4條件:         {_TREND_DESC.get(c['trend_4h'], str(c['trend_4h']))}")
+            lines.append(f"  H1條件:         {_TREND_DESC.get(c['trend_1h'], str(c['trend_1h']))}")
+            lines.append(f"  M15條件:        EMA20 回踩入場")
+            # 量能
+            vr = c.get("min_vol_ratio")
+            mvr = c.get("max_vol_ratio_short")
+            if vr and mvr:
+                vol_str = f"LONG量比≥{vr}x；SHORT量比≥{vr}x且≤{mvr}x（超量不做空）"
+            elif vr:
+                vol_str = f"量比≥{vr}x（放量確認）"
+            elif c.get("require_low_vol"):
+                vol_str = "量比<1.0（縮量確認）"
+            else:
+                vol_str = "無要求"
+            # v663 per-direction special
+            if c.get("min_vol_ratio_long") or c.get("max_vol_ratio_short"):
+                vol_str = f"LONG量比≥{c.get('min_vol_ratio_long','—')}x；SHORT量比<{c.get('max_vol_ratio_short','—')}x（縮量做空）"
+            lines.append(f"  EMA條件:        15m EMA20（入場基準）；1h/4h EMA（趨勢判斷）")
+            lines.append(f"  RSI條件:        未使用")
+            lines.append(f"  ATR條件:        ATR14 → 入場price buffer(×0.25) + 止損下限")
+            lines.append(f"  量能條件:       {vol_str}")
+            lines.append(f"  結構條件:       Swing High/Low（前20根）→ 止損基準")
+            ed = c.get("max_entry_dist")
+            lines.append(f"  入場觸發:       {'EMA20±'+str(ed)+'% 已到位直接觸發' if ed else 'EMA20±0.25ATR 限價掛單等待回踩'}")
+            lines.append(f"  止損計算:       LONG: min(swing_low_20, entry−ATR14)  SHORT: max(swing_high_20, entry+ATR14)")
+            lines.append(f"  止盈計算:       TP1: entry±risk×1  TP2: entry±risk×2")
+            lines.append(f"  RR:             ≥{c['min_rr']}")
+            lines.append(f"  止損上限:       ≤{c['max_stop_pct']}%（{'止損下限≥'+str(c['min_stop_pct'])+'%' if c.get('min_stop_pct') else '無下限'}）")
+            lines.append(f"  TIMEOUT:        {c['expiry_min']}min（訂單有效期）")
+            lines.append(f"  TTL監控:        {c['max_ttl_min']}min  刷新間隔:{c['refresh_min']}min")
+            lines.append(f"  冷卻時間:       dedup_hours（V3 Pipeline，/setlimit 可調）")
+            lines.append(f"  同幣去重:       同幣同方向在 dedup_hours 內不重複")
+            lines.append(f"  每輪最大信號:   {c['max_opp']} 個/次")
+            # enabled status for watchlist strategies
+            v66_live = os.environ.get("LIVE_TRADING_ENABLED","").lower()=="true"
+            lines.append(f"  當前啟用:       ✅ 紙盤運行中" + ("  ✅ 實盤鏡像啟用" if v66_live else "  ⏸ 實盤未啟用"))
 
-        ms = c["min_stop_pct"]
-        lines.append(
-            f"  min_stop_pct:     ≥{ms}%（RiskEngine）" if ms
-            else "  min_stop_pct:     未设置（RiskEngine无过滤）"
-        )
-        lines.append(f"  min_rr:           ≥{c['min_rr']}")
-
-        vr = c["min_vol_ratio"]
-        if vr:
-            lines.append(f"  vol_ratio:        量比≥{vr}x（放量确认）")
-        elif c["require_low_vol"]:
-            lines.append(f"  vol_ratio:        量比<1.0（量缩确认）")
         else:
-            lines.append(f"  vol_ratio:        无要求")
+            # ── 擴展新格式渲染（通用所有字段）────────────────────────────────
+            def _f(key: str) -> str:
+                v = c.get(key, "未使用")
+                return str(v) if v is not None else "未使用"
 
-        ed = c["max_entry_dist"]
-        lines.append(
-            f"  entry_dist:       EMA20±{ed}%以内（精准回踩到位）" if ed
-            else "  entry_dist:       无限制（EMA20±0.25ATR限价挂单）"
-        )
-        lines.append(f"  trend_1h:         {_TREND_DESC.get(c['trend_1h'], c['trend_1h'])}")
-        lines.append(f"  trend_4h:         {_TREND_DESC.get(c['trend_4h'], c['trend_4h'])}")
-
-        d = c["direction"]
-        lines.append(f"  direction:        {'🔴 仅LONG（SHORT胜率45.5%已禁用，见v664.py:104）' if d == 'LONG' else d}")
-        lines.append(
-            f"  watchlist:        Top{c['gainers']}涨+Top{c['losers']}跌  "
-            f"TTL={c['max_ttl_min']}min  refresh={c['refresh_min']}min  "
-            f"expire={c['expiry_min']}min  max_signals={c['max_opp']}/次"
-        )
+            lines.append(f"  方向:           {_f('direction')}")
+            lines.append(f"  使用周期:       {_f('timeframes')}")
+            lines.append(f"  候選池條件:     {_f('pool')}")
+            vol_raw = c.get("min_quote_volume")
+            lines.append(f"  成交額門檻:     {('≥'+f'{float(vol_raw):,.0f} USDT') if isinstance(vol_raw, (int,float)) or hasattr(vol_raw,'__float__') else _f('min_quote_volume')}")
+            lines.append(f"  漲跌幅門檻:     {_f('min_move_pct')}")
+            lines.append(f"  D1條件:         {_f('d1')}")
+            lines.append(f"  H4條件:         {_f('h4')}")
+            lines.append(f"  H1條件:         {_f('h1')}")
+            lines.append(f"  M15條件:        {_f('m15')}")
+            lines.append(f"  EMA條件:        {_f('ema')}")
+            lines.append(f"  RSI條件:        {_f('rsi')}")
+            lines.append(f"  ATR條件:        {_f('atr')}")
+            lines.append(f"  量能條件:       {_f('volume')}")
+            lines.append(f"  結構條件:       {_f('structure')}")
+            lines.append(f"  入場觸發:       {_f('entry_trigger')}")
+            lines.append(f"  止損計算:       {_f('sl_calc')}")
+            lines.append(f"  止盈計算:       {_f('tp_calc')}")
+            lines.append(f"  RR:             {_f('rr')}")
+            th = c.get("timeout_hours")
+            lines.append(f"  TIMEOUT:        {str(th)+'h ('+str(int(th)*60)+'min)' if isinstance(th,(int,float)) else _f('timeout_hours')}")
+            wh = c.get("watch_hours")
+            if wh:
+                lines.append(f"  觀察窗口:       {wh}h（突破後等待回踩）")
+            ch = c.get("cooldown_hours")
+            lines.append(f"  冷卻時間:       {str(ch)+'h' if isinstance(ch,(int,float)) else _f('cooldown_hours')}")
+            lines.append(f"  同幣去重:       {_f('dedup')}")
+            lines.append(f"  每輪最大信號:   {_f('max_signals')}")
+            if c.get("score_threshold"):
+                lines.append(f"  評分門檻:       {_f('score_threshold')}")
+            if c.get("max_stop_pct"):
+                lines.append(f"  止損上限:       ≤{_f('max_stop_pct')}%")
+            if c.get("live_max_stop_pct"):
+                lines.append(f"  實盤止損上限:   LONG≤{_f('live_max_stop_pct')}%  SHORT≤{_f('live_short_max_stop_pct')}%")
+            env_key = _f("enabled_env")
+            lines.append(f"  當前啟用:       {_ENV_STATUS.get(env_key, '⏸ 停用（'+env_key+'）')}")
 
     lines.append("")
-    lines.append("📊 统一评分 (SCORE_V1_UNIFIED):")
-    _ADAPTERS = {
-        "v66":  "v66_hotlist       (量能30+趋势25+位置20+RR15+匹配10)",
-        "v662": "v662_trend_aligned",
-        "v663": "v663_triple_ema",
-        "v664": "v664_pullback     (量能: 量缩=优质; M15量比<0.8最佳)",
-    }
-    for alias in (targets if key else ALIASES):
-        lines.append(f"  {alias}: {_ADAPTERS.get(alias, 'default')}")
-    lines.append("\n用法: /conditions v663  /conditions v664")
+    lines.append("用法: /conditions v66  /conditions v3  /conditions wave_long  /conditions c1")
     return "\n".join(lines)
 
 

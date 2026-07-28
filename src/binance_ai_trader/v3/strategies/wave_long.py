@@ -37,6 +37,39 @@ _RETEST_TOL    = Decimal("0.01")   # PlatformHigh ±1%
 _MAX_OVERSHOOT = Decimal("0.05")   # 收盘最多比PlatformHigh高5%
 _WATCH_HOURS   = 8
 _TOP_N         = 100
+_HOLD_HOURS    = 48
+_MIN_STOP_PCT  = Decimal("0.02")   # clamp_stop 下限
+_MAX_STOP_PCT  = Decimal("0.05")   # clamp_stop 上限，超出丟棄
+
+# 策略篩選條件常量索引（/conditions 命令從此讀取，勿手寫說明文字）
+CONDITIONS = {
+    "strategy_id":      _STRATEGY_ID,
+    "strategy_version": "wave_v1",
+    "direction":        "LONG",
+    "timeframes":       "1D / 4H / 1H / 15m",
+    "pool":             f"成交額前 {_TOP_N} USDT 永續合約（top_n_usdt_symbols 按成交額排序）",
+    "min_quote_volume": f"動態（Top{_TOP_N}成交額排序隱式過濾，無固定值）",
+    "min_move_pct":     "未使用",
+    "d1":               "EMA20 > EMA60（大方向多頭排列，1D K線）",
+    "h4":               f"EMA20 > EMA60 且 price > EMA60；4H最後一根漲幅 ≤ {int(_MAX_OVERSHOOT*100)}%（過熱淘汰）",
+    "h1":               f"放量突破平台高點 PlatformHigh（前{_PLATFORM_BARS}根最高價）；量比 ≥ {_1H_VOL_THRESH}；收盤 > PH 且超漲 ≤ {int(_MAX_OVERSHOOT*100)}%；收陽線",
+    "m15":              f"縮量回踩 PH ±{int(_RETEST_TOL*100)}%（low≤zone_hi 且 high≥zone_lo）→ 放量（量比≥{_15M_VOL_THRESH}）陽線收盤 > PH 且 > 前根高點",
+    "ema":              "1D EMA20/60；4H EMA20/60；1H / 15m 無 EMA 條件",
+    "rsi":              "未使用",
+    "atr":              "未使用",
+    "volume":           f"1H 量比 ≥ {_1H_VOL_THRESH}（突破確認）；15m 回踩時 volume < vol_MA20（縮量）；15m 入場量比 ≥ {_15M_VOL_THRESH}（放量觸發）",
+    "structure":        f"PlatformHigh = 最近{_PLATFORM_BARS}根 1H K線最高價；止損基於回踩段擺動低點",
+    "entry_trigger":    "15m 放量陽線收盤 > PlatformHigh 且 > 前根高點（cur.close 即入場價）",
+    "sl_calc":          f"swing_low(回踩段各K線) × 0.998；鉗制至 [{int(_MIN_STOP_PCT*100)}%, {int(_MAX_STOP_PCT*100)}%]，超出丟棄",
+    "tp_calc":          "TP1: entry + risk×1  TP2: entry + risk×2",
+    "rr":               Decimal("2"),
+    "timeout_hours":    _HOLD_HOURS,
+    "watch_hours":      _WATCH_HOURS,
+    "cooldown_hours":   "由 V3 Pipeline dedup_hours 控制",
+    "dedup":            "V3 Pipeline 同幣同方向去重",
+    "max_signals":      f"無硬性上限（每輪掃描 Top{_TOP_N} 全量）",
+    "enabled_env":      "ENABLE_WAVE_LONG=true",
+}
 
 
 class WaveLongStrategy(V3Strategy):

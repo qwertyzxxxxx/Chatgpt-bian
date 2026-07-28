@@ -37,6 +37,39 @@ _RETEST_TOL     = Decimal("0.01")   # PlatformLow ±1%
 _MAX_OVERSHOOT  = Decimal("0.05")   # 收盘最多比PlatformLow低5%
 _WATCH_HOURS    = 8
 _TOP_N          = 100
+_HOLD_HOURS     = 48
+_MIN_STOP_PCT   = Decimal("0.02")
+_MAX_STOP_PCT   = Decimal("0.05")
+
+# 策略篩選條件常量索引（/conditions 命令從此讀取，勿手寫說明文字）
+CONDITIONS = {
+    "strategy_id":      _STRATEGY_ID,
+    "strategy_version": "wave_v1",
+    "direction":        "SHORT",
+    "timeframes":       "1D / 4H / 1H / 15m",
+    "pool":             f"成交額前 {_TOP_N} USDT 永續合約（top_n_usdt_symbols 按成交額排序）",
+    "min_quote_volume": f"動態（Top{_TOP_N}成交額排序隱式過濾，無固定值）",
+    "min_move_pct":     "未使用",
+    "d1":               "EMA20 < EMA60（大方向空頭排列，1D K線）",
+    "h4":               f"EMA20 < EMA60 且 price < EMA60；4H最後一根跌幅 ≤ {int(_MAX_OVERSHOOT*100)}%（過空淘汰）",
+    "h1":               f"放量跌破平台低點 PlatformLow（前{_PLATFORM_BARS}根最低價）；量比 ≥ {_1H_VOL_THRESH}；收盤 < PL 且超跌 ≤ {int(_MAX_OVERSHOOT*100)}%；收陰線",
+    "m15":              f"縮量反彈 PL ±{int(_RETEST_TOL*100)}%（high≥zone_lo 且 low≤zone_hi）→ 放量（量比≥{_15M_VOL_THRESH}）陰線收盤 < PL 且 < 前根低點",
+    "ema":              "1D EMA20/60；4H EMA20/60；1H / 15m 無 EMA 條件",
+    "rsi":              "未使用",
+    "atr":              "未使用",
+    "volume":           f"1H 量比 ≥ {_1H_VOL_THRESH}（跌破確認）；15m 反彈時 volume < vol_MA20（縮量）；15m 入場量比 ≥ {_15M_VOL_THRESH}（放量觸發）",
+    "structure":        f"PlatformLow = 最近{_PLATFORM_BARS}根 1H K線最低價；止損基於反彈段擺動高點",
+    "entry_trigger":    "15m 放量陰線收盤 < PlatformLow 且 < 前根低點（cur.close 即入場價）",
+    "sl_calc":          f"swing_high(反彈段各K線) × 1.002；鉗制至 [{int(_MIN_STOP_PCT*100)}%, {int(_MAX_STOP_PCT*100)}%]，超出丟棄",
+    "tp_calc":          "TP1: entry − risk×1  TP2: entry − risk×2",
+    "rr":               Decimal("2"),
+    "timeout_hours":    _HOLD_HOURS,
+    "watch_hours":      _WATCH_HOURS,
+    "cooldown_hours":   "由 V3 Pipeline dedup_hours 控制",
+    "dedup":            "V3 Pipeline 同幣同方向去重",
+    "max_signals":      f"無硬性上限（每輪掃描 Top{_TOP_N} 全量）",
+    "enabled_env":      "ENABLE_WAVE_SHORT=true",
+}
 
 
 class WaveShortStrategy(V3Strategy):
