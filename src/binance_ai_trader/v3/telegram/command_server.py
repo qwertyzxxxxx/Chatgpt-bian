@@ -38,7 +38,7 @@ _COMMANDS = {
     "/limits", "/setlimit",
     "/livestatus", "/livemode", "/setlive",
     "/paperon", "/paperoff", "/paperstatus",
-    "/winrates", "/conditions", "/data",
+    "/winrates", "/conditions", "/data", "/review",
 }
 
 
@@ -102,6 +102,7 @@ def _cmd_help() -> str:
         "/perf    🏆 模拟盘绩效统计\n"
         "/winrates 📊 V66/V663/V664 策略胜率横向对比\n"
         "/conditions [v66|v663|v3|wave_long|wave_short|c1|c2|c3] 📋 策略過濾條件詳情\n"
+        "/review <strategy> <days> 📊 策略複盤（健康/方向/因子對比/虧損原因/漏斗）\n"
         "/data    🔌 生产只读数据API接口说明\n"
         "/portfolio [v3|v66|rev] 📊 完整持仓报告（默认v3）\n"
         "/v66     📡 V66 监控池状态\n"
@@ -1079,6 +1080,83 @@ def _cmd_winrates() -> str:
     return "\n".join(lines)
 
 
+def _cmd_review(args: list[str]) -> str:
+    """
+    /review <strategy> [days]
+
+    strategy aliases (case-insensitive):
+      v66, hotlist, hotlist_v66, hotlist_momentum_v3
+      v662, v663, v664
+      wave_long, wave_short
+      c1, classic_c1 / c2, classic_c2 / c3, classic_c3
+      rsd_long, rsd_short
+
+    days: 整數天數，0 或省略 = 全周期
+    """
+    _STRATEGY_ALIASES: dict[str, str] = {
+        "v66":                "hotlist_momentum_v3",
+        "hotlist":            "hotlist_momentum_v3",
+        "hotlist_v66":        "hotlist_momentum_v3",
+        "hotlist_momentum_v3":"hotlist_momentum_v3",
+        "v662":               "hotlist_momentum_v662",
+        "hotlist_v662":       "hotlist_momentum_v662",
+        "hotlist_momentum_v662":"hotlist_momentum_v662",
+        "v663":               "hotlist_momentum_v663",
+        "hotlist_v663":       "hotlist_momentum_v663",
+        "hotlist_momentum_v663":"hotlist_momentum_v663",
+        "v664":               "hotlist_momentum_v664",
+        "hotlist_v664":       "hotlist_momentum_v664",
+        "hotlist_momentum_v664":"hotlist_momentum_v664",
+        "wave_long":          "wave_long",
+        "wavelong":           "wave_long",
+        "wave_short":         "wave_short",
+        "waveshort":          "wave_short",
+        "c1":                 "classic_c1",
+        "classic_c1":         "classic_c1",
+        "c2":                 "classic_c2",
+        "classic_c2":         "classic_c2",
+        "c3":                 "classic_c3",
+        "classic_c3":         "classic_c3",
+        "rsd_long":           "rsd_long",
+        "rsd_short":          "rsd_short",
+    }
+
+    _USAGE = (
+        "用法: /review <策略> [天數]\n"
+        "  策略: v66 / v662 / v663 / v664 / wave_long / wave_short / c1 / c2 / c3 / rsd_long / rsd_short\n"
+        "  天數: 正整數，省略或 0 = 全周期\n"
+        "例子: /review v66 30    /review v662 90    /review wave_long"
+    )
+
+    if not args:
+        return _USAGE
+
+    raw_strat = args[0].lower()
+    strategy_id = _STRATEGY_ALIASES.get(raw_strat)
+    if strategy_id is None:
+        keys = sorted(_STRATEGY_ALIASES.keys())
+        return (
+            f"❓ 未知策略代號: {args[0]!r}\n"
+            f"支援: {', '.join(keys)}\n\n{_USAGE}"
+        )
+
+    days = 0
+    if len(args) >= 2:
+        try:
+            days = int(args[1])
+            if days < 0:
+                return "❌ 天數必須 ≥ 0（0 = 全周期）"
+        except ValueError:
+            return f"❌ 天數須為整數，收到: {args[1]!r}\n\n{_USAGE}"
+
+    try:
+        from binance_ai_trader.v3.telegram.review import format_review
+        return format_review(strategy_id, days)
+    except Exception as exc:
+        log.exception("[CmdServer] /review failed strategy=%s days=%s", strategy_id, days)
+        return f"❌ /review 執行出錯: {type(exc).__name__}: {exc}"
+
+
 def _cmd_data() -> str:
     enabled = bool(os.environ.get("DATA_API_PORT") or os.environ.get("DATA_API_KEY"))
     status  = "✅ 已启动" if enabled else "⛔ 未启用（需设置 DATA_API_PORT 或 DATA_API_KEY）"
@@ -1275,6 +1353,8 @@ class TelegramCommandServer:
                 return _cmd_winrates()
             if cmd == "/conditions":
                 return _cmd_conditions(args)
+            if cmd == "/review":
+                return _cmd_review(args)
             if cmd == "/data":
                 return _cmd_data()
             return "❓ 未知指令，发送 /help 查看列表"
