@@ -1094,31 +1094,34 @@ def _cmd_review(args: list[str]) -> str:
     days: 整數天數，0 或省略 = 全周期
     """
     _STRATEGY_ALIASES: dict[str, str] = {
-        "v66":                "hotlist_momentum_v3",
-        "hotlist":            "hotlist_momentum_v3",
-        "hotlist_v66":        "hotlist_momentum_v3",
-        "hotlist_momentum_v3":"hotlist_momentum_v3",
-        "v662":               "hotlist_momentum_v662",
-        "hotlist_v662":       "hotlist_momentum_v662",
-        "hotlist_momentum_v662":"hotlist_momentum_v662",
-        "v663":               "hotlist_momentum_v663",
-        "hotlist_v663":       "hotlist_momentum_v663",
-        "hotlist_momentum_v663":"hotlist_momentum_v663",
-        "v664":               "hotlist_momentum_v664",
-        "hotlist_v664":       "hotlist_momentum_v664",
-        "hotlist_momentum_v664":"hotlist_momentum_v664",
-        "wave_long":          "wave_long",
-        "wavelong":           "wave_long",
-        "wave_short":         "wave_short",
-        "waveshort":          "wave_short",
-        "c1":                 "classic_c1",
-        "classic_c1":         "classic_c1",
-        "c2":                 "classic_c2",
-        "classic_c2":         "classic_c2",
-        "c3":                 "classic_c3",
-        "classic_c3":         "classic_c3",
-        "rsd_long":           "rsd_long",
-        "rsd_short":          "rsd_short",
+        # hotlist 系列 — 實際 strategy_id 來自各策略文件的 _STRATEGY_ID
+        "v66":                  "hotlist_v66",
+        "hotlist_v66":          "hotlist_v66",
+        "v662":                 "hotlist_v662",
+        "hotlist_v662":         "hotlist_v662",
+        "v663":                 "hotlist_v663",
+        "hotlist_v663":         "hotlist_v663",
+        "v664":                 "hotlist_v664",
+        "hotlist_v664":         "hotlist_v664",
+        # hotlist_momentum_v3 是新版 hotlist（非 v66 系列）
+        "hotlist":              "hotlist_momentum_v3",
+        "hotlist_v3":           "hotlist_momentum_v3",
+        "hotlist_momentum_v3":  "hotlist_momentum_v3",
+        # wave 系列
+        "wave_long":            "wave_long",
+        "wavelong":             "wave_long",
+        "wave_short":           "wave_short",
+        "waveshort":            "wave_short",
+        # classic 系列
+        "c1":                   "classic_c1",
+        "classic_c1":           "classic_c1",
+        "c2":                   "classic_c2",
+        "classic_c2":           "classic_c2",
+        "c3":                   "classic_c3",
+        "classic_c3":           "classic_c3",
+        # rsd 系列
+        "rsd_long":             "rsd_long",
+        "rsd_short":            "rsd_short",
     }
 
     _USAGE = (
