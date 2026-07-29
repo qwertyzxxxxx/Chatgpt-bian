@@ -29,6 +29,8 @@ ENABLE_V663 = "true"
 ENABLE_V664 = "true"
 ENABLE_WAVE_LONG = "true"
 ENABLE_WAVE_SHORT = "true"
+DISABLE_CLASSIC_C1 = "true"
+ENABLE_CLASSIC = "true"
 
 [[ports]]
 localPort = 8080
