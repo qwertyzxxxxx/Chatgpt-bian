@@ -377,15 +377,30 @@ if __name__ == "__main__":
     # ── Classic C1-C4 tasks (经典量价策略，paper-only) ──────────────────────
     _classic_enabled = os.environ.get("ENABLE_CLASSIC", "").lower() == "true"
     if _classic_enabled:
+        from binance_ai_trader.classic.strategies.c1 import STRATEGY_ID as _C1_ID
+        from binance_ai_trader.classic.strategies.c2 import STRATEGY_ID as _C2_ID
+        from binance_ai_trader.classic.strategies.c3 import STRATEGY_ID as _C3_ID
+        from binance_ai_trader.classic.strategies.c4 import STRATEGY_ID_TOP as _C4T_ID, STRATEGY_ID_BOT as _C4B_ID
+        _ALL_CLASSIC = frozenset([_C1_ID, _C2_ID, _C3_ID, _C4T_ID, _C4B_ID])
+        _classic_disabled = {
+            _C1_ID if os.environ.get("DISABLE_CLASSIC_C1", "").lower() == "true" else None,
+            _C2_ID if os.environ.get("DISABLE_CLASSIC_C2", "").lower() == "true" else None,
+            _C3_ID if os.environ.get("DISABLE_CLASSIC_C3", "").lower() == "true" else None,
+            _C4T_ID if os.environ.get("DISABLE_CLASSIC_C4", "").lower() == "true" else None,
+            _C4B_ID if os.environ.get("DISABLE_CLASSIC_C4", "").lower() == "true" else None,
+        } - {None}
+        _classic_enabled_strategies = _ALL_CLASSIC - _classic_disabled if _classic_disabled else None
         classic_tasks = build_classic_tasks(
             db_path=_DB_PATH,
             telegram=notifier,
             scan_interval=timedelta(minutes=15),
             settle_interval=timedelta(minutes=15),
             report_interval=timedelta(hours=1),
+            enabled_strategies=_classic_enabled_strategies,
         )
         tasks.extend(classic_tasks)
-        _log.info("[startup] Classic C1-C4 enabled — paper-only (经典量价策略)")
+        _disabled_str = f" (disabled: {sorted(_classic_disabled)})" if _classic_disabled else ""
+        _log.info("[startup] Classic C1-C4 enabled — paper-only (经典量价策略)%s", _disabled_str)
 
     # ── SMA120 V1.9-D — XAUUSDT 模拟盘 ──────────────────────────────────────────
     # Always started; on/off controlled at runtime via Telegram /paperon sma120 /

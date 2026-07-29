@@ -1642,6 +1642,7 @@ def build_classic_tasks(
     scan_interval: timedelta = timedelta(minutes=15),
     settle_interval: timedelta = timedelta(minutes=15),
     report_interval: timedelta = timedelta(hours=1),
+    enabled_strategies: frozenset[str] | None = None,
 ) -> tuple[RunnerTask, ...]:
     """Bootstrap Classic C1-C4 tasks. Paper-only — never connects to live order engine."""
     from binance_ai_trader.classic.scanner import scan as classic_scan
@@ -1693,6 +1694,11 @@ def build_classic_tasks(
 
         orders_created = 0
         for strategy_id, sig in result.signals.items():
+            # Per-strategy enable gate
+            if enabled_strategies is not None and strategy_id not in enabled_strategies:
+                log.info("[Classic/%s] disabled — skipping signal", strategy_id)
+                continue
+
             symbol    = sig["symbol"]
             direction = sig["direction"]
 
