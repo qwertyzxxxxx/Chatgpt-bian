@@ -118,6 +118,34 @@ def _strat(strategy_id: str) -> str:
 
 # ── price helpers ─────────────────────────────────────────────────────────────
 
+def _fmt_price(v: Decimal) -> str:
+    """Format price cleanly — no repeating-decimal tails."""
+    f = float(v)
+    if f >= 1000:
+        return f"{f:.2f}"
+    if f >= 100:
+        return f"{f:.3f}"
+    if f >= 1:
+        return f"{f:.4f}"
+    return f"{f:.6f}"
+
+
+def _sl_pct(entry: Decimal, sl: Decimal, direction: str) -> str:
+    try:
+        pct = (sl - entry) / entry * 100 if direction == "LONG" else (entry - sl) / entry * 100
+        return f"{float(pct):+.2f}%"
+    except Exception:
+        return ""
+
+
+def _tp_pct(entry: Decimal, tp: Decimal, direction: str) -> str:
+    try:
+        pct = (tp - entry) / entry * 100 if direction == "LONG" else (entry - tp) / entry * 100
+        return f"{float(pct):+.2f}%"
+    except Exception:
+        return ""
+
+
 def _fetch_prices(
     client: BinancePublicClient | None,
     symbols: list[str],
@@ -239,7 +267,9 @@ def _pending_section(orders: list[V3PaperOrder]) -> str:
         tag = _strat(o.strategy_id)
         rows.append(
             f"  [{tag}] {o.symbol} {o.direction} {_seq(o.signal_id)}\n"
-            f"  入{o.entry}  止损{o.stop_loss}  止盈{o.tp1}\n"
+            f"  入{_fmt_price(o.entry)}"
+            f"  止损{_fmt_price(o.stop_loss)}({_sl_pct(o.entry, o.stop_loss, o.direction)})"
+            f"  止盈{_fmt_price(o.tp1)}({_tp_pct(o.entry, o.tp1, o.direction)})\n"
             f"  下单{_short_dt(o.created_at)}  等待 {_elapsed(o.created_at)}  到期 {_short_dt(o.expires_at)}"
         )
     return "\n".join(rows)
@@ -256,7 +286,9 @@ def _positions_section(
         tag = _strat(o.strategy_id)
         rows.append(
             f"  [{tag}] {o.symbol} {o.direction} {_seq(o.signal_id)}\n"
-            f"  入{o.entry}  止损{o.stop_loss}  止盈{o.tp1}\n"
+            f"  入{_fmt_price(o.entry)}"
+            f"  止损{_fmt_price(o.stop_loss)}({_sl_pct(o.entry, o.stop_loss, o.direction)})"
+            f"  止盈{_fmt_price(o.tp1)}({_tp_pct(o.entry, o.tp1, o.direction)})\n"
             f"  开仓{_short_dt(o.filled_at)}  PnL {_current_pnl(o, price_map)}  持仓 {_elapsed(o.filled_at)}"
         )
     return "\n".join(rows)
@@ -274,7 +306,9 @@ def _settled_section(orders: list[V3PaperOrder]) -> str:
         rows.append(
             f"  {icon}[{tag}] {o.symbol} {o.direction} {_seq(o.signal_id)}  "
             f"{o.result} {_pnl_str(o.pnl_pct)}  {dur}\n"
-            f"  入{o.entry}  止损{o.stop_loss}  止盈{o.tp1}\n"
+            f"  入{_fmt_price(o.entry)}"
+            f"  止损{_fmt_price(o.stop_loss)}({_sl_pct(o.entry, o.stop_loss, o.direction)})"
+            f"  止盈{_fmt_price(o.tp1)}({_tp_pct(o.entry, o.tp1, o.direction)})\n"
             f"  开{_short_dt(o.filled_at)} → 平{_short_dt(o.closed_at)}"
         )
     return "\n".join(rows)
