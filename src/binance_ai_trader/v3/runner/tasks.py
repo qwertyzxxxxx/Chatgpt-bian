@@ -1666,7 +1666,10 @@ def build_classic_tasks(
 
     reporters = {}
     if telegram:
+        _report_ids = enabled_strategies if enabled_strategies is not None else set(_ALL_CLASSIC_STRATEGY_IDS)
         for sid in _ALL_CLASSIC_STRATEGY_IDS:
+            if sid not in _report_ids:
+                continue
             reporters[sid] = V3ShadowReporter(
                 telegram, order_repo, perf_calc, sid,
                 client=client,
