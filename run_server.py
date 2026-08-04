@@ -170,14 +170,19 @@ if __name__ == "__main__":
                 )
 
                 _LIVE_ENGINE_CFG: dict[str, tuple[str, str, str]] = {
-                    V3_STRATEGY_ID:   ("V3",   "ORDER_NOTIONAL_USDT",      "1000"),
-                    V66_STRATEGY_ID:  ("V66",  "V66_ORDER_NOTIONAL_USDT",  "2000"),
-                    V663_STRATEGY_ID: ("V663", "V663_ORDER_NOTIONAL_USDT", "2000"),
+                    V3_STRATEGY_ID:   ("V3",   "ORDER_NOTIONAL_USDT",           "1000"),
+                    V66_STRATEGY_ID:  ("V66",  "V66_ORDER_NOTIONAL_USDT",       "2000"),
+                    V663_STRATEGY_ID: ("V663", "V663_ORDER_NOTIONAL_USDT",      "2000"),
+                    "classic_c3":     ("C3",   "C3_ORDER_NOTIONAL_USDT",        "1000"),
+                    "wave_long":      ("W↑",   "WAVE_LONG_ORDER_NOTIONAL_USDT", "1000"),
                     # ← add new live strategies here (one line each)
                 }
-                # V663 实盘只做空——数据显示 SHORT profit_factor 2.12 vs LONG 1.56
+                # 方向過濾：只在指定方向開實盤
                 _LIVE_DIRECTION_FILTER: dict[str, set[str]] = {
-                    V663_STRATEGY_ID: {"SHORT"},
+                    V663_STRATEGY_ID: {"SHORT"},        # V663 實盤只做空
+                    V66_STRATEGY_ID:  {"LONG"},         # V66 停止 SHORT 實盤
+                    "classic_c3":     {"SHORT"},        # C3 反彈空
+                    "wave_long":      {"LONG"},         # Wave↑ 放量突破做多
                 }
 
                 _live_client = BinanceFuturesClient(_api_key, _api_secret)
@@ -341,9 +346,12 @@ if __name__ == "__main__":
             report_interval=timedelta(hours=1),
             dedup_hours=24,
             max_open_orders=5,
+            live_mirror=live_mirrors.get("wave_long"),
         )
         tasks.extend(wave_long_tasks)
-        _log.info("[startup] wave_long enabled — paper-only (放量突破回踩做多)")
+        _wl_live = live_mirrors.get("wave_long")
+        _log.info("[startup] wave_long enabled — %s (放量突破回踩做多)",
+                  "live+paper" if _wl_live else "paper-only")
 
     # ── Wave Short Breakdown tasks (放量跌破反抽做空, paper-only) ─────────────
     _wave_short_enabled = os.environ.get("ENABLE_WAVE_SHORT", "").lower() == "true"
@@ -397,6 +405,7 @@ if __name__ == "__main__":
             settle_interval=timedelta(minutes=15),
             report_interval=timedelta(hours=1),
             enabled_strategies=_classic_enabled_strategies,
+            live_mirrors={k: v for k, v in live_mirrors.items() if k.startswith("classic_")},
         )
         tasks.extend(classic_tasks)
         _disabled_str = f" (disabled: {sorted(_classic_disabled)})" if _classic_disabled else ""

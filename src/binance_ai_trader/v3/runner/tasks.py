@@ -1125,8 +1125,9 @@ def build_wave_long_tasks(
     report_interval: timedelta = timedelta(hours=1),
     dedup_hours: int = 24,
     max_open_orders: int = 5,
+    live_mirror: "LiveMirrorEngine | None" = None,
 ) -> tuple[RunnerTask, ...]:
-    """Bootstrap Wave Long Breakout tasks. Paper-only — 放量突破回踩做多，无实盘镜像。"""
+    """Bootstrap Wave Long Breakout tasks. Supports optional live mirror."""
     client = BinancePublicClient(
         base_url=base_url,
         timeout_seconds=timeout,
@@ -1139,7 +1140,7 @@ def build_wave_long_tasks(
     order_repo = V3PaperOrderRepository()
     push_repo  = V3PushQueueRepository()
     perf_calc  = V3PerformanceCalculator(order_repo)
-    settler    = V3Settler(order_repo, client, notifier=telegram, live_repo=None)
+    settler    = V3Settler(order_repo, client, notifier=telegram, live_repo=(live_mirror._repo if live_mirror else None))
     settings_repo = V3RuntimeSettingsRepository()
 
     wave_long_tg = V3TelegramNotifier(telegram) if telegram else None
@@ -1214,6 +1215,12 @@ def build_wave_long_tasks(
             ))
             orders_created += 1
 
+            if live_mirror and live_mirror.is_enabled():
+                try:
+                    live_mirror.try_place(candidate)
+                except Exception as _exc:
+                    log.exception("[wave_long] live try_place failed %s: %s", candidate.symbol, _exc)
+
             if wave_long_tg:
                 wave_long_tg.send_candidate(candidate, hold_hours=_WAVE_LONG_HOLD_HOURS, live_prefix="【Wave↑ 模拟盘】", client=client)
 
@@ -1236,6 +1243,11 @@ def build_wave_long_tasks(
 
     def _wave_long_settle_task() -> RunnerTaskResult:
         updated = settler.settle_all(strategy_id=_WAVE_LONG_STRATEGY_ID)
+        if live_mirror and live_mirror.is_enabled():
+            try:
+                live_mirror.sync_all()
+            except Exception as _exc:
+                log.exception("[wave_long] live sync_all failed: %s", _exc)
         return RunnerTaskResult("SUCCEEDED", {"event_type": "wave_long_settle", "settled": updated})
 
     def _wave_long_report_task() -> RunnerTaskResult:
@@ -1643,6 +1655,7 @@ def build_classic_tasks(
     settle_interval: timedelta = timedelta(minutes=15),
     report_interval: timedelta = timedelta(hours=1),
     enabled_strategies: frozenset[str] | None = None,
+    live_mirrors: "dict | None" = None,
 ) -> tuple[RunnerTask, ...]:
     """Bootstrap Classic C1-C4 tasks. Paper-only — never connects to live order engine."""
     from binance_ai_trader.classic.scanner import scan as classic_scan
@@ -1775,6 +1788,17 @@ def build_classic_tasks(
             ))
             orders_created += 1
 
+            _live_m = (live_mirrors or {}).get(strategy_id)
+            if _live_m and _live_m.is_enabled():
+                try:
+                    from types import SimpleNamespace as _NS
+                    _live_m.try_place(_NS(
+                        direction=direction, entry=str(entry), sl=str(sl),
+                        tp1=str(tp1), tp2=str(tp2), symbol=symbol, signal_id=signal_id,
+                    ))
+                except Exception as _exc:
+                    log.exception("[Classic/%s] live try_place failed %s: %s", strategy_id, symbol, _exc)
+
             if telegram:
                 try:
                     send_classic_signal(telegram, sig)
@@ -1807,6 +1831,12 @@ def build_classic_tasks(
                 total += settler.settle_all(strategy_id=sid)
             except Exception as exc:
                 log.warning("[Classic] settle failed for %s: %s", sid, exc)
+        for _sid, _lm in (live_mirrors or {}).items():
+            if _lm and _lm.is_enabled():
+                try:
+                    _lm.sync_all()
+                except Exception as exc:
+                    log.warning("[Classic] live sync_all failed %s: %s", _sid, exc)
         return RunnerTaskResult("SUCCEEDED", {"event_type": "classic_settle", "settled": total})
 
     def _classic_report_task() -> RunnerTaskResult:
