@@ -171,8 +171,7 @@ if __name__ == "__main__":
 
                 _LIVE_ENGINE_CFG: dict[str, tuple[str, str, str]] = {
                     V3_STRATEGY_ID:   ("V3",   "ORDER_NOTIONAL_USDT",           "1000"),
-                    V66_STRATEGY_ID:  ("V66",  "V66_ORDER_NOTIONAL_USDT",       "2000"),
-                    V663_STRATEGY_ID: ("V663", "V663_ORDER_NOTIONAL_USDT",      "2000"),
+                    V663_STRATEGY_ID: ("V663", "V663_ORDER_NOTIONAL_USDT",      "1000"),
                     "classic_c3":     ("C3",   "C3_ORDER_NOTIONAL_USDT",        "1000"),
                     "wave_long":      ("W↑",   "WAVE_LONG_ORDER_NOTIONAL_USDT", "1000"),
                     # ← add new live strategies here (one line each)
@@ -180,7 +179,6 @@ if __name__ == "__main__":
                 # 方向過濾：只在指定方向開實盤
                 _LIVE_DIRECTION_FILTER: dict[str, set[str]] = {
                     V663_STRATEGY_ID: {"SHORT"},        # V663 實盤只做空
-                    V66_STRATEGY_ID:  {"LONG"},         # V66 停止 SHORT 實盤
                     "classic_c3":     {"SHORT"},        # C3 反彈空
                     "wave_long":      {"LONG"},         # Wave↑ 放量突破做多
                 }
