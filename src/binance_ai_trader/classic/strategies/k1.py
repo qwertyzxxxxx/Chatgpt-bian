@@ -1,4 +1,4 @@
-"""C1 Pullback Long — 回踩多
+"""K1 Pullback Long — 回踩多
 
 Pool: Top 20 gainers
 Logic: Uptrend → prior impulse wave (vol ≥ 1.5x) → first pullback (vol ≤ 0.8x) → Higher Low → re-entry (vol ≥ 1.2x)
@@ -16,8 +16,8 @@ from binance_ai_trader.classic.models import CoinContext
 from binance_ai_trader.classic.scoring import compute_score
 from binance_ai_trader.domain.models import Kline
 
-STRATEGY_ID   = "classic_c1"
-STRATEGY_NAME = "C1 回踩多"
+STRATEGY_ID   = "classic_k1"
+STRATEGY_NAME = "K1 回踩多"
 
 # 策略篩選條件常量索引（/conditions 命令從此讀取，勿手寫說明文字）
 CONDITIONS = {

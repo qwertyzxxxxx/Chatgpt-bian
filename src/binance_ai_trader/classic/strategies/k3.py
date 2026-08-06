@@ -1,4 +1,4 @@
-"""C3 Rally Short — 反弹空
+"""K3 Rally Short — 反弹空
 
 Pool: Top 20 losers
 Logic: Downtrend → prior impulse decline (vol ≥ 1.5x) → weak rally (vol ≤ 0.8x) → Lower High → re-entry short (vol ≥ 1.2x)
@@ -16,8 +16,8 @@ from binance_ai_trader.classic.models import CoinContext
 from binance_ai_trader.classic.scoring import compute_score
 from binance_ai_trader.domain.models import Kline
 
-STRATEGY_ID   = "classic_c3"
-STRATEGY_NAME = "C3 反弹空"
+STRATEGY_ID   = "classic_k3"
+STRATEGY_NAME = "K3 反弹空"
 
 # 策略篩選條件常量索引（/conditions 命令從此讀取，勿手寫說明文字）
 CONDITIONS = {

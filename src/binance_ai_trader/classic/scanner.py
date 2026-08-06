@@ -24,7 +24,7 @@ from binance_ai_trader.classic.indicators import (
     range_position_30d, vol_grade, vol_ratio,
 )
 from binance_ai_trader.classic.models import CoinContext, ScanRecord
-from binance_ai_trader.classic.strategies import c1, c2, c3, c4
+from binance_ai_trader.classic.strategies import k1, k2, k3, k4
 from binance_ai_trader.classic.universe import UniverseEntry, build_universe
 from binance_ai_trader.infrastructure.binance_public import (
     BinancePublicApiError, BinancePublicClient,
@@ -34,19 +34,19 @@ log = logging.getLogger(__name__)
 
 # map strategy_id → (direction assigned to coins in the pool)
 _DIRECTION_MAP = {
-    c1.STRATEGY_ID:       "LONG",
-    c2.STRATEGY_ID:       "LONG",
-    c3.STRATEGY_ID:       "SHORT",
-    c4.STRATEGY_ID_TOP:   "SHORT",
-    c4.STRATEGY_ID_BOT:   "LONG",
+    k1.STRATEGY_ID:       "LONG",
+    k2.STRATEGY_ID:       "LONG",
+    k3.STRATEGY_ID:       "SHORT",
+    k4.STRATEGY_ID_TOP:   "SHORT",
+    k4.STRATEGY_ID_BOT:   "LONG",
 }
 
 _STRATEGY_NAMES = {
-    c1.STRATEGY_ID:     c1.STRATEGY_NAME,
-    c2.STRATEGY_ID:     c2.STRATEGY_NAME,
-    c3.STRATEGY_ID:     c3.STRATEGY_NAME,
-    c4.STRATEGY_ID_TOP: c4.STRATEGY_NAME_TOP,
-    c4.STRATEGY_ID_BOT: c4.STRATEGY_NAME_BOT,
+    k1.STRATEGY_ID:     k1.STRATEGY_NAME,
+    k2.STRATEGY_ID:     k2.STRATEGY_NAME,
+    k3.STRATEGY_ID:     k3.STRATEGY_NAME,
+    k4.STRATEGY_ID_TOP: k4.STRATEGY_NAME_TOP,
+    k4.STRATEGY_ID_BOT: k4.STRATEGY_NAME_BOT,
 }
 
 
@@ -145,16 +145,16 @@ def _run_strategy(
     k1h = klines["1h"]
     k4h = klines["4h"]
 
-    if strategy_id == c1.STRATEGY_ID:
-        return c1.evaluate(ctx, k15, k1h, k4h)
-    if strategy_id == c2.STRATEGY_ID:
-        return c2.evaluate(ctx, k15, k1h, k4h)
-    if strategy_id == c3.STRATEGY_ID:
-        return c3.evaluate(ctx, k15, k1h, k4h)
-    if strategy_id == c4.STRATEGY_ID_TOP:
-        return c4.evaluate_top(ctx, k15, k1h, k4h)
-    if strategy_id == c4.STRATEGY_ID_BOT:
-        return c4.evaluate_bot(ctx, k15, k1h, k4h)
+    if strategy_id == k1.STRATEGY_ID:
+        return k1.evaluate(ctx, k15, k1h, k4h)
+    if strategy_id == k2.STRATEGY_ID:
+        return k2.evaluate(ctx, k15, k1h, k4h)
+    if strategy_id == k3.STRATEGY_ID:
+        return k3.evaluate(ctx, k15, k1h, k4h)
+    if strategy_id == k4.STRATEGY_ID_TOP:
+        return k4.evaluate_top(ctx, k15, k1h, k4h)
+    if strategy_id == k4.STRATEGY_ID_BOT:
+        return k4.evaluate_bot(ctx, k15, k1h, k4h)
     return None, [f"unknown_strategy_{strategy_id}"]
 
 
@@ -185,9 +185,9 @@ def scan(client: BinancePublicClient, now: datetime | None = None) -> ClassicSca
     # 2. Pool assignments: which strategies scan which pool
     pool_tasks: list[tuple[UniverseEntry, int, list[str]]] = []
     for rank, entry in enumerate(gainers, start=1):
-        pool_tasks.append((entry, rank, [c1.STRATEGY_ID, c2.STRATEGY_ID, c4.STRATEGY_ID_TOP]))
+        pool_tasks.append((entry, rank, [k1.STRATEGY_ID, k2.STRATEGY_ID, k4.STRATEGY_ID_TOP]))
     for rank, entry in enumerate(losers, start=1):
-        pool_tasks.append((entry, rank, [c3.STRATEGY_ID, c4.STRATEGY_ID_BOT]))
+        pool_tasks.append((entry, rank, [k3.STRATEGY_ID, k4.STRATEGY_ID_BOT]))
 
     # Collect best signal per strategy (score ≥ 75)
     best_per_strategy: dict[str, dict] = {}

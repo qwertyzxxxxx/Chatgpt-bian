@@ -1,4 +1,4 @@
-"""C4 Extreme Reversal — 极端反转
+"""K4 Extreme Reversal — 极端反转
 
 C4_TOP_SHORT: Gainers pool — exhaustion top → short
 C4_BOTTOM_LONG: Losers pool — panic bottom → long
@@ -17,10 +17,10 @@ from binance_ai_trader.classic.models import CoinContext
 from binance_ai_trader.classic.scoring import compute_score
 from binance_ai_trader.domain.models import Kline
 
-STRATEGY_ID_TOP = "classic_c4_top"
-STRATEGY_ID_BOT = "classic_c4_bot"
-STRATEGY_NAME_TOP = "C4 顶部反转空"
-STRATEGY_NAME_BOT = "C4 底部反转多"
+STRATEGY_ID_TOP = "classic_k4_top"
+STRATEGY_ID_BOT = "classic_k4_bot"
+STRATEGY_NAME_TOP = "K4 顶部反转空"
+STRATEGY_NAME_BOT = "K4 底部反转多"
 
 
 def _top_short(

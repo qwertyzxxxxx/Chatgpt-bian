@@ -47,7 +47,7 @@ class CoinContext:
 
 @dataclass
 class ClassicSignal:
-    strategy_id: str        # classic_c1 / classic_c2 / classic_c3 / classic_c4_top / classic_c4_bot
+    strategy_id: str        # classic_k1 / classic_k2 / classic_k3 / classic_k4_top / classic_k4_bot
     strategy_name: str      # Chinese name
     symbol: str
     direction: str

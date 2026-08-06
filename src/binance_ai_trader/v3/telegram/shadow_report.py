@@ -48,11 +48,11 @@ _STRAT_TITLE: dict[str, str] = {
     "hotlist_v664":        "📊 V664 纸盘 Paper",
     "wave_long":           "📊 Wave↑ 放量突破回踩 Paper",
     "wave_short":          "📊 Wave↓ 放量跌破反抽 Paper",
-    "classic_c1":          "📊 Classic C1 回踩多 Paper",
-    "classic_c2":          "📊 Classic C2 突破多 Paper",
-    "classic_c3":          "📊 Classic C3 反弹空 Paper",
-    "classic_c4_top":      "📊 Classic C4 顶部空 Paper",
-    "classic_c4_bot":      "📊 Classic C4 底部多 Paper",
+    "classic_k1":          "📊 Classic K1 回踩多 Paper",
+    "classic_k2":          "📊 Classic K2 突破多 Paper",
+    "classic_k3":          "📊 Classic K3 反弹空 Paper",
+    "classic_k4_top":      "📊 Classic K4 顶部空 Paper",
+    "classic_k4_bot":      "📊 Classic K4 底部多 Paper",
     "xau_sma120":          "📊 SMA120 V1.9-D XAUUSDT Paper",
 }
 

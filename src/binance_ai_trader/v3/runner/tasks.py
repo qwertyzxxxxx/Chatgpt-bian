@@ -1662,10 +1662,10 @@ def build_classic_tasks(
     from binance_ai_trader.classic.repository import ClassicScanRepository
     from binance_ai_trader.classic.telegram_push import send_classic_signal
     from binance_ai_trader.classic.config import CFG
-    from binance_ai_trader.classic.strategies.c1 import STRATEGY_ID as C1_ID
-    from binance_ai_trader.classic.strategies.c2 import STRATEGY_ID as C2_ID
-    from binance_ai_trader.classic.strategies.c3 import STRATEGY_ID as C3_ID
-    from binance_ai_trader.classic.strategies.c4 import STRATEGY_ID_TOP as C4T_ID, STRATEGY_ID_BOT as C4B_ID
+    from binance_ai_trader.classic.strategies.k1 import STRATEGY_ID as C1_ID
+    from binance_ai_trader.classic.strategies.k2 import STRATEGY_ID as C2_ID
+    from binance_ai_trader.classic.strategies.k3 import STRATEGY_ID as C3_ID
+    from binance_ai_trader.classic.strategies.k4 import STRATEGY_ID_TOP as C4T_ID, STRATEGY_ID_BOT as C4B_ID
 
     _ALL_CLASSIC_STRATEGY_IDS = (C1_ID, C2_ID, C3_ID, C4T_ID, C4B_ID)
 

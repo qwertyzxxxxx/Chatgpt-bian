@@ -32,7 +32,7 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
     consec = ctx.consec_days
 
     # 30d range position (10 pts)
-    if "c1" in strategy_id or "c2" in strategy_id:
+    if "k1" in strategy_id or "k2" in strategy_id:
         # Long: ideal if not at extreme top
         if Decimal("0.40") <= rp <= Decimal("0.80"):
             pts += 10
@@ -40,7 +40,7 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 6
         else:
             pts += 2
-    elif "c3" in strategy_id:
+    elif "k3" in strategy_id:
         # Short: ideal if not at extreme bottom
         if Decimal("0.20") <= rp <= Decimal("0.60"):
             pts += 10
@@ -48,7 +48,7 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 6
         else:
             pts += 2
-    elif "c4_top" in strategy_id:
+    elif "k4_top" in strategy_id:
         # Top short: high position is a plus
         if rp >= Decimal("0.85"):
             pts += 10
@@ -56,7 +56,7 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 6
         else:
             pts += 0
-    elif "c4_bot" in strategy_id:
+    elif "k4_bot" in strategy_id:
         # Bottom long: low position is a plus
         if rp <= Decimal("0.15"):
             pts += 10
@@ -66,9 +66,9 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 0
 
     # 7d change magnitude (10 pts)
-    if "c4_top" in strategy_id:
+    if "k4_top" in strategy_id:
         pts += 10 if ch7 >= Decimal("40") else (7 if ch7 >= Decimal("30") else 3)
-    elif "c4_bot" in strategy_id:
+    elif "k4_bot" in strategy_id:
         pts += 10 if ch7 >= Decimal("35") else (7 if ch7 >= Decimal("25") else 3)
     else:
         # C1/C2: moderate gain is better
@@ -80,13 +80,13 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 2
 
     # Consecutive trend days (10 pts)
-    if "c4_top" in strategy_id or "c4_bot" in strategy_id:
+    if "k4_top" in strategy_id or "k4_bot" in strategy_id:
         # More consecutive days = stronger signal for reversal
         pts += min(10, consec * 3)
-    elif "c1" in strategy_id or "c2" in strategy_id:
+    elif "k1" in strategy_id or "k2" in strategy_id:
         # 2-5 days trending up is good setup
         pts += 10 if 2 <= consec <= 6 else (5 if consec > 6 else 2)
-    elif "c3" in strategy_id:
+    elif "k3" in strategy_id:
         pts += 10 if 2 <= consec <= 6 else (5 if consec > 6 else 2)
 
     return min(pts, 30)
@@ -97,40 +97,40 @@ def score_trend(ctx: CoinContext, strategy_id: str) -> int:
     pts = 0
 
     # 4H EMA alignment (10 pts)
-    if "c1" in strategy_id or "c2" in strategy_id:
+    if "k1" in strategy_id or "k2" in strategy_id:
         if ctx.ema20_4h > ctx.ema60_4h and ctx.current_price > ctx.ema20_4h:
             pts += 10
         elif ctx.current_price > ctx.ema20_4h:
             pts += 5
-    elif "c3" in strategy_id:
+    elif "k3" in strategy_id:
         if ctx.ema20_4h < ctx.ema60_4h and ctx.current_price < ctx.ema20_4h:
             pts += 10
         elif ctx.current_price < ctx.ema20_4h:
             pts += 5
-    elif "c4_top" in strategy_id:
+    elif "k4_top" in strategy_id:
         # Price far above EMA20 is a plus for reversal
         if ctx.price_dist_4h_atr >= CFG.c4_top_ema_dist_min:
             pts += 10
         elif ctx.price_dist_4h_atr >= Decimal("1.0"):
             pts += 5
-    elif "c4_bot" in strategy_id:
+    elif "k4_bot" in strategy_id:
         if ctx.price_dist_4h_atr >= CFG.c4_bot_ema_dist_min:
             pts += 10
         elif ctx.price_dist_4h_atr >= Decimal("1.0"):
             pts += 5
 
     # 4H EMA direction (5 pts)
-    if "c1" in strategy_id or "c2" in strategy_id:
+    if "k1" in strategy_id or "k2" in strategy_id:
         pts += 5 if ctx.ema20_4h_up else 0
-    elif "c3" in strategy_id:
+    elif "k3" in strategy_id:
         pts += 5 if not ctx.ema20_4h_up else 0
     else:
         pts += 3  # C4: direction of EMA less critical
 
     # 1H structure (10 pts)
-    if "c1" in strategy_id or "c2" in strategy_id or "c4_bot" in strategy_id:
+    if "k1" in strategy_id or "k2" in strategy_id or "k4_bot" in strategy_id:
         pts += 10 if ctx.has_higher_low_1h else 3
-    elif "c3" in strategy_id or "c4_top" in strategy_id:
+    elif "k3" in strategy_id or "k4_top" in strategy_id:
         pts += 10 if ctx.has_lower_high_1h else 3
 
     return min(pts, 25)
