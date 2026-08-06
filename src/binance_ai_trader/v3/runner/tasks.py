@@ -1662,10 +1662,10 @@ def build_classic_tasks(
     from binance_ai_trader.classic.repository import ClassicScanRepository
     from binance_ai_trader.classic.telegram_push import send_classic_signal
     from binance_ai_trader.classic.config import CFG
-    from binance_ai_trader.classic.strategies.k1 import STRATEGY_ID as C1_ID
-    from binance_ai_trader.classic.strategies.k2 import STRATEGY_ID as C2_ID
-    from binance_ai_trader.classic.strategies.k3 import STRATEGY_ID as C3_ID
-    from binance_ai_trader.classic.strategies.k4 import STRATEGY_ID_TOP as C4T_ID, STRATEGY_ID_BOT as C4B_ID
+    from binance_ai_trader.classic.strategies.c1 import STRATEGY_ID as C1_ID
+    from binance_ai_trader.classic.strategies.c2 import STRATEGY_ID as C2_ID
+    from binance_ai_trader.classic.strategies.c3 import STRATEGY_ID as C3_ID
+    from binance_ai_trader.classic.strategies.c4 import STRATEGY_ID_TOP as C4T_ID, STRATEGY_ID_BOT as C4B_ID
 
     _ALL_CLASSIC_STRATEGY_IDS = (C1_ID, C2_ID, C3_ID, C4T_ID, C4B_ID)
 
@@ -1853,6 +1853,194 @@ def build_classic_tasks(
         RunnerTask("classic_report", _classic_report_task, interval=report_interval),
     ]
     return tuple(tasks)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Classic K1-K4 Task Builder — 新型量价策略，paper-only
+# ─────────────────────────────────────────────────────────────────────────────
+
+_K_HOLD_HOURS = 48
+
+
+def build_k_tasks(
+    db_path: Path,
+    base_url: str = "https://fapi.binance.com",
+    timeout: float = 12.0,
+    max_retries: int = 3,
+    telegram: TelegramNotifier | None = None,
+    scan_interval: timedelta = timedelta(minutes=15),
+    settle_interval: timedelta = timedelta(minutes=15),
+    report_interval: timedelta = timedelta(hours=1),
+) -> tuple[RunnerTask, ...]:
+    """Bootstrap K1-K4 tasks. Paper-only — never connects to live order engine."""
+    from binance_ai_trader.classic.scanner import scan as classic_scan
+    from binance_ai_trader.classic.repository import ClassicScanRepository
+    from binance_ai_trader.classic.telegram_push import send_classic_signal
+    from binance_ai_trader.classic.config import CFG as _KCFG
+    from binance_ai_trader.classic.strategies.k1 import STRATEGY_ID as K1_ID
+    from binance_ai_trader.classic.strategies.k2 import STRATEGY_ID as K2_ID
+    from binance_ai_trader.classic.strategies.k3 import STRATEGY_ID as K3_ID
+    from binance_ai_trader.classic.strategies.k4 import STRATEGY_ID as K4_ID
+
+    _ALL_K_IDS = (K1_ID, K2_ID, K3_ID, K4_ID)
+    _K_ENABLED = frozenset(_ALL_K_IDS)
+
+    client     = BinancePublicClient(base_url=base_url, timeout_seconds=timeout, max_retries=max_retries)
+    order_repo = V3PaperOrderRepository()
+    push_repo  = V3PushQueueRepository()
+    cand_repo  = V3CandidateRepository()
+    settler    = V3Settler(order_repo, client, notifier=telegram, live_repo=None)
+    scan_repo  = ClassicScanRepository()
+    perf_calc  = V3PerformanceCalculator(order_repo)
+
+    reporters = {}
+    if telegram:
+        for sid in _ALL_K_IDS:
+            reporters[sid] = V3ShadowReporter(
+                telegram, order_repo, perf_calc, sid,
+                client=client,
+                scan_interval_minutes=int(scan_interval.total_seconds() // 60),
+                settle_interval_minutes=int(settle_interval.total_seconds() // 60),
+                summary_interval_hours=int(report_interval.total_seconds() // 3600),
+            )
+
+    def _k_scan_task() -> RunnerTaskResult:
+        now         = datetime.now(UTC)
+        now_iso     = now.isoformat(timespec="seconds")
+        dedup_since = (now - timedelta(hours=_KCFG.dedup_hours)).isoformat(timespec="seconds")
+
+        try:
+            result = classic_scan(client, now)
+        except Exception as exc:
+            log.exception("[K-Classic] scan error: %s", exc)
+            return RunnerTaskResult("FAILED", {"error": str(exc)})
+
+        try:
+            scan_repo.save_records(result.records)
+        except Exception as exc:
+            log.warning("[K-Classic] scan_records save failed: %s", exc)
+
+        orders_created = 0
+        for strategy_id, sig in result.signals.items():
+            if strategy_id not in _K_ENABLED:
+                continue
+
+            symbol    = sig["symbol"]
+            direction = sig["direction"]
+
+            if order_repo.exists_open_for_symbol_direction(strategy_id, symbol, direction):
+                log.info("[K-Classic/%s] dedup SKIP %s %s (open order exists)", strategy_id, symbol, direction)
+                continue
+            try:
+                if scan_repo.exists_open_24h(symbol, direction, strategy_id, dedup_since):
+                    log.info("[K-Classic/%s] dedup SKIP %s %s (24h record)", strategy_id, symbol, direction)
+                    continue
+            except Exception as exc:
+                log.warning("[K-Classic/%s] exists_open_24h failed: %s — proceeding", strategy_id, exc)
+
+            try:
+                signal_id = cand_repo.generate_signal_id(strategy_id, now)
+            except Exception as exc:
+                log.warning("[K-Classic/%s] signal_id generation failed: %s", strategy_id, exc)
+                continue
+
+            scan_id = sig.get("_scan_id")
+            if scan_id:
+                try:
+                    scan_repo.update_signal_id(scan_id, signal_id)
+                except Exception as exc:
+                    log.warning("[K-Classic/%s] update_signal_id failed: %s", strategy_id, exc)
+
+            entry = Decimal(str(sig["entry"]))
+            sl    = Decimal(str(sig["sl"]))
+            tp1   = Decimal(str(sig["tp1"]))
+            tp2   = Decimal(str(sig["tp2"]))
+            rr    = Decimal(str(sig["rr"]))
+
+            expires_at = (now + timedelta(hours=_K_HOLD_HOURS)).isoformat(timespec="seconds")
+            order = V3PaperOrder(
+                order_id=make_order_id(),
+                signal_id=signal_id,
+                strategy_id=strategy_id,
+                symbol=symbol,
+                direction=direction,
+                entry=entry,
+                stop_loss=sl,
+                tp1=tp1,
+                tp2=tp2,
+                rr=rr,
+                status="OPEN",
+                result=None,
+                created_at=now_iso,
+                filled_at=None,
+                closed_at=None,
+                expires_at=expires_at,
+                pnl_pct=None,
+                rr_realized=None,
+                pushed=True,
+                metadata_json="{}",
+            )
+            order_repo.save(order)
+            order_repo.append_event(V3OrderEvent(
+                event_id=make_event_id(),
+                order_id=order.order_id,
+                signal_id=signal_id,
+                event_type="CREATED",
+                old_status=None,
+                new_status="OPEN",
+                candle_high=None,
+                candle_low=None,
+                triggered_at=now_iso,
+                metadata_json="{}",
+            ))
+            orders_created += 1
+
+            if telegram:
+                try:
+                    send_classic_signal(telegram, sig)
+                except Exception as exc:
+                    log.warning("[K-Classic/%s] telegram send failed: %s", strategy_id, exc)
+
+            log.info(
+                "[K-Classic/%s] SIGNAL %s %s entry=%s sl=%s tp1=%s score=%d grade=%s",
+                strategy_id, symbol, direction, entry, sl, tp1,
+                sig.get("score", 0), sig.get("vol_grade", "?"),
+            )
+
+        k_signals = {sid: sig for sid, sig in result.signals.items() if sid in _K_ENABLED}
+        log.info(
+            "[K-Classic] scan done — coins=%d k_signals=%d orders_created=%d",
+            result.total_coins, len(k_signals), orders_created,
+        )
+        return RunnerTaskResult("SUCCEEDED", {
+            "event_type":     "k_scan",
+            "coins_scanned":  result.total_coins,
+            "signals":        len(k_signals),
+            "orders_created": orders_created,
+        })
+
+    def _k_settle_task() -> RunnerTaskResult:
+        total = 0
+        for sid in _ALL_K_IDS:
+            try:
+                total += settler.settle_all(strategy_id=sid)
+            except Exception as exc:
+                log.warning("[K-Classic] settle failed for %s: %s", sid, exc)
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "k_settle", "settled": total})
+
+    def _k_report_task() -> RunnerTaskResult:
+        for sid, reporter in reporters.items():
+            try:
+                reporter.send_report()
+            except Exception as exc:
+                log.warning("[K-Classic] report failed for %s: %s", sid, exc)
+        return RunnerTaskResult("SUCCEEDED", {"event_type": "k_report"})
+
+    return (
+        RunnerTask("k_scan",   _k_scan_task,   interval=scan_interval,   startup_immediate=True),
+        RunnerTask("k_settle", _k_settle_task, interval=settle_interval, startup_immediate=True),
+        RunnerTask("k_report", _k_report_task, interval=report_interval),
+    )
 
 
 # ── SMA120 V1.9-D — XAUUSDT single-symbol strategy ───────────────────────────

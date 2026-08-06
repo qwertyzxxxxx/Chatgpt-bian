@@ -88,7 +88,7 @@ if __name__ == "__main__":
     from binance_ai_trader.infrastructure.sqlite_repository import MarketDataRepository
     from binance_ai_trader.notifications.telegram import TelegramNotifier
     from binance_ai_trader.runner.engine import ProductionRunner, RunnerLockError
-    from binance_ai_trader.v3.runner.tasks import build_reversal_tasks, build_v3_tasks, build_v66_tasks, build_v662_tasks, build_v663_tasks, build_v664_tasks, build_wave_long_tasks, build_wave_short_tasks, build_classic_tasks, build_sma120_tasks, build_rsd_tasks
+    from binance_ai_trader.v3.runner.tasks import build_reversal_tasks, build_v3_tasks, build_v66_tasks, build_v662_tasks, build_v663_tasks, build_v664_tasks, build_wave_long_tasks, build_wave_short_tasks, build_classic_tasks, build_k_tasks, build_sma120_tasks, build_rsd_tasks
     from binance_ai_trader.v3.storage.migration import run_migration
     from binance_ai_trader.v3.storage.pg import init_schema
     from binance_ai_trader.v3.telegram.startup import send_v3_startup
@@ -172,14 +172,14 @@ if __name__ == "__main__":
                 _LIVE_ENGINE_CFG: dict[str, tuple[str, str, str]] = {
                     V3_STRATEGY_ID:   ("V3",   "ORDER_NOTIONAL_USDT",           "1000"),
                     V663_STRATEGY_ID: ("V663", "V663_ORDER_NOTIONAL_USDT",      "1000"),
-                    "classic_k3":     ("C3",   "C3_ORDER_NOTIONAL_USDT",        "1000"),
+                    "classic_c3":     ("C3",   "C3_ORDER_NOTIONAL_USDT",        "1000"),
                     "wave_long":      ("W↑",   "WAVE_LONG_ORDER_NOTIONAL_USDT", "1000"),
                     # ← add new live strategies here (one line each)
                 }
                 # 方向過濾：只在指定方向開實盤
                 _LIVE_DIRECTION_FILTER: dict[str, set[str]] = {
                     V663_STRATEGY_ID: {"SHORT"},        # V663 實盤只做空
-                    "classic_k3":     {"SHORT"},        # C3 反彈空
+                    "classic_c3":     {"SHORT"},        # C3 反彈空
                     "wave_long":      {"LONG"},         # Wave↑ 放量突破做多
                 }
 
@@ -383,17 +383,17 @@ if __name__ == "__main__":
     # ── Classic C1-C4 tasks (经典量价策略，paper-only) ──────────────────────
     _classic_enabled = os.environ.get("ENABLE_CLASSIC", "").lower() == "true"
     if _classic_enabled:
-        from binance_ai_trader.classic.strategies.k1 import STRATEGY_ID as _C1_ID
-        from binance_ai_trader.classic.strategies.k2 import STRATEGY_ID as _C2_ID
-        from binance_ai_trader.classic.strategies.k3 import STRATEGY_ID as _C3_ID
-        from binance_ai_trader.classic.strategies.k4 import STRATEGY_ID_TOP as _C4T_ID, STRATEGY_ID_BOT as _C4B_ID
+        from binance_ai_trader.classic.strategies.c1 import STRATEGY_ID as _C1_ID
+        from binance_ai_trader.classic.strategies.c2 import STRATEGY_ID as _C2_ID
+        from binance_ai_trader.classic.strategies.c3 import STRATEGY_ID as _C3_ID
+        from binance_ai_trader.classic.strategies.c4 import STRATEGY_ID_TOP as _C4T_ID, STRATEGY_ID_BOT as _C4B_ID
         _ALL_CLASSIC = frozenset([_C1_ID, _C2_ID, _C3_ID, _C4T_ID, _C4B_ID])
         _classic_disabled = {
-            _C1_ID if os.environ.get("DISABLE_CLASSIC_K1", "").lower() == "true" else None,
-            _C2_ID if os.environ.get("DISABLE_CLASSIC_K2", "").lower() == "true" else None,
-            _C3_ID if os.environ.get("DISABLE_CLASSIC_K3", "").lower() == "true" else None,
-            _C4T_ID if os.environ.get("DISABLE_CLASSIC_K4", "").lower() == "true" else None,
-            _C4B_ID if os.environ.get("DISABLE_CLASSIC_K4", "").lower() == "true" else None,
+            _C1_ID if os.environ.get("DISABLE_CLASSIC_C1", "").lower() == "true" else None,
+            _C2_ID if os.environ.get("DISABLE_CLASSIC_C2", "").lower() == "true" else None,
+            _C3_ID if os.environ.get("DISABLE_CLASSIC_C3", "").lower() == "true" else None,
+            _C4T_ID if os.environ.get("DISABLE_CLASSIC_C4", "").lower() == "true" else None,
+            _C4B_ID if os.environ.get("DISABLE_CLASSIC_C4", "").lower() == "true" else None,
         } - {None}
         _classic_enabled_strategies = _ALL_CLASSIC - _classic_disabled if _classic_disabled else None
         classic_tasks = build_classic_tasks(
@@ -408,6 +408,20 @@ if __name__ == "__main__":
         tasks.extend(classic_tasks)
         _disabled_str = f" (disabled: {sorted(_classic_disabled)})" if _classic_disabled else ""
         _log.info("[startup] Classic C1-C4 enabled — paper-only (经典量价策略)%s", _disabled_str)
+
+    # ── Classic K1-K4 — 新型量价策略，纸盘 ─────────────────────────────────────
+    if os.environ.get("ENABLE_CLASSIC_K", "").lower() == "true":
+        k_tasks = build_k_tasks(
+            db_path=_DB_PATH,
+            telegram=notifier,
+            scan_interval=timedelta(minutes=15),
+            settle_interval=timedelta(minutes=15),
+            report_interval=timedelta(hours=1),
+        )
+        tasks.extend(k_tasks)
+        _log.info("[startup] Classic K1-K4 enabled — paper-only (新型量价策略)")
+    else:
+        _log.info("[startup] Classic K1-K4 disabled (set ENABLE_CLASSIC_K=true to enable)")
 
     # ── SMA120 V1.9-D — XAUUSDT 模拟盘 ──────────────────────────────────────────
     # Always started; on/off controlled at runtime via Telegram /paperon sma120 /

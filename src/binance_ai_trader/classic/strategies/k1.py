@@ -1,7 +1,7 @@
-"""K1 Pullback Long — 回踩多
+"""K1 底部启动多
 
-Pool: Top 20 gainers
-Logic: Uptrend → prior impulse wave (vol ≥ 1.5x) → first pullback (vol ≤ 0.8x) → Higher Low → re-entry (vol ≥ 1.2x)
+Pool: Top 20 gainers (涨幅前20)
+Logic: 长期下跌或低位整理 → 底部放量突破平台 → 缩量回踩 → Higher Low → 重新放量站上 EMA20 做多
 """
 from __future__ import annotations
 
@@ -9,53 +9,27 @@ from decimal import Decimal
 
 from binance_ai_trader.classic.config import CFG
 from binance_ai_trader.classic.indicators import (
-    atr, close_location, ema_direction_up, ema_from_klines, has_higher_low,
+    atr, close_location, ema_from_klines, has_higher_low,
     struct_low, vol_grade, vol_ratio, vol_ratio_for_segment,
+    upper_wick_ratio,
 )
 from binance_ai_trader.classic.models import CoinContext
 from binance_ai_trader.classic.scoring import compute_score
 from binance_ai_trader.domain.models import Kline
 
 STRATEGY_ID   = "classic_k1"
-STRATEGY_NAME = "K1 回踩多"
+STRATEGY_NAME = "K1 底部启动多"
 
-# 策略篩選條件常量索引（/conditions 命令從此讀取，勿手寫說明文字）
 CONDITIONS = {
-    "strategy_id":      STRATEGY_ID,
-    "strategy_version": "c1_v1",
-    "direction":        "LONG",
-    "timeframes":       "4H / 1H / 15m（1D 未使用）",
-    "pool":             f"Top {CFG.universe_pool_size} 漲幅 + Top {CFG.universe_pool_size} 跌幅，成交額 ≥ {int(CFG.min_quote_volume_24h/Decimal('1000000'))}M USDT",
-    "min_quote_volume": CFG.min_quote_volume_24h,
-    "min_move_pct":     "未使用（通過 pool_size 間接篩選動量幣）",
-    "d1":               "未使用",
-    "h4":               (
-        f"EMA20 > EMA60 且 EMA20 上升 且 price > EMA20；"
-        f"price 距 EMA20 ≤ {CFG.c1_4h_ema_dist_max_atr} ATR4H；"
-        f"屏蔽條件（滿足 2/3 跳過）：7d漲幅>{CFG.c1_block_7d_gain}% / "
-        f"30d位置>{int(CFG.c1_block_30d_pos*100)}% / 距EMA>{CFG.c1_block_ema_dist} ATR"
-    ),
-    "h1":               f"前段放量上漲（量比≥{CFG.c1_rally_vol_min}）+ 縮量回踩（量比≤{CFG.c1_pullback_vol_max}）+ 出現更高低點 HL",
-    "m15":              f"收盤 > EMA20_15m；量比 ≥ {CFG.c1_restart_vol_min}",
-    "ema":              "4H EMA20/60（趨勢判斷）；15m EMA20（入場基準）",
-    "rsi":              "未使用",
-    "atr":              f"4H ATR14 → 距EMA距離判斷；15m ATR14 × {CFG.sl_atr_buffer} → 止損 buffer",
-    "volume":           (
-        f"1H 前浪量比 ≥ {CFG.c1_rally_vol_min}（動能確認）；"
-        f"1H 回踩量比 ≤ {CFG.c1_pullback_vol_max}（縮量確認）；"
-        f"15m 入場量比 ≥ {CFG.c1_restart_vol_min}"
-    ),
-    "structure":        "1H 更高低點 HL（上升結構確認）；15m 近 8 根結構低點止損",
-    "entry_trigger":    f"15m 收盤 > EMA20_15m 且量比 ≥ {CFG.c1_restart_vol_min}（當前 K 線市價）",
-    "sl_calc":          f"struct_low(近8根15m) − {CFG.sl_atr_buffer}×ATR14_15m；止損距離 ≤ {CFG.max_stop_pct}%",
-    "tp_calc":          f"vol_A: TP1=×{CFG.tp1_r_a} TP2=×{CFG.tp2_r_a}；vol_S: TP1=×{CFG.tp1_r_s} TP2=×{CFG.tp2_r_s}；vol_S+: TP1=×{CFG.tp1_r_s_plus} TP2=×{CFG.tp2_r_s_plus}",
-    "rr":               f"A級={CFG.tp1_r_a} / S級={CFG.tp1_r_s} / S+級={CFG.tp1_r_s_plus}",
-    "timeout_hours":    CFG.hold_hours,
-    "cooldown_hours":   CFG.dedup_hours,
-    "dedup":            f"{CFG.dedup_hours}h 同幣同方向去重",
-    "max_signals":      f"每策略 {CFG.max_per_strategy} 單/輪，全策略合計 ≤ {CFG.max_total} 單/輪",
-    "enabled_env":      "ENABLE_CLASSIC=true",
-    "score_threshold":  f"生成訂單 ≥ {CFG.score_signal_min}分；僅記錄 ≥ {CFG.score_watch_min}分",
+    "strategy_id":   STRATEGY_ID,
+    "direction":     "LONG",
+    "pool":          "Top 20 涨幅，24h成交额 ≥ 3000万 USDT",
+    "space":         "30日区间位置 0.15~0.65，7日涨幅 ≤ 35%，4H EMA距离 ≤ 2 ATR",
+    "1h_pattern":   "近5根1H K线中有收盘突破平台高点（量比≥2.0，收盘位置≥0.70）",
+    "15m_entry":    "价格拉回至EMA20附近，缩量回踩后重新放量站上EMA20（量比≥1.2），形成Higher Low",
+    "sl":           "近8根15m结构低点 - 0.2×ATR14",
+    "tp":           "A级2.0R / S级2.5R / S+级3.0R（以TP2为目标）",
+    "hold_hours":   48,
 }
 
 
@@ -65,84 +39,98 @@ def evaluate(
     klines_1h: tuple[Kline, ...],
     klines_4h: tuple[Kline, ...],
 ) -> tuple[dict | None, list[str]]:
-    """
-    Returns (signal_dict, rejections).
-    signal_dict has keys: entry, sl, tp1, tp2, rr, stop_pct, score, vol_grade, pattern_desc, block_checks
-    Returns (None, rejections) if no signal.
-    """
     rejs: list[str] = []
+
     if ctx.direction != "LONG":
         return None, ["direction_not_long"]
 
-    # ── 4H trend conditions ───────────────────────────────────────────────────
-    if not (ctx.ema20_4h > ctx.ema60_4h):
-        rejs.append("4h_ema20_not_above_ema60")
-    if not ctx.ema20_4h_up:
-        rejs.append("4h_ema20_not_trending_up")
-    if ctx.current_price <= ctx.ema20_4h:
-        rejs.append("price_below_4h_ema20")
-    if ctx.price_dist_4h_atr > CFG.c1_4h_ema_dist_max_atr:
-        rejs.append(f"price_too_far_from_4h_ema20_{float(ctx.price_dist_4h_atr):.2f}ATR")
-
-    # ── Block checks (if 2/3 met → block) ────────────────────────────────────
-    block_flags = 0
-    block_parts = []
-    if ctx.change_7d > CFG.c1_block_7d_gain:
-        block_flags += 1
-        block_parts.append(f"7d+{float(ctx.change_7d):.1f}%>{CFG.c1_block_7d_gain}%")
-    if ctx.range_pos_30d > CFG.c1_block_30d_pos:
-        block_flags += 1
-        block_parts.append(f"30d_pos={float(ctx.range_pos_30d):.2f}>{CFG.c1_block_30d_pos}")
-    if ctx.price_dist_4h_atr > CFG.c1_block_ema_dist:
-        block_flags += 1
-        block_parts.append(f"dist={float(ctx.price_dist_4h_atr):.2f}ATR>{CFG.c1_block_ema_dist}ATR")
-    block_checks = "; ".join(block_parts) if block_parts else "OK"
-
-    if block_flags >= 2:
-        rejs.append(f"BLOCKED(2/3): {block_checks}")
+    # ── 空间条件 ──────────────────────────────────────────────────────────────
+    if ctx.range_pos_30d > Decimal("0.65"):
+        rejs.append(f"range_pos_too_high_{float(ctx.range_pos_30d):.2f}>0.65")
+    if ctx.range_pos_30d < Decimal("0.15"):
+        rejs.append(f"range_pos_too_low_{float(ctx.range_pos_30d):.2f}<0.15")
+    if ctx.change_7d > Decimal("35"):
+        rejs.append(f"7d_gain_already_high_{float(ctx.change_7d):.1f}%>35%")
+    # 4H未过度延伸
+    if ctx.price_dist_4h_atr > Decimal("2.0"):
+        rejs.append(f"4h_overextended_{float(ctx.price_dist_4h_atr):.2f}>2ATR")
 
     if rejs:
         return None, rejs
 
-    # ── 1H pattern: prior impulse + pullback + Higher Low ─────────────────────
-    if len(klines_1h) < 20:
+    # ── 1H: 检测近期平台突破 ──────────────────────────────────────────────────
+    if len(klines_1h) < 22:
         return None, ["not_enough_1h_klines"]
 
-    # Split 1H into two halves: older = impulse zone, recent = pullback zone
-    split = len(klines_1h) // 2
-    impulse_seg = klines_1h[:split]
-    pullback_seg = klines_1h[split:]
+    # 平台区间：最近20根中较早的15根
+    platform_bars = klines_1h[-20:-5]
+    platform_high = max(k.high for k in platform_bars)
+    platform_low  = min(k.low  for k in platform_bars)
 
-    vr_impulse  = vol_ratio_for_segment(impulse_seg,  baseline=klines_1h)
-    vr_pullback = vol_ratio_for_segment(pullback_seg, baseline=klines_1h)
+    # 最近5根1H中是否有突破K
+    recent_1h = klines_1h[-5:]
+    breakout_candidates = [
+        k for k in recent_1h
+        if k.close > platform_high
+    ]
+    if not breakout_candidates:
+        return None, ["no_1h_platform_breakout"]
 
-    if vr_impulse < CFG.c1_rally_vol_min:
-        rejs.append(f"impulse_vol_low_{float(vr_impulse):.2f}<{CFG.c1_rally_vol_min}")
-    if vr_pullback > CFG.c1_pullback_vol_max:
-        rejs.append(f"pullback_vol_high_{float(vr_pullback):.2f}>{CFG.c1_pullback_vol_max}")
-    if not has_higher_low(klines_1h):
-        rejs.append("no_higher_low_1h")
+    # 取成交量最大的突破K评估质量
+    breakout_k = max(breakout_candidates, key=lambda k: float(k.quote_volume))
+    bl_vr = vol_ratio_for_segment((breakout_k,), baseline=klines_1h)
+    bl_cl = close_location(breakout_k)
+    bl_uw = upper_wick_ratio(breakout_k)
 
-    # ── 15m re-entry conditions ───────────────────────────────────────────────
+    if bl_vr < Decimal("2.0"):
+        rejs.append(f"breakout_vol_low_{float(bl_vr):.2f}<2.0")
+    if bl_cl < Decimal("0.70"):
+        rejs.append(f"breakout_close_loc_weak_{float(bl_cl):.2f}<0.70")
+    # 长上影且收回 → 假突破
+    if bl_uw > Decimal("0.40") and bl_cl < Decimal("0.50"):
+        rejs.append(f"fake_breakout_long_upper_wick_{float(bl_uw):.2f}")
+
+    if rejs:
+        return None, rejs
+
+    # ── 15m: 回踩缩量 → 重新站上EMA20放量 ─────────────────────────────────────
+    if len(klines_15m) < 22:
+        return None, ["not_enough_15m_klines"]
+
     ema20_15m = ema_from_klines(klines_15m, 20)
+    atr14_15m = atr(klines_15m, 14)
     vr_15m    = vol_ratio(klines_15m)
     cur_k     = klines_15m[-1]
-    cl        = close_location(cur_k)
-    atr14_15m = atr(klines_15m, 14)
 
-    above_ema = cur_k.close > ema20_15m
-    if not above_ema:
-        rejs.append("price_not_above_15m_ema20")
-    if vr_15m < CFG.c1_restart_vol_min:
-        rejs.append(f"restart_vol_low_{float(vr_15m):.2f}<{CFG.c1_restart_vol_min}")
+    # 当前K线站上EMA20（已经进入回踩后重启阶段）
+    if cur_k.close < ema20_15m:
+        rejs.append("price_below_15m_ema20")
+
+    # 再启动量能
+    if vr_15m < Decimal("1.2"):
+        rejs.append(f"restart_vol_low_{float(vr_15m):.2f}<1.2")
+
+    # 近期15m有缩量回踩（倒数2-9根的量比低于1.2）
+    pullback_seg = klines_15m[-9:-2]
+    vr_pb = vol_ratio_for_segment(pullback_seg, baseline=klines_15m)
+    if vr_pb > Decimal("1.3"):
+        rejs.append(f"no_volume_contraction_{float(vr_pb):.2f}>1.3")
+
+    # 价格没有跌回平台深处（关闭价 > 平台低点）
+    if cur_k.close < platform_low:
+        rejs.append("price_fell_below_platform_low")
+
+    # 1H Higher Low（回踩没破坏结构）
+    if not has_higher_low(klines_1h):
+        rejs.append("no_higher_low_1h")
 
     if rejs:
         return None, rejs
 
     # ── Entry / SL / TP ───────────────────────────────────────────────────────
-    sl_raw    = struct_low(klines_15m, lookback=8) - CFG.sl_atr_buffer * atr14_15m
-    entry     = cur_k.close
-    risk      = entry - sl_raw
+    entry   = cur_k.close
+    sl_raw  = struct_low(klines_15m, lookback=8) - CFG.sl_atr_buffer * atr14_15m
+    risk    = entry - sl_raw
     if risk <= 0:
         return None, ["invalid_risk_negative"]
 
@@ -150,33 +138,33 @@ def evaluate(
     if stop_pct > CFG.max_stop_pct:
         return None, [f"stop_pct_too_wide_{float(stop_pct):.2f}%>{CFG.max_stop_pct}%"]
 
-    grade     = vol_grade(vr_15m)
-    tp1_r     = CFG.tp1_r_s if grade in ("S", "S_PLUS") else CFG.tp1_r_a
-    tp2_r     = CFG.tp2_r_s if grade in ("S", "S_PLUS") else CFG.tp2_r_a
-    tp1       = entry + risk * tp1_r
-    tp2       = entry + risk * tp2_r
-    rr        = tp1_r
+    grade  = vol_grade(vr_15m)
+    tp1_r  = CFG.tp1_r_s if grade in ("S", "S_PLUS") else CFG.tp1_r_a
+    tp2_r  = CFG.tp2_r_s if grade in ("S", "S_PLUS") else CFG.tp2_r_a
+    tp1    = entry + risk * tp1_r
+    tp2    = entry + risk * tp2_r
+    rr     = tp1_r
 
-    # ── Score ──────────────────────────────────────────────────────────────────
     sb = compute_score(
         ctx, STRATEGY_ID,
-        pattern_complete=vr_impulse >= CFG.c1_rally_vol_min,
-        pullback_quality=vr_pullback <= CFG.c1_pullback_vol_max and ctx.has_higher_low_1h,
-        entry_trigger=above_ema and vr_15m >= CFG.c1_restart_vol_min,
-        vr_impulse=vr_impulse,
-        vr_pullback=vr_pullback,
-        cl=cl,
+        pattern_complete=(bl_vr >= Decimal("2.0") and bl_cl >= Decimal("0.70")),
+        pullback_quality=(vr_pb <= Decimal("1.3") and ctx.has_higher_low_1h),
+        entry_trigger=(cur_k.close >= ema20_15m and vr_15m >= Decimal("1.2")),
+        vr_impulse=bl_vr,
+        vr_pullback=vr_pb,
+        cl=close_location(cur_k),
     )
 
     pattern_desc = (
-        f"4H趋势多头排列；1H前段量比{float(vr_impulse):.2f}x回踩缩量{float(vr_pullback):.2f}x；"
-        f"Higher Low确认；15m量比{float(vr_15m):.2f}x重启"
+        f"K1底部启动：30d位置{float(ctx.range_pos_30d):.2f}，"
+        f"1H突破量比{float(bl_vr):.2f}x收盘位{float(bl_cl):.2f}；"
+        f"15m缩量{float(vr_pb):.2f}x回踩后重启{float(vr_15m):.2f}x站上EMA20"
     )
 
     return {
         "entry": entry, "sl": sl_raw, "tp1": tp1, "tp2": tp2, "rr": rr,
         "stop_pct": stop_pct, "score": sb.total, "vol_grade": grade,
-        "pattern_desc": pattern_desc, "block_checks": block_checks,
-        "vr_impulse": vr_impulse, "vr_pullback": vr_pullback,
-        "cl": cl, "score_breakdown": sb,
+        "pattern_desc": pattern_desc, "block_checks": "OK",
+        "vr_impulse": bl_vr, "vr_pullback": vr_pb, "cl": close_location(cur_k),
+        "score_breakdown": sb,
     }, []
