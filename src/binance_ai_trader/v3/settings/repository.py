@@ -66,7 +66,7 @@ LIVE_DEFAULTS: dict[str, dict[str, object]] = {
     V3_STRATEGY_ID:   {"live_enabled": False, "notional_usdt": "1000"},
     V66_STRATEGY_ID:  {"live_enabled": False, "notional_usdt": "1000"},
     V663_STRATEGY_ID: {"live_enabled": False, "notional_usdt": "1000"},
-    "classic_k3":     {"live_enabled": True,  "notional_usdt": "1000"},
+    "classic_c3":     {"live_enabled": True,  "notional_usdt": "1000"},
     "wave_long":      {"live_enabled": True,  "notional_usdt": "1000"},
 }
 

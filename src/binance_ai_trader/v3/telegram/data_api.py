@@ -174,7 +174,7 @@ class _DataApiHandler(BaseHTTPRequestHandler):
             "hotlist_momentum_v3", "hotlist_v66", "hotlist_v662",
             "hotlist_v663", "hotlist_v664",
             "wave_long", "wave_short",
-            "classic_k1", "classic_k3",
+            "classic_c1", "classic_c3",
         ]
         result = {}
         for sid in targets:

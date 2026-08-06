@@ -708,15 +708,15 @@ def _cmd_conditions(args: list[str]) -> str:
         "v3":        ("binance_ai_trader.v3.strategies.hotlist",       "V3/momentum", "extended"),
         "wave_long": ("binance_ai_trader.v3.strategies.wave_long",     "wave_long",   "extended"),
         "wave_short":("binance_ai_trader.v3.strategies.wave_short",    "wave_short",  "extended"),
-        "k1":        ("binance_ai_trader.classic.strategies.k1",       "classic_k1",  "extended"),
-        "k2":        ("binance_ai_trader.classic.strategies.k2",       "classic_k2",  "extended"),
-        "k3":        ("binance_ai_trader.classic.strategies.k3",       "classic_k3",  "extended"),
+        "c1":        ("binance_ai_trader.classic.strategies.c1",       "classic_c1",  "extended"),
+        "c2":        ("binance_ai_trader.classic.strategies.c2",       "classic_c2",  "extended"),
+        "c3":        ("binance_ai_trader.classic.strategies.c3",       "classic_c3",  "extended"),
     }
     _NORMALIZE = {
         "momentum_v3": "v3", "hotlist_momentum_v3": "v3",
         "hotlist_v66": "v66", "hotlist_v662": "v662",
         "hotlist_v663": "v663", "hotlist_v664": "v664",
-        "classic_k1": "k1", "classic_k2": "k2", "classic_k3": "k3",
+        "classic_c1": "c1", "classic_c2": "c2", "classic_c3": "c3",
         "wavelong": "wave_long", "waveshort": "wave_short",
     }
 
@@ -1088,7 +1088,7 @@ def _cmd_review(args: list[str]) -> str:
       v66, hotlist, hotlist_v66, hotlist_momentum_v3
       v662, v663, v664
       wave_long, wave_short
-      k1, classic_k1 / k2, classic_k2 / k3, classic_k3
+      c1, classic_c1 / c2, classic_c2 / c3, classic_c3
       rsd_long, rsd_short
 
     days: 整數天數，0 或省略 = 全周期
@@ -1113,12 +1113,12 @@ def _cmd_review(args: list[str]) -> str:
         "wave_short":           "wave_short",
         "waveshort":            "wave_short",
         # classic 系列
-        "k1":                   "classic_k1",
-        "classic_k1":           "classic_k1",
-        "k2":                   "classic_k2",
-        "classic_k2":           "classic_k2",
-        "k3":                   "classic_k3",
-        "classic_k3":           "classic_k3",
+        "c1":                   "classic_c1",
+        "classic_c1":           "classic_c1",
+        "c2":                   "classic_c2",
+        "classic_c2":           "classic_c2",
+        "c3":                   "classic_c3",
+        "classic_c3":           "classic_c3",
         # rsd 系列
         "rsd_long":             "rsd_long",
         "rsd_short":            "rsd_short",
