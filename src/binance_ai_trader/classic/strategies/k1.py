@@ -62,13 +62,13 @@ def evaluate(
     if len(klines_1h) < 22:
         return None, ["not_enough_1h_klines"]
 
-    # 平台区间：最近20根中较早的15根
-    platform_bars = klines_1h[-20:-5]
+    # 平台区间：最近24根中较早的12根（给出足够的平台确认）
+    platform_bars = klines_1h[-24:-12]
     platform_high = max(k.high for k in platform_bars)
     platform_low  = min(k.low  for k in platform_bars)
 
-    # 最近5根1H中是否有突破K
-    recent_1h = klines_1h[-5:]
+    # 最近12根1H中是否有突破K（12小时内，覆盖半天内的突破）
+    recent_1h = klines_1h[-12:]
     breakout_candidates = [
         k for k in recent_1h
         if k.close > platform_high

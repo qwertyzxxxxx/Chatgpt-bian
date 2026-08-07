@@ -54,9 +54,10 @@ def evaluate(
     if ctx.price_dist_4h_atr < Decimal("1.5"):
         rejs.append(f"4h_dist_too_close_{float(ctx.price_dist_4h_atr):.2f}<1.5ATR")
 
-    # 必须排除：底部刚反弹 / 4H趋势刚转强（EMA20刚穿越EMA60）
-    if ctx.ema20_4h < ctx.ema60_4h:
-        rejs.append("4h_still_bearish_alignment")
+    # 注意：4H EMA20<EMA60 不硬拦截（某些阶段性高位倒V行情中EMA尚未完全翻多），
+    # 但如果同时满足的是 EMA20>EMA60（趋势更成熟），得分会更高。
+    # 将其作为软条件记录，不硬拒绝。
+    _4h_trend_mature = ctx.ema20_4h >= ctx.ema60_4h  # noqa: N806
 
     if rejs:
         return None, rejs

@@ -51,8 +51,8 @@ def evaluate(
         rejs.append("4h_ema20_not_trending_up")
     if ctx.current_price < ctx.ema20_4h:
         rejs.append("price_below_4h_ema20")
-    if ctx.price_dist_4h_atr > Decimal("1.5"):
-        rejs.append(f"4h_dist_too_far_{float(ctx.price_dist_4h_atr):.2f}>1.5ATR")
+    if ctx.price_dist_4h_atr > Decimal("2.0"):
+        rejs.append(f"4h_dist_too_far_{float(ctx.price_dist_4h_atr):.2f}>2.0ATR")
 
     if rejs:
         return None, rejs
