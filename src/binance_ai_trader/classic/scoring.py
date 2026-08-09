@@ -48,7 +48,7 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 6
         else:
             pts += 0
-    elif "c3" in strategy_id:
+    elif "c3" in strategy_id and "k3v2" not in strategy_id:
         # Short: ideal if not at extreme bottom
         if Decimal("0.20") <= rp <= Decimal("0.60"):
             pts += 10
@@ -64,6 +64,22 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 6
         else:
             pts += 0
+    elif "k3v2" in strategy_id:
+        # K3v2 expanded: 0.80 minimum, so 0.90+ is best
+        if rp >= Decimal("0.90"):
+            pts += 10
+        elif rp >= Decimal("0.80"):
+            pts += 6
+        else:
+            pts += 0
+    elif "k4v2" in strategy_id:
+        # K4v2 expanded: 0.20 maximum, so 0.10- is best
+        if rp <= Decimal("0.10"):
+            pts += 10
+        elif rp <= Decimal("0.20"):
+            pts += 6
+        else:
+            pts += 0
     elif "c4_bot" in strategy_id or "k4" in strategy_id:
         # Bottom long/K4 panic: low position is a plus
         if rp <= Decimal("0.15"):
@@ -74,9 +90,9 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 0
 
     # 7d change magnitude (10 pts)
-    if "c4_top" in strategy_id or "k3" in strategy_id:
+    if "c4_top" in strategy_id or "k3" in strategy_id or "k3v2" in strategy_id:
         pts += 10 if ch7 >= Decimal("40") else (7 if ch7 >= Decimal("30") else 3)
-    elif "c4_bot" in strategy_id or "k4" in strategy_id:
+    elif "c4_bot" in strategy_id or "k4" in strategy_id or "k4v2" in strategy_id:
         pts += 10 if ch7 >= Decimal("35") else (7 if ch7 >= Decimal("25") else 3)
     elif "k1" in strategy_id:
         # K1: moderate gain is ideal (breakout just started)
@@ -96,7 +112,7 @@ def score_time_space(ctx: CoinContext, strategy_id: str) -> int:
             pts += 2
 
     # Consecutive trend days (10 pts)
-    if "c4_top" in strategy_id or "c4_bot" in strategy_id or "k3" in strategy_id or "k4" in strategy_id:
+    if "c4_top" in strategy_id or "c4_bot" in strategy_id or "k3" in strategy_id or "k4" in strategy_id or "k3v2" in strategy_id or "k4v2" in strategy_id:
         # More consecutive days = stronger signal for reversal
         pts += min(10, consec * 3)
     elif "c1" in strategy_id or "c2" in strategy_id or "k1" in strategy_id or "k2" in strategy_id:
@@ -147,7 +163,7 @@ def score_trend(ctx: CoinContext, strategy_id: str) -> int:
     elif "c3" in strategy_id or "k3" in strategy_id:
         pts += 5 if not ctx.ema20_4h_up else 0
     else:
-        pts += 3  # C4/K4: direction of EMA less critical
+        pts += 3  # C4/K4/K3v2/K4v2: direction of EMA less critical
 
     # 1H structure (10 pts)
     if "c1" in strategy_id or "c2" in strategy_id or "c4_bot" in strategy_id or "k1" in strategy_id or "k2" in strategy_id or "k4" in strategy_id:

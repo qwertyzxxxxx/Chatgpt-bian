@@ -19,6 +19,7 @@ class ClassicConfig:
     limit_1h: int = 55
     limit_4h: int = 65
     limit_1d: int = 32
+    universe_pool_size_extended: int = 40   # top-40 for K3v2/K4v2 extended pools
 
     # ── Volume analysis ───────────────────────────────────────────────────────
     vol_ratio_lookback: int = 20            # median of previous N closed bars

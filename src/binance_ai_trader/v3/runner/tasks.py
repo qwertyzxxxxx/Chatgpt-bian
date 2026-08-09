@@ -1877,12 +1877,14 @@ def build_k_tasks(
     from binance_ai_trader.classic.repository import ClassicScanRepository
     from binance_ai_trader.classic.telegram_push import send_classic_signal
     from binance_ai_trader.classic.config import CFG as _KCFG
-    from binance_ai_trader.classic.strategies.k1 import STRATEGY_ID as K1_ID
-    from binance_ai_trader.classic.strategies.k2 import STRATEGY_ID as K2_ID
-    from binance_ai_trader.classic.strategies.k3 import STRATEGY_ID as K3_ID
-    from binance_ai_trader.classic.strategies.k4 import STRATEGY_ID as K4_ID
+    from binance_ai_trader.classic.strategies.k1   import STRATEGY_ID as K1_ID
+    from binance_ai_trader.classic.strategies.k2   import STRATEGY_ID as K2_ID
+    from binance_ai_trader.classic.strategies.k3   import STRATEGY_ID as K3_ID
+    from binance_ai_trader.classic.strategies.k4   import STRATEGY_ID as K4_ID
+    from binance_ai_trader.classic.strategies.k3v2 import STRATEGY_ID as K3V2_ID
+    from binance_ai_trader.classic.strategies.k4v2 import STRATEGY_ID as K4V2_ID
 
-    _ALL_K_IDS = (K1_ID, K2_ID, K3_ID, K4_ID)
+    _ALL_K_IDS = (K1_ID, K2_ID, K3_ID, K4_ID, K3V2_ID, K4V2_ID)
     _K_ENABLED = frozenset(_ALL_K_IDS)
 
     client     = BinancePublicClient(base_url=base_url, timeout_seconds=timeout, max_retries=max_retries)

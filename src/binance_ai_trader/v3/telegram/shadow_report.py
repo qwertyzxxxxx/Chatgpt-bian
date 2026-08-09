@@ -57,6 +57,8 @@ _STRAT_TITLE: dict[str, str] = {
     "classic_k2":          "📊 K2 主升回踩多 Paper",
     "classic_k3":          "📊 K3 高位衰竭空 Paper",
     "classic_k4":          "📊 K4 恐慌反转多 Paper",
+    "classic_k3v2":        "📊 K3v2 高位衰竭空+ Paper",
+    "classic_k4v2":        "📊 K4v2 恐慌反轉多+ Paper",
     "xau_sma120":          "📊 SMA120 V1.9-D XAUUSDT Paper",
 }
 

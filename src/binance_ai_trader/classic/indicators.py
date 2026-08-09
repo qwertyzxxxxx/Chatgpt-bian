@@ -189,6 +189,66 @@ def has_lower_high(klines: tuple[Kline, ...], window: int = 3) -> bool:
     return len(highs) >= 2 and highs[-1] < highs[-2]
 
 
+def trend_age_from_swing_low(
+    klines: tuple[Kline, ...],
+    window: int = 2,
+) -> tuple[int, Decimal]:
+    """For K3v2: find the most recent swing low in daily klines and measure
+    how long the uptrend has persisted.
+
+    Returns:
+        (trend_age_days, trend_return_pct)
+        trend_age_days  — bars since the last swing low (≈ calendar days for 1D klines)
+        trend_return_pct — (current_close / swing_low - 1) × 100
+    """
+    n = len(klines)
+    last_idx: int | None = None
+    last_price: Decimal | None = None
+    for i in range(window, n - window):
+        lo = klines[i].low
+        if (
+            all(klines[i - j].low >= lo for j in range(1, window + 1))
+            and all(klines[i + j].low >= lo for j in range(1, window + 1))
+        ):
+            last_idx = i
+            last_price = lo
+    if last_idx is None or last_price is None or last_price == 0:
+        return 0, Decimal("0")
+    age = (n - 1) - last_idx
+    ret = (klines[-1].close - last_price) / last_price * Decimal("100")
+    return age, ret
+
+
+def trend_age_from_swing_high(
+    klines: tuple[Kline, ...],
+    window: int = 2,
+) -> tuple[int, Decimal]:
+    """For K4v2: find the most recent swing high in daily klines and measure
+    how long the downtrend has persisted.
+
+    Returns:
+        (trend_age_days, trend_return_pct)
+        trend_age_days  — bars since the last swing high (≈ calendar days for 1D klines)
+        trend_return_pct — (swing_high / current_close - 1) × 100  (positive = drawn-down)
+    """
+    n = len(klines)
+    last_idx: int | None = None
+    last_price: Decimal | None = None
+    for i in range(window, n - window):
+        hi = klines[i].high
+        if (
+            all(klines[i - j].high <= hi for j in range(1, window + 1))
+            and all(klines[i + j].high <= hi for j in range(1, window + 1))
+        ):
+            last_idx = i
+            last_price = hi
+    if last_idx is None or last_price is None or last_price == 0:
+        return 0, Decimal("0")
+    age = (n - 1) - last_idx
+    ret = (last_price - klines[-1].close) / last_price * Decimal("100")
+    return age, ret
+
+
 def struct_low(klines: tuple[Kline, ...], lookback: int = 10) -> Decimal:
     """Recent structure low = min low of last `lookback` bars."""
     return min(k.low for k in klines[-lookback:])

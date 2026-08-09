@@ -50,8 +50,15 @@ def _is_valid(contract: Contract, ticker: Ticker24h) -> bool:
 
 def build_universe(
     client: BinancePublicClient,
+    pool_size: int | None = None,
 ) -> tuple[list[UniverseEntry], list[UniverseEntry]]:
-    """Return (top_gainers[:20], top_losers[:20]) from universe >= 30M USDT."""
+    """Return (top_gainers[:pool_size], top_losers[:pool_size]) from universe >= 30M USDT.
+
+    pool_size defaults to CFG.universe_pool_size (20).
+    Pass a larger value (e.g. CFG.universe_pool_size_extended = 40) for K3v2/K4v2.
+    """
+    n = pool_size if pool_size is not None else CFG.universe_pool_size
+
     contracts = {c.symbol: c for c in client.exchange_info()}
     tickers   = {t.symbol: t for t in client.tickers_24h()}
 
@@ -71,14 +78,14 @@ def build_universe(
         ))
 
     gainers = sorted(eligible, key=lambda e: (-e.change_24h, -e.quote_volume_24h))
-    gainers = [e for e in gainers if e.change_24h > 0][: CFG.universe_pool_size]
+    gainers = [e for e in gainers if e.change_24h > 0][:n]
 
     losers  = sorted(eligible, key=lambda e: (e.change_24h, -e.quote_volume_24h))
-    losers  = [e for e in losers  if e.change_24h < 0][: CFG.universe_pool_size]
+    losers  = [e for e in losers  if e.change_24h < 0][:n]
 
     log.info(
-        "[Classic/Universe] eligible=%d gainers=%d losers=%d (min_vol=%sM)",
-        len(eligible), len(gainers), len(losers),
+        "[Classic/Universe] eligible=%d gainers=%d losers=%d pool_size=%d (min_vol=%sM)",
+        len(eligible), len(gainers), len(losers), n,
         int(CFG.min_quote_volume_24h / 1_000_000),
     )
     return gainers, losers
