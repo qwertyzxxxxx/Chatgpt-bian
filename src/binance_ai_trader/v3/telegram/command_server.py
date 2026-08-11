@@ -39,6 +39,7 @@ _COMMANDS = {
     "/livestatus", "/livemode", "/setlive",
     "/paperon", "/paperoff", "/paperstatus",
     "/winrates", "/conditions", "/data", "/review",
+    "/shadow",
 }
 
 
@@ -101,6 +102,7 @@ def _cmd_help() -> str:
         "/orders  📂 当前模拟单 + 最近成交\n"
         "/perf    🏆 模拟盘绩效统计\n"
         "/winrates 📊 V66/V663/V664 策略胜率横向对比\n"
+        "/shadow  🔬 K1/K2 Shadow V2 对照实验统计\n"
         "/conditions [v66|v663|v3|wave_long|wave_short|c1|c2|c3] 📋 策略過濾條件詳情\n"
         "/review <strategy> <days> 📊 策略複盤（健康/方向/因子對比/虧損原因/漏斗）\n"
         "/data    🔌 生产只读数据API接口说明\n"
@@ -1194,6 +1196,117 @@ def _cmd_data() -> str:
     )
 
 
+def _cmd_shadow() -> str:
+    """K1/K2 Shadow V2 对照实验统计 — 简洁格式."""
+    try:
+        from binance_ai_trader.classic.shadow_repository import ClassicShadowRepository
+        from binance_ai_trader.classic.shadow import K1_SHADOW_V2_ID, K2_SHADOW_V2_ID
+        repo = ClassicShadowRepository()
+
+        # Sample thresholds
+        K1_SAMPLE_MIN  = 30
+        K2_SAMPLE_MIN  = 20
+        K1S_SAMPLE_MIN = 15
+        K2S_SAMPLE_MIN = 10
+
+        stats = repo.get_stats()  # list of dicts keyed by shadow_strategy
+
+        def _pf(tp: int, sl: int, avg_win: float | None, avg_loss: float | None) -> str:
+            if sl == 0:
+                return "INF" if tp > 0 else "—"
+            if not avg_win or not avg_loss or avg_loss == 0:
+                return "N/A"
+            return f"{abs(avg_win / avg_loss) * tp / sl:.2f}"
+
+        def _wr(tp: int, n: int) -> str:
+            return f"{tp/n*100:.1f}%" if n > 0 else "—"
+
+        lines = ["🔬 K1/K2 Shadow V2 对照实验", "━━━━━━━━━━━━━━"]
+
+        for shadow_id, src_id, src_label in [
+            (K1_SHADOW_V2_ID, "classic_k1", "K1"),
+            (K2_SHADOW_V2_ID, "classic_k2", "K2"),
+        ]:
+            # Find matching stats row
+            row = next((r for r in stats if r["shadow_strategy"] == shadow_id), None)
+
+            # Source counts
+            src_settled = repo.count_by_strategy(src_id)
+            shd_settled = repo.count_by_strategy(shadow_id)
+            src_min  = K1_SAMPLE_MIN  if "k1" in shadow_id else K2_SAMPLE_MIN
+            shd_min  = K1S_SAMPLE_MIN if "k1" in shadow_id else K2S_SAMPLE_MIN
+            low_warn = src_settled < src_min or shd_settled < shd_min
+
+            lines.append(f"\n── {src_label} ──────────")
+
+            if row:
+                total     = row.get("total_candidates") or 0
+                passed    = row.get("passed")    or 0
+                rejected  = row.get("rejected")  or 0
+                pass_rate = f"{passed/total*100:.0f}%" if total > 0 else "—"
+                src_tp    = row.get("source_tp") or 0
+                src_sl    = row.get("source_sl") or 0
+                src_n     = src_tp + src_sl
+                shd_tp    = row.get("shadow_tp") or 0
+                shd_sl    = row.get("shadow_sl") or 0
+                shd_n     = shd_tp + shd_sl
+                filtered_tp = row.get("filtered_tp") or 0
+                filtered_sl = row.get("filtered_sl") or 0
+
+                # Source stats
+                src_st = repo.get_source_stats(src_id)
+                src_wr = _wr(src_tp, src_n)
+                src_aw = src_st.get("avg_win")
+                src_al = src_st.get("avg_loss")
+                src_pf = _pf(src_tp, src_sl, src_aw, src_al)
+
+                # Shadow stats
+                shd_st = repo.get_shadow_paper_stats(shadow_id)
+                shd_aw = shd_st.get("avg_win")
+                shd_al = shd_st.get("avg_loss")
+                shd_pf = _pf(shd_tp, shd_sl, shd_aw, shd_al)
+                shd_wr = _wr(shd_tp, shd_n)
+
+                open_c = row.get("shadow_open") or 0
+
+                lines.append(
+                    f"原版  N={src_n}  WR={src_wr}  PF={src_pf}"
+                )
+                lines.append(
+                    f"Shadow N={shd_n}  WR={shd_wr}  PF={shd_pf}  "
+                    f"(open={open_c})"
+                )
+                lines.append(
+                    f"候选={total}  通过={passed}({pass_rate})  拒绝={rejected}"
+                )
+                lines.append(
+                    f"过滤掉: TP={filtered_tp}  SL={filtered_sl}"
+                )
+            else:
+                lines.append("暂无数据（等待首笔K1/K2信号）")
+
+            if low_warn:
+                lines.append(
+                    f"⚠️ SAMPLE LOW  原版={src_settled}/{src_min}  "
+                    f"Shadow={shd_settled}/{shd_min}"
+                )
+            else:
+                lines.append(f"✅ 样本充足  原版={src_settled}  Shadow={shd_settled}")
+
+        # Promotion eligibility note
+        lines.append("\n━━━━━━━━━━━━━━")
+        lines.append(
+            "晋级条件: WR↑ PF↑ Expectancy↑ MAE不恶化 信号≥40%保留\n"
+            "样本门槛: K1原版≥30+Shadow≥15 / K2原版≥20+Shadow≥10"
+        )
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        log.exception("[CmdServer] /shadow failed")
+        return f"❌ /shadow 执行出错: {type(exc).__name__}: {exc}"
+
+
 def _cmd_v66() -> str:
     from binance_ai_trader.hotlist.pg_watchlist_repo import V66WatchlistPgRepository
     repo = V66WatchlistPgRepository()
@@ -1354,6 +1467,8 @@ class TelegramCommandServer:
                 return _cmd_paperoff(args, user_id)
             if cmd == "/winrates":
                 return _cmd_winrates()
+            if cmd == "/shadow":
+                return _cmd_shadow()
             if cmd == "/conditions":
                 return _cmd_conditions(args)
             if cmd == "/review":

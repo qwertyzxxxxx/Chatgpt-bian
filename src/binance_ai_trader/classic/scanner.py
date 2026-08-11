@@ -35,6 +35,9 @@ from binance_ai_trader.classic.indicators import (
 from binance_ai_trader.classic.models import CoinContext, ScanRecord
 from binance_ai_trader.classic.strategies import c1, c2, c3, c4, k1, k2, k3, k4
 from binance_ai_trader.classic.strategies import k3v2, k4v2
+from binance_ai_trader.classic.shadow import (
+    evaluate_k1_shadow_v2, evaluate_k2_shadow_v2,
+)
 from binance_ai_trader.classic.universe import UniverseEntry, build_universe
 from binance_ai_trader.infrastructure.binance_public import (
     BinancePublicApiError, BinancePublicClient,
@@ -363,6 +366,27 @@ def scan(client: BinancePublicClient, now: datetime | None = None) -> ClassicSca
                 rej_counter[strategy_id].extend(rejs)
                 continue
 
+            # ── Shadow evaluation (K1 / K2 only) ──────────────────────────
+            _shadow_result = None
+            if strategy_id == k1.STRATEGY_ID:
+                try:
+                    _shadow_result = evaluate_k1_shadow_v2(
+                        klines["15m"],
+                        float(ctx.vol_ratio_15m),
+                        float(ctx.range_pos_30d),
+                        entry.symbol,
+                    )
+                except Exception as _se:
+                    log.warning("[Shadow/K1] eval error %s: %s", entry.symbol, _se)
+            elif strategy_id == k2.STRATEGY_ID:
+                try:
+                    _shadow_result = evaluate_k2_shadow_v2(
+                        float(ctx.range_pos_30d),
+                        entry.symbol,
+                    )
+                except Exception as _se:
+                    log.warning("[Shadow/K2] eval error %s: %s", entry.symbol, _se)
+
             prev = best_per_strategy.get(strategy_id)
             if prev is None or score > prev["score"]:
                 best_per_strategy[strategy_id] = {
@@ -383,6 +407,7 @@ def scan(client: BinancePublicClient, now: datetime | None = None) -> ClassicSca
                     "vol_ratio_15m": ctx.vol_ratio_15m,
                     "quote_volume_24h": ctx.quote_volume_24h,
                     "_scan_id": rec.scan_id,
+                    "_shadow_result": _shadow_result,  # ShadowResult | None
                 }
 
     # ── 4. Fetch extended pool (21-40) for K3v2/K4v2 ────────────────────

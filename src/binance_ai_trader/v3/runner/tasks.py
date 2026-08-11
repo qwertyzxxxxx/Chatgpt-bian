@@ -1877,15 +1877,26 @@ def build_k_tasks(
     from binance_ai_trader.classic.repository import ClassicScanRepository
     from binance_ai_trader.classic.telegram_push import send_classic_signal
     from binance_ai_trader.classic.config import CFG as _KCFG
+    import json as _json
+    import uuid as _uuid
     from binance_ai_trader.classic.strategies.k1   import STRATEGY_ID as K1_ID
     from binance_ai_trader.classic.strategies.k2   import STRATEGY_ID as K2_ID
     from binance_ai_trader.classic.strategies.k3   import STRATEGY_ID as K3_ID
     from binance_ai_trader.classic.strategies.k4   import STRATEGY_ID as K4_ID
     from binance_ai_trader.classic.strategies.k3v2 import STRATEGY_ID as K3V2_ID
     from binance_ai_trader.classic.strategies.k4v2 import STRATEGY_ID as K4V2_ID
+    from binance_ai_trader.classic.shadow import (
+        K1_SHADOW_V2_ID, K2_SHADOW_V2_ID,
+        K1_SHADOW_V2_NAME, K2_SHADOW_V2_NAME,
+    )
+    from binance_ai_trader.classic.shadow_repository import ClassicShadowRepository
 
-    _ALL_K_IDS = (K1_ID, K2_ID, K3_ID, K4_ID, K3V2_ID, K4V2_ID)
-    _K_ENABLED = frozenset(_ALL_K_IDS)
+    _ALL_K_IDS  = (K1_ID, K2_ID, K3_ID, K4_ID, K3V2_ID, K4V2_ID)
+    _K_ENABLED  = frozenset(_ALL_K_IDS)
+    # Shadow IDs are settled separately but never produce Telegram reports
+    _SHADOW_IDS = (K1_SHADOW_V2_ID, K2_SHADOW_V2_ID)
+
+    shadow_repo = ClassicShadowRepository()
 
     client     = BinancePublicClient(base_url=base_url, timeout_seconds=timeout, max_retries=max_retries)
     order_repo = V3PaperOrderRepository()
@@ -1997,6 +2008,100 @@ def build_k_tasks(
             ))
             orders_created += 1
 
+            # ── Shadow V2 — parallel paper experiment ──────────────────────
+            # Fires only when K1 or K2 actually creates a paper order (non-dedup).
+            # Creates a shadow paper order with IDENTICAL entry/SL/TP if shadow passes.
+            _shadow_res = sig.get("_shadow_result")
+            if _shadow_res is not None and strategy_id in (K1_ID, K2_ID):
+                shadow_strategy_id = _shadow_res.shadow_strategy
+                shadow_order_id_val = None
+                try:
+                    # Independent dedup for shadow orders
+                    _shadow_dedup_ok = not order_repo.exists_open_for_symbol_direction(
+                        shadow_strategy_id, symbol, direction
+                    )
+
+                    if _shadow_res.decision == "PASS" and _shadow_dedup_ok:
+                        try:
+                            shadow_signal_id = cand_repo.generate_signal_id(shadow_strategy_id, now)
+                        except Exception as _se:
+                            log.warning("[Shadow/%s] signal_id gen failed: %s", shadow_strategy_id, _se)
+                            shadow_signal_id = None
+
+                        if shadow_signal_id:
+                            shadow_order = V3PaperOrder(
+                                order_id=make_order_id(),
+                                signal_id=shadow_signal_id,
+                                strategy_id=shadow_strategy_id,
+                                symbol=symbol,
+                                direction=direction,
+                                entry=entry,
+                                stop_loss=sl,
+                                tp1=tp1,
+                                tp2=tp2,
+                                rr=rr,
+                                status="OPEN",
+                                result=None,
+                                created_at=now_iso,
+                                filled_at=None,
+                                closed_at=None,
+                                expires_at=expires_at,
+                                pnl_pct=None,
+                                rr_realized=None,
+                                pushed=True,
+                                metadata_json=_json.dumps({
+                                    "source_signal_id":  signal_id,
+                                    "source_strategy_id": strategy_id,
+                                }),
+                            )
+                            order_repo.save(shadow_order)
+                            order_repo.append_event(V3OrderEvent(
+                                event_id=make_event_id(),
+                                order_id=shadow_order.order_id,
+                                signal_id=shadow_signal_id,
+                                event_type="CREATED",
+                                old_status=None,
+                                new_status="OPEN",
+                                candle_high=None,
+                                candle_low=None,
+                                triggered_at=now_iso,
+                                metadata_json="{}",
+                            ))
+                            shadow_order_id_val = shadow_order.order_id
+                            log.info(
+                                "[Shadow/%s] PASS %s %s → shadow_order=%s",
+                                shadow_strategy_id, symbol, direction, shadow_order_id_val,
+                            )
+                    elif _shadow_res.decision == "REJECT":
+                        log.info(
+                            "[Shadow/%s] REJECT %s — %s",
+                            shadow_strategy_id, symbol, _shadow_res.reject_reason,
+                        )
+
+                    # Save comparison record (always, for both PASS and REJECT)
+                    shadow_repo.save_shadow(
+                        shadow_id=str(_uuid.uuid4()),
+                        source_signal_id=signal_id,
+                        source_strategy=strategy_id,
+                        shadow_strategy=shadow_strategy_id,
+                        symbol=symbol,
+                        direction=direction,
+                        signal_time=now_iso,
+                        decision=_shadow_res.decision,
+                        reject_reason=_shadow_res.reject_reason,
+                        shadow_order_id=shadow_order_id_val,
+                        signal_candle_open=_shadow_res.signal_candle_open,
+                        signal_candle_close=_shadow_res.signal_candle_close,
+                        signal_candle_change_pct=_shadow_res.signal_candle_change_pct,
+                        signal_candle_above_ema20=_shadow_res.signal_candle_above_ema20,
+                        break_previous_high=_shadow_res.break_previous_high,
+                        vol_ratio_15m=_shadow_res.vol_ratio_15m,
+                        range_position_30d=_shadow_res.range_position_30d,
+                    )
+                except Exception as _se:
+                    log.warning("[Shadow/%s] shadow processing failed %s: %s",
+                                shadow_strategy_id, symbol, _se)
+
             if telegram:
                 try:
                     send_classic_signal(telegram, sig)
@@ -2023,11 +2128,18 @@ def build_k_tasks(
 
     def _k_settle_task() -> RunnerTaskResult:
         total = 0
+        # Settle production K strategies
         for sid in _ALL_K_IDS:
             try:
                 total += settler.settle_all(strategy_id=sid)
             except Exception as exc:
                 log.warning("[K-Classic] settle failed for %s: %s", sid, exc)
+        # Settle shadow paper orders (same settler, different strategy_id)
+        for sid in _SHADOW_IDS:
+            try:
+                total += settler.settle_all(strategy_id=sid)
+            except Exception as exc:
+                log.warning("[K-Classic] shadow settle failed for %s: %s", sid, exc)
         return RunnerTaskResult("SUCCEEDED", {"event_type": "k_settle", "settled": total})
 
     def _k_report_task() -> RunnerTaskResult:

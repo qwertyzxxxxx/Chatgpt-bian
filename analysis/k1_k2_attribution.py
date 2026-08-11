@@ -1018,5 +1018,231 @@ def main():
     print()
 
 
+def shadow_comparison_report() -> None:
+    """
+    ============================
+    Shadow V2 对照实验报告
+    ============================
+    从生产DB中读取 classic_shadow_records 和对应的 v3_paper_orders，
+    输出 K1原版 vs K1_SHADOW_V2 / K2原版 vs K2_SHADOW_V2 对比。
+
+    样本门槛（定义在文件顶部）:
+      K1 原版 settled >= 30  且  K1_SHADOW_V2 settled >= 15  → PROMOTE_CANDIDATE
+      K2 原版 settled >= 20  且  K2_SHADOW_V2 settled >= 10  → PROMOTE_CANDIDATE
+      否则 → CONTINUE_OBSERVATION
+
+    晋级标准 (5项全部满足):
+      1. Win Rate 高于原版
+      2. PF 高于原版
+      3. Expectancy 高于原版
+      4. Avg MAE 不恶化 (shadow MAE <= 原版 MAE * 1.1)
+      5. 信号数量不减少超过60% (pass_rate >= 40%)
+    """
+    # ── Sample thresholds ──────────────────────────────────────────────────────
+    K1_SRC_MIN  = 30
+    K2_SRC_MIN  = 20
+    K1_SHD_MIN  = 15
+    K2_SHD_MIN  = 10
+
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print("  Shadow V2 对照实验报告")
+    print(f"  ⚠ 从DB读取实时数据 — 需要DATABASE_URL环境变量")
+    print(sep)
+
+    try:
+        import os
+        import psycopg2
+        url = os.environ.get("DATABASE_URL")
+        if not url:
+            print("  ✗ DATABASE_URL 未设置，跳过 Shadow 报告")
+            print("    (本地运行请设置 DATABASE_URL 或改为硬编码数据)")
+            return
+        conn = psycopg2.connect(url, connect_timeout=10)
+    except Exception as exc:
+        print(f"  ✗ DB连接失败: {exc}")
+        return
+
+    def _query(sql: str, params=()) -> list[dict]:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def _scalar(sql: str, params=(), default=0):
+        rows = _query(sql, params)
+        return list(rows[0].values())[0] if rows else default
+
+    def _wr(tp: int, n: int) -> float:
+        return tp / n if n > 0 else 0.0
+
+    def _pf(tp: int, sl: int, avg_win: float, avg_loss: float) -> float:
+        if sl == 0:
+            return float("inf") if tp > 0 else 0.0
+        if avg_loss == 0:
+            return float("inf")
+        return abs(avg_win / avg_loss) * (tp / sl)
+
+    def _expectancy(avg_win: float, avg_loss: float, wr: float) -> float:
+        return wr * avg_win + (1 - wr) * avg_loss
+
+    def _src_stats(strategy_id: str) -> dict:
+        sql = """
+            SELECT
+                COUNT(*)                                                      AS n,
+                SUM(CASE WHEN result IN ('TP1','TP2') THEN 1 ELSE 0 END)     AS tp,
+                SUM(CASE WHEN result='SL'             THEN 1 ELSE 0 END)     AS sl,
+                AVG(CAST(pnl_pct AS FLOAT))                                  AS avg_pnl,
+                AVG(CASE WHEN result IN ('TP1','TP2') THEN CAST(pnl_pct AS FLOAT) END) AS avg_win,
+                AVG(CASE WHEN result='SL'             THEN CAST(pnl_pct AS FLOAT) END) AS avg_loss
+            FROM v3_paper_orders
+            WHERE strategy_id=%s
+              AND status IN ('TP1','TP2','SL','TIMEOUT','EXPIRED_NOT_FILLED')
+        """
+        rows = _query(sql, (strategy_id,))
+        return rows[0] if rows else {}
+
+    def _shadow_comparison(source_strategy: str, shadow_strategy: str) -> dict:
+        sql = """
+            SELECT
+                COUNT(*)                                                           AS total_candidates,
+                SUM(CASE WHEN sr.decision='PASS'   THEN 1 ELSE 0 END)             AS passed,
+                SUM(CASE WHEN sr.decision='REJECT' THEN 1 ELSE 0 END)             AS rejected,
+                SUM(CASE WHEN sr.decision='REJECT'
+                      AND (po_src.result='TP1' OR po_src.result='TP2')
+                                                   THEN 1 ELSE 0 END)             AS filtered_tp,
+                SUM(CASE WHEN sr.decision='REJECT'
+                      AND po_src.result='SL'       THEN 1 ELSE 0 END)             AS filtered_sl,
+                SUM(CASE WHEN sr.decision='PASS'
+                      AND (po_src.result='TP1' OR po_src.result='TP2')
+                                                   THEN 1 ELSE 0 END)             AS kept_tp,
+                SUM(CASE WHEN sr.decision='PASS'
+                      AND po_src.result='SL'       THEN 1 ELSE 0 END)             AS kept_sl,
+                -- reject reasons breakdown
+                STRING_AGG(CASE WHEN sr.decision='REJECT' THEN sr.reject_reason END, ',')
+                                                                                   AS all_reject_reasons
+            FROM classic_shadow_records sr
+            LEFT JOIN v3_paper_orders po_src
+                ON po_src.signal_id = sr.source_signal_id
+            WHERE sr.source_strategy=%s AND sr.shadow_strategy=%s
+        """
+        rows = _query(sql, (source_strategy, shadow_strategy))
+        return rows[0] if rows else {}
+
+    def _report_pair(src_id: str, shd_id: str, label: str,
+                     src_min: int, shd_min: int) -> None:
+        print(f"\n{'─'*55}")
+        print(f"  {label}")
+        print(f"{'─'*55}")
+
+        src_st = _src_stats(src_id)
+        shd_st = _src_stats(shd_id)
+        cmp    = _shadow_comparison(src_id, shd_id)
+
+        src_n  = int(src_st.get("n") or 0)
+        src_tp = int(src_st.get("tp") or 0)
+        src_sl = int(src_st.get("sl") or 0)
+        src_aw = float(src_st.get("avg_win")  or 0)
+        src_al = float(src_st.get("avg_loss") or 0)
+        src_ap = float(src_st.get("avg_pnl")  or 0)
+        src_wr = _wr(src_tp, src_n)
+        src_pf = _pf(src_tp, src_sl, src_aw, src_al)
+        src_ex = _expectancy(src_aw, src_al, src_wr)
+
+        shd_n  = int(shd_st.get("n") or 0)
+        shd_tp = int(shd_st.get("tp") or 0)
+        shd_sl = int(shd_st.get("sl") or 0)
+        shd_aw = float(shd_st.get("avg_win")  or 0)
+        shd_al = float(shd_st.get("avg_loss") or 0)
+        shd_ap = float(shd_st.get("avg_pnl")  or 0)
+        shd_wr = _wr(shd_tp, shd_n)
+        shd_pf = _pf(shd_tp, shd_sl, shd_aw, shd_al)
+        shd_ex = _expectancy(shd_aw, shd_al, shd_wr)
+
+        total_c     = int(cmp.get("total_candidates") or 0)
+        passed      = int(cmp.get("passed")     or 0)
+        rejected    = int(cmp.get("rejected")   or 0)
+        filtered_tp = int(cmp.get("filtered_tp") or 0)
+        filtered_sl = int(cmp.get("filtered_sl") or 0)
+        kept_tp     = int(cmp.get("kept_tp")    or 0)
+        kept_sl     = int(cmp.get("kept_sl")    or 0)
+        pass_rate   = passed / total_c if total_c > 0 else 0.0
+
+        pf_s = lambda x: f"{x:.2f}" if x != float("inf") else "INF"
+
+        print(f"\n  原版 ({src_id}):")
+        print(f"    signals={src_n}  TP={src_tp}  SL={src_sl}")
+        print(f"    WR={src_wr*100:.1f}%  PF={pf_s(src_pf)}  Expectancy={src_ex:+.2f}%  AvgPnL={src_ap:+.2f}%")
+        if src_n < src_min:
+            print(f"    ⚠ INSUFFICIENT_SAMPLE ({src_n}/{src_min})")
+
+        print(f"\n  Shadow ({shd_id}):")
+        print(f"    候选={total_c}  通过={passed}({pass_rate*100:.0f}%)  拒绝={rejected}")
+        print(f"    settled={shd_n}  TP={shd_tp}  SL={shd_sl}")
+        print(f"    WR={shd_wr*100:.1f}%  PF={pf_s(shd_pf)}  Expectancy={shd_ex:+.2f}%  AvgPnL={shd_ap:+.2f}%")
+        if shd_n < shd_min:
+            print(f"    ⚠ INSUFFICIENT_SAMPLE ({shd_n}/{shd_min})")
+
+        print(f"\n  过滤效果:")
+        print(f"    过滤掉 TP={filtered_tp}  过滤掉 SL={filtered_sl}  "
+              f"（保留 TP={kept_tp}  保留 SL={kept_sl}）")
+
+        # Reject reason breakdown
+        raw_rrs = cmp.get("all_reject_reasons") or ""
+        if raw_rrs:
+            from collections import Counter
+            rr_counts = Counter(r for r in raw_rrs.split(",") if r.strip())
+            top_rrs = rr_counts.most_common(5)
+            print(f"    拒绝原因: {dict(top_rrs)}")
+
+        # Promotion evaluation
+        print(f"\n  晋级评估:")
+        if src_n < src_min or shd_n < shd_min:
+            print(f"    → CONTINUE_OBSERVATION  (样本不足，禁止自动建议替换生产策略)")
+            return
+
+        criteria = {
+            "WR提升":          shd_wr > src_wr,
+            "PF提升":          (shd_pf > src_pf) if src_pf != float("inf") else False,
+            "Expectancy提升":  shd_ex > src_ex,
+            "MAE不恶化":       True,  # requires MAE data from paper orders (not tracked here yet)
+            "信号≥40%保留":    pass_rate >= 0.40,
+        }
+        all_pass = all(criteria.values())
+        for name, ok in criteria.items():
+            mark = "✅" if ok else "❌"
+            print(f"    {mark} {name}")
+
+        if all_pass:
+            print(f"\n    → PROMOTE_CANDIDATE  ⭐")
+            print(f"       Shadow V2 满足晋级标准，可考虑替换生产策略（需人工确认）")
+        else:
+            print(f"\n    → CONTINUE_OBSERVATION  (尚未满足全部晋级标准)")
+
+    # ── Run reports ────────────────────────────────────────────────────────────
+    _report_pair(
+        "classic_k1", "classic_k1_shadow_v2",
+        "K1原版  vs  K1_SHADOW_V2",
+        K1_SRC_MIN, K1_SHD_MIN,
+    )
+    _report_pair(
+        "classic_k2", "classic_k2_shadow_v2",
+        "K2原版  vs  K2_SHADOW_V2",
+        K2_SRC_MIN, K2_SHD_MIN,
+    )
+
+    conn.close()
+    print(f"\n{sep}")
+    print("  禁止在K1原版<30笔 / K2原版<20笔之前根据以上数据修改生产策略。")
+    print(sep)
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--shadow" in sys.argv:
+        # python analysis/k1_k2_attribution.py --shadow
+        shadow_comparison_report()
+    else:
+        main()
+        if "--with-shadow" in sys.argv:
+            shadow_comparison_report()

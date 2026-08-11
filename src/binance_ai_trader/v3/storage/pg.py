@@ -261,6 +261,39 @@ CREATE TABLE IF NOT EXISTS v3_runtime_settings (
 ALTER TABLE v3_runtime_settings ADD COLUMN IF NOT EXISTS live_enabled  BOOLEAN;
 ALTER TABLE v3_runtime_settings ADD COLUMN IF NOT EXISTS notional_usdt NUMERIC;
 
+-- ── Classic Shadow comparison records ───────────────────────────────────────
+-- Stores shadow strategy evaluation result for every K1/K2 paper order created.
+-- Written once per source paper order; never mutated after creation except
+-- shadow_order_id backfill. Purely append-only research data.
+CREATE TABLE IF NOT EXISTS classic_shadow_records (
+    shadow_id                 TEXT PRIMARY KEY,
+    source_signal_id          TEXT NOT NULL,
+    source_strategy           TEXT NOT NULL,
+    shadow_strategy           TEXT NOT NULL,
+    symbol                    TEXT NOT NULL,
+    direction                 TEXT NOT NULL,
+    signal_time               TEXT NOT NULL,
+    decision                  TEXT NOT NULL,      -- PASS | REJECT
+    reject_reason             TEXT NOT NULL DEFAULT '',
+    shadow_order_id           TEXT,               -- backfilled if PASS+order created
+    -- K1 extras
+    signal_candle_open        REAL,
+    signal_candle_close       REAL,
+    signal_candle_change_pct  REAL,
+    signal_candle_above_ema20 BOOLEAN,
+    break_previous_high       BOOLEAN,
+    vol_ratio_15m             REAL,
+    -- K2 extras
+    range_position_30d        REAL,
+    created_at                TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_source_signal
+    ON classic_shadow_records(source_signal_id);
+CREATE INDEX IF NOT EXISTS idx_shadow_strategy_time
+    ON classic_shadow_records(shadow_strategy, signal_time);
+CREATE INDEX IF NOT EXISTS idx_shadow_source_strategy
+    ON classic_shadow_records(source_strategy, signal_time);
+
 -- ── Classic C1-C4 scan records ──────────────────────────────────────────────
 -- Permanently stores every evaluated coin per cycle, signal or not.
 CREATE TABLE IF NOT EXISTS classic_scan_records (
